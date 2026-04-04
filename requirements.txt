@@ -1,0 +1,20 @@
+# SpecProc Requirements
+# Python 3.8+
+
+# Core scientific computing
+numpy>=1.19.0
+scipy>=1.5.0
+astropy>=4.0.0
+
+# Plotting
+matplotlib>=3.3.0
+
+# GUI
+PyQt5>=5.15.0
+
+# Configuration
+configparser>=4.0.0
+
+# Optional but recommended
+ipython>=7.0.0
+jupyter>=1.0.0

@@ -1,0 +1,71 @@
+# SpecProc User Configuration Example
+# Copy this file to specproc.cfg in your working directory and customize
+
+# ============================================================================
+# DATA INPUT CONFIGURATION
+# ============================================================================
+[data]
+# Raw FITS data directory (relative to working directory)
+# Example: If your working directory is /home/user/obs1/2024/11/02
+# and rawdata_dir=20241102_hrs, data will be loaded from:
+# /home/user/obs1/2024/11/02/20241102_hrs/
+rawpath = 20241102_hrs
+
+# FITS header keywords (usually no need to change)
+statime_key = DATE-OBS
+exptime_key = EXPTIME
+
+# Image dispersion direction
+# Options: xr- (x positive is dispersion), xl- (x negative is dispersion)
+direction = xr-
+
+# Overscan region configuration
+overscan_start_column = 4097
+overscan_method = median
+
+# ============================================================================
+# GENERAL PROCESSING OPTIONS
+# ============================================================================
+[reduce]
+# Output directory for all processing results (relative to working directory)
+# Example: If your working directory is /home/user/obs1/2024/11/02
+# and output_dir=output, results will be saved in:
+# /home/user/obs1/2024/11/02/output/
+#
+# Output directory structure:
+# output/
+#   ├── overscan_corrected/      # Stage 0: Overscan correction results
+#   ├── bias_corrected/          # Stage 1: Bias correction results
+#   ├── flat_corrected/           # Stage 2: Flat fielding results
+#   ├── background_corrected/     # Stage 4: Background subtraction results
+#   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
+#   ├── spectra/                 # Final 1D spectra
+#   └── figures/                 # Diagnostic plots
+out_path = output
+
+# Processing mode: normal or debug
+mode = normal
+
+# Output figure format: png, pdf, jpg
+fig_format = png
+
+# Output filename suffix for final spectra
+oned_suffix = _ods
+
+# Cosmic ray correction parameters
+cosmic_enabled = yes
+cosmic_sigma = 5.0
+cosmic_window = 7
+
+# ============================================================================
+# TELESCOPE/SPECTROGRAPH CONFIGURATION
+# ============================================================================
+[telescope]
+# Telescope name for calibration lookup
+# This is looked up in: calib_data/telescopes/<name>/
+name = xinglong216hrs
+
+# Spectrograph instrument name (used for calibration file lookup)
+instrument = hrs
+
+# ============================================================================

@@ -21,7 +21,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 **8-stage automated spectral reduction**:
 
 1. **Overscan Correction** - Overscan correction (all images)
-2. **Bias Subtraction** - Bias subtraction (bias is 0s exposure, combined using mean/median)
+2. **Bias Subtraction** - Bias subtraction (combined using mean/median)
 3. **Flat Fielding & Order Tracing** - Flat field correction and order tracing
 4. **Background Subtraction** - Background removal
 5. **Cosmic Ray Correction** - Cosmic ray removal (science images only)
@@ -46,59 +46,84 @@ PyQt5-based user interface with:
 
 ## Installation
 
-### Quick Install (Recommended)
+Choose one of the following installation methods:
+
+### Method 1: Using pip
+
+Install SpecProc directly from PyPI.
 
 ```bash
-# Navigate to SpecProc directory
-cd SpecProc
-
-# Use automated installation script
-./install.sh
-
-# Activate environment
-conda activate specproc
+# Install SpecProc
+pip install specproc
 
 # Launch application
 specproc
 ```
 
-### Manual Installation
+**Notes:**
+- Requires Python 3.7+
+- Dependencies will be automatically installed from PyPI
+- Installation is permanent; uninstall with `pip uninstall specproc`
 
-#### Prerequisites
+### Method 2: Using conda
 
-- Python 3.8+
-- Anaconda or Miniconda (recommended)
+Conda provides a complete environment with all dependencies. Two installation options:
 
-#### Step 1: Create Conda Environment
+#### Option 2.1: Install in existing conda environment
 
 ```bash
+# Activate your conda environment
+conda activate your_environment
+
+# Install SpecProc from conda-forge
+conda install -c conda-forge specproc
+
+# Launch application
+specproc
+```
+
+#### Option 2.2: Create new conda environment
+
+```bash
+# Create new conda environment for SpecProc
 conda create -n specproc python=3.8
 conda activate specproc
+
+# Install SpecProc and all dependencies
+conda install -c conda-forge specproc
+
+# Launch application
+specproc
 ```
 
-#### Step 2: Install Dependencies
+**Notes:**
+- Recommended for users who want an isolated environment
+- All dependencies are managed by conda
+- Python 3.7-3.11 are supported
+
+### Method 3: Installing from Source
+
+Run the installation script to install SpecProc and all dependencies from local source.
 
 ```bash
-# Option 1: Using conda (recommended)
-conda install -c conda-forge pyqt5 numpy scipy astropy matplotlib
+# Navigate to SpecProc directory
+cd /path/to/SpecProc
 
-# Option 2: Using pip
-pip install -r requirements.txt
+# Make the script executable (if needed)
+chmod +x install.sh
+
+# Run installation script
+./install.sh
+
+# Launch application
+specproc
 ```
 
-#### Step 3: Install SpecProc
-
-```bash
-cd SpecProc
-pip install -e .
-```
-
-#### Step 4: Verify Installation
-
-```bash
-specproc --help
-specproc --version
-```
+**Notes:**
+- Installation script handles all dependencies automatically
+- Detects available package manager (pip or conda)
+- Installs SpecProc to your system
+- Use this method for automated setup from local source
 
 ## Quick Start
 
@@ -140,11 +165,11 @@ specproc --config ./specproc.cfg
 │   ├── thar_*.fits      # ThAr lamp spectrum
 │   └── science_*.fits   # Science images
 ├── output/                    # Processing results (auto-created)
-│   ├── overscan_corrected/      # Stage 0: Overscan correction
-│   ├── bias_corrected/          # Stage 1: Bias correction
-│   ├── flat_corrected/           # Stage 2: Flat fielding
-│   ├── background_corrected/     # Stage 4: Background subtraction
-│   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction
+│   ├── overscan_corrected/      # Stage 0: Overscan correction results
+│   ├── bias_corrected/          # Stage 1: Bias correction results
+│   ├── flat_corrected/           # Stage 2: Flat fielding results
+│   ├── background_corrected/     # Stage 4: Background subtraction results
+│   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
 │   ├── spectra/                 # Final 1D spectra
 │   └── figures/                 # Diagnostic plots
 ├── specproc.cfg              # User config file (optional)
@@ -179,7 +204,7 @@ specproc --config ./specproc.cfg
 ```ini
 [data]
 # Raw FITS data directory (relative to working directory)
-# Example: If running in /home/user/obs1 and rawdata=20241102_hrs,
+# Example: If running in /home/user/obs1 and rawpath=20241102_hrs,
 # data will be loaded from /home/user/obs1/20241102_hrs/
 rawpath = 20241102_hrs
 ```
@@ -194,11 +219,11 @@ rawpath = 20241102_hrs
 #
 # Output directory structure:
 # output/
-#   ├── overscan_corrected/      # Stage 0 results
-#   ├── bias_corrected/          # Stage 1 results
-#   ├── flat_corrected/           # Stage 2 results
-#   ├── background_corrected/     # Stage 4 results
-#   ├── cosmic_corrected/        # Stage 5 results (science only)
+#   ├── overscan_corrected/      # Stage 0: Overscan correction results
+#   ├── bias_corrected/          # Stage 1: Bias correction results
+#   ├── flat_corrected/           # Stage 2: Flat fielding results
+#   ├── background_corrected/     # Stage 4: Background subtraction results
+#   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
 #   ├── spectra/                 # Final 1D spectra
 #   └── figures/                 # Diagnostic plots
 out_path = output
@@ -206,7 +231,7 @@ out_path = output
 
 #### Path Relativity
 
-All paths are relative to the **current working directory**:
+All paths are relative to **current working directory**:
 
 ```bash
 # Assume working directory is /home/user/obs1/2024/11/02
@@ -312,33 +337,29 @@ flowchart TD
 
     subgraph Stage3 [STAGE 3: Background Subtraction]
         D0[Read bias corrected image] --> D1[Estimate background]
-        D1 --> D2{Method?}
-        D2 -- 2D polynomial --> D3a[Fit 2D polynomial]
-        D2 -- Median filter --> D3b[Apply median filter]
-        D3a --> D4[Subtract background]
-        D3b --> D4
-        D4 --> End3a[Output: Background subtracted image]
-        D4 --> End3b[Continue to stage 4]
+        D1 --> D2[Fit 2D polynomial]
+        D2a --> D3a[Median filter]
+        D2b --> D3b[Apply 2D polynomial]
+        D3a --> End3a[Output: Background subtracted image]
+        D3b --> End3b[Continue to stage 4a]
     end
-    End3a --> Stage4a
-    End3b --> Stage4b
+
+    End3 --> Stage4
 
     subgraph Stage4 [STAGE 4: Cosmic Ray Correction]
         E0[Read background subtracted image] --> E1[Detect cosmic rays]
-        E1 --> E2[Mean + σ×std threshold]
-        E2 --> E3[Identify cosmic ray pixels]
-        E3 --> E4[Interpolate with median filter]
-        E4 --> End4[Output: Cosmic ray corrected image]
+        E1 --> E2[Identify cosmic ray pixels]
+        E2 --> E3[Interpolate with median filter]
+        E3 --> End4[Output: Cosmic ray corrected image]
     end
     End4 --> Stage5
 
     subgraph Stage5 [STAGE 5: 1D Spectrum Extraction]
-        F0[Read cosmic corrected image] --> F1{Extraction method?}
-        F1 -- Sum extraction --> F2a[Simple aperture sum]
-        F1 -- Optimal extraction --> F2b[Optimal extraction Horne 1986]
+        F0[Read cosmic ray corrected image] --> F1[Select extraction method]
+        F1 --> F2a[Sum extraction]
+        F1 --> F2b[Optimal extraction Horne 1986]
         F2a --> F3[Extract 1D spectrum for each order]
-        F2b --> F3
-        F3 --> F4[Calculate extraction errors]
+        F2b --> F4[Calculate extraction errors]
         F4 --> End5[Output: SpectraSet (pixel space)]
     end
     End5 --> Stage6
@@ -346,8 +367,8 @@ flowchart TD
     subgraph Stage6 [STAGE 6: Wavelength Calibration]
         G0[Step 1: ThAr lamp calibration] --> G1[Extract ThAr 1D spectrum]
         G1 --> G2[Identify emission lines]
-        G2 --> G3[Fit 2D wavelength polynomial λ x,y = Σ p_ij·x^i·y^j]
-        G3 --> G4[Establish pixel → wavelength mapping]
+        G2 --> G3[Fit 2D wavelength polynomial]
+        G3 --> G4[Establish pixel to wavelength mapping]
         G4 --> G5[Step 2: Apply to science spectrum]
         G5 --> G6[Convert pixel coordinates to wavelength units]
         G6 --> End6[Output: Wavelength calibrated 1D spectrum]
@@ -357,11 +378,12 @@ flowchart TD
     subgraph Stage7 [STAGE 7: De-blazing]
         H0[Read wavelength calibrated spectrum] --> H1[Read flat spectrum blaze function]
         H1 --> H2{Order matching}
-        H2 --> H3[Match corresponding orders B λ]
-        H3 --> H4[Divide by blaze function F_corrected λ = F_observed λ / B λ]
+        H2 --> H3[Match corresponding orders B lambda]
+        H3 --> H4[Divide by blaze function F_corrected lambda]
         H4 --> H5[Normalize to unit continuum]
         H5 --> End7[Output: Final calibrated spectrum]
     end
+
     End7 --> Final
 
     Final([End]) --> Output[Output files output/spectra/*.fits output/midpath/ output/figures/*.png]
@@ -429,7 +451,7 @@ flowchart TD
   - Extract 1D spectrum for each echelle order
   - Method: Sum extraction or Optimal extraction (Horne 1986)
   - Calculate extraction errors
-- **Output**: 1D spectra in pixel space
+- **Output**: SpectraSet (pixel space)
 - **Note**: Depends on apertures from Stage 2
 
 #### STAGE 6: Wavelength Calibration
@@ -438,8 +460,8 @@ flowchart TD
   - Step 1: Calibrate ThAr lamp spectrum
     - Extract 1D spectrum
     - Identify emission lines
-    - Fit 2D wavelength polynomial λ(x,y) = Σ p_ij·x^i·y^j
-  - Step 2: Apply calibration to science spectra
+    - Fit 2D wavelength polynomial: λ(x,y) = Σ p_ij·x^i·y^j
+  - Step 2: Apply to science spectra
     - Convert pixel coordinates to wavelength units
 - **Output**: Wavelength calibrated 1D spectra
 - **Note**: Must be after spectrum extraction
@@ -447,7 +469,7 @@ flowchart TD
 #### STAGE 7: De-blazing
 - **Input**: Wavelength calibrated 1D spectra
 - **Processing**:
-  - Read blaze function from flat field (Stage 2)
+  - Read flat spectrum blaze function
   - Match orders
   - Divide by blaze function: F_corrected(λ) = F_observed(λ) / B(λ)
   - Normalize to unit continuum
@@ -484,7 +506,7 @@ specproc --config /path/to/config.cfg
 # Run CLI mode
 specproc --mode cli
 
-# Or with custom config
+# Or with custom config file
 specproc --mode cli --config /path/to/config.cfg
 ```
 
@@ -503,7 +525,8 @@ calib_data/
 ├── linelists/              # Lamp emission line catalogs
 │   ├── thar-noao.dat      # ThAr lamp lines (Xinglong 2.16m HRS recommended)
 │   ├── thar.dat           # Standard ThAr lamp lines
-│   └── FeAr.dat           # FeAr lamp lines
+│   ├── FeAr.dat           # FeAr lamp lines
+└── ...
 └── telescopes/             # Telescope-specific calibration files
     ├── generic/           # Generic configuration template
     └── xinglong216hrs/    # Xinglong 2.16m telescope
@@ -536,47 +559,28 @@ calib_data/
 - `wlcalib_20190905028_A.fits` - 2019-09-05 02:50 (version A)
 - `wlcalib_20211123011_A.fits` - 2021-11-23 01:10 (version A) - **Latest**
 
-### Usage Options
-
-#### Using Pre-computed Calibration (Recommended)
+### Configuration
 
 ```ini
+[telescope]
+name = xinglong216hrs
+instrument = hrs
+
+[telescope.linelist]
+linelist_type = ThAr
+linelist_path = calib_data/linelists/
+linelist_file = thar-noao.dat
 use_precomputed_calibration = yes
+calibration_path = calib_data/telescopes/xinglong216hrs/
 calibration_file = wlcalib_20211123011_A.fits
 ```
-
-#### Re-fitting Wavelength Calibration
-
-```ini
-use_precomputed_calibration = no
-linelist_file = thar-noao.dat
-```
-
-### Adding Custom Calibrations
-
-#### Adding a New Lamp Linelist:
-
-1. Create file in `linelists/` directory
-2. Follow file format (wavelength, intensity, comment)
-3. Configure in config file: `linelist_file = <filename>`
-
-#### Adding a New Telescope:
-
-1. Create directory: `calib_data/telescopes/<telescope_name>/`
-2. Place calibration files with proper naming
-3. Configure in config file:
-   ```ini
-   [telescope]
-   name = <telescope_name>
-   instrument = <instrument_name>
-   ```
 
 ## Troubleshooting
 
 ### ImportError: No module named 'PyQt5'
 
 ```bash
-conda activate specproc
+# Install PyQt5
 pip install PyQt5
 ```
 
@@ -604,16 +608,10 @@ cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
 - Add output directories to `.gitignore`
 - Run SpecProc in separate working directory, not in source directory
 
-### Processing errors
-
-1. **Missing bias files**: Bias correction is optional but recommended
-2. **Missing flat files**: Required for aperture tracing
-3. **Missing calibration files**: Required for wavelength calibration
-
 ## Documentation
 
 - See [calib_data/README.md](calib_data/README.md) for calibration data configuration
-- See [CONFIGURATION_GUIDE_CN.md](CONFIGURATION_GUIDE_CN.md) for detailed configuration guide (Chinese)
+- See [README_CN.md](README_CN.md) for Chinese documentation
 - See [PIPELINE_FLOWCHART.md](PIPELINE_FLOWCHART.md) for detailed processing workflow
 
 ## Project Structure
@@ -621,27 +619,25 @@ cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
 ```
 SpecProc/
 ├── README.md                    # Main documentation
-├── DOCUMENTATION.md             # Documentation index
-├── INSTALLATION_GUIDE.md       # Installation guide
-├── QUICK_START.md               # Quick start guide
-├── QUICK_REFERENCE.md           # Quick reference
-├── CONFIGURATION_GUIDE_CN.md   # Configuration guide (Chinese)
+├── README_CN.md                # Main documentation (Chinese)
 ├── default_config.cfg           # Default configuration
 ├── specproc.cfg.example         # Example user configuration
-├── calib_data/
-│   ├── README.md                # Calibration data guide
-│   ├── linelists/               # Lamp line lists
-│   └── telescopes/              # Telescope calibrations
+├── install.sh                   # Installation script
+├── requirements.txt              # Python dependencies
+├── run.py                      # Main entry point
+├── setup.py                     # Installation configuration
+├── LICENSE                      # License
+├── .gitignore                  # Git ignore rules
+├── calib_data/                 # Calibration data
+│   ├── README.md
+│   ├── linelists/
+│   └── telescopes/
 ├── src/                         # Source code
 │   ├── gui/                     # GUI modules
 │   ├── core/                    # Core processing
 │   ├── config/                  # Configuration management
 │   ├── utils/                   # Utility functions
 │   └── plotting/                # Plotting functions
-├── install.sh                   # Installation script
-├── requirements.txt              # Python dependencies
-├── setup.py                     # Installation configuration
-├── run.py                      # Main entry point
 └── test_*.py                    # Test files
 ```
 
@@ -655,8 +651,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
-- Inspired by the [gamse](https://github.com/wangleon/gamse) package
-- Built with PyQt5, NumPy, SciPy, and Astropy
+- Inspired by [gamse](https://github.com/wangleon/gamse) package
+- Built with PyQt5, NumPy, SciPy and Astropy
 
 ## Support
 

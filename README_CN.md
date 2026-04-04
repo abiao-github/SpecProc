@@ -21,7 +21,7 @@
 **8 阶段自动化光谱处理**：
 
 1. **过扫描校正** - 过扫描改正（所有图像）
-2. **偏置减除** - 本底减除（bias 是 0 秒曝光，使用均值/中值合并）
+2. **偏置减除** - 本底减除（使用均值/中值合并）
 3. **平场改正与阶序追踪** - 平场改正与阶序追踪
 4. **背景扣除** - 背景扣除
 5. **宇宙线去除** - 宇宙线去除（仅科学图像）
@@ -46,59 +46,84 @@
 
 ## 安装
 
-### 快速安装（推荐）
+选择以下任一安装方法：
+
+### 方法 1：使用 pip
+
+从 PyPI 直接安装 SpecProc。
 
 ```bash
-# 进入 SpecProc 目录
-cd SpecProc
-
-# 使用自动化安装脚本
-./install.sh
-
-# 激活环境
-conda activate specproc
+# 安装 SpecProc
+pip install specproc
 
 # 启动应用程序
 specproc
 ```
 
-### 手动安装
+**说明：**
+- 需要 Python 3.7+
+- 依赖包会自动从 PyPI 安装
+- 卸载使用 `pip uninstall specproc`
 
-#### 环境要求
+### 方法 2：使用 conda
 
-- Python 3.8+
-- Anaconda 或 Miniconda（推荐）
+Conda 提供完整的环境和所有依赖。有两种安装选项：
 
-#### 步骤 1：创建 Conda 环境
+#### 选项 2.1：在已有的 conda 环境中安装
 
 ```bash
+# 激活你的 conda 环境
+conda activate your_environment
+
+# 从 conda-forge 安装 SpecProc
+conda install -c conda-forge specproc
+
+# 启动应用程序
+specproc
+```
+
+#### 选项 2.2：创建新的 conda 环境
+
+```bash
+# 为 SpecProc 创建新的 conda 环境
 conda create -n specproc python=3.8
 conda activate specproc
+
+# 安装 SpecProc 和所有依赖
+conda install -c conda-forge specproc
+
+# 启动应用程序
+specproc
 ```
 
-#### 步骤 2：安装依赖包
+**说明：**
+- 推荐给希望使用独立环境的用户
+- 所有依赖由 conda 管理
+- 支持 Python 3.7-3.11
+
+### 方法 3：从源代码安装
+
+运行安装脚本从本地源代码安装 SpecProc 和所有依赖。
 
 ```bash
-# 选项 1：使用 conda（推荐）
-conda install -c conda-forge pyqt5 numpy scipy astropy matplotlib
+# 进入 SpecProc 目录
+cd /path/to/SpecProc
 
-# 选项 2：使用 pip
-pip install -r requirements.txt
+# 添加可执行权限（如需要）
+chmod +x install.sh
+
+# 运行安装脚本
+./install.sh
+
+# 启动应用程序
+specproc
 ```
 
-#### 步骤 3：安装 SpecProc
-
-```bash
-cd SpecProc
-pip install -e .
-```
-
-#### 步骤 4：验证安装
-
-```bash
-specproc --help
-specproc --version
-```
+**说明：**
+- 安装脚本自动处理所有依赖
+- 自动检测可用的包管理器（pip 或 conda）
+- 将 SpecProc 安装到你的系统
+- 适用于从本地源代码进行自动化安装
 
 ## 快速开始
 

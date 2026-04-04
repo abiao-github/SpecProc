@@ -1,6 +1,6 @@
 # SpecProc: PyQt GUI for Echelle Spectrograph FITS Data Reduction
 
-A complete PyQt-based graphical interface for reducing echelle spectrograph FITS data. Inspired by the [gamse](https://github.com/wangleon/gamse) package.
+A complete PyQt-based graphical interface for reducing echelle spectrograph FITS data.
 
 ## Table of Contents
 

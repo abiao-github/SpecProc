@@ -1,6 +1,6 @@
 # SpecProc: 光谱数据处理图形界面工具
 
-一个完整的基于 PyQt 的图形界面工具，用于处理阶梯光谱仪的 FITS 数据。受 [gamse](https://github.com/wangleon/gamse) 包启发。
+一个完整的基于 PyQt 的图形界面工具，用于处理阶梯光谱仪的 FITS 数据。
 
 ## 目录
 

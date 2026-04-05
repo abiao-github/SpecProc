@@ -135,8 +135,8 @@ specproc
 
 ```bash
 # 1. Create your working directory (e.g., for an observation project)
-mkdir -p ~/projects/2024/obs1
-cd ~/projects/2024/obs1
+mkdir -p ~/MyWorkDir/20241102
+cd ~/MyWorkDir/20241102
 
 # 2. Create subdirectories for data processing
 mkdir -p rawdata output
@@ -158,7 +158,7 @@ specproc --config ./specproc.cfg
 
 **Working directory** (where you process data):
 ```
-~/projects/2024/obs1/       # Your working directory
+~/myworkspace/20241102/     # Your working directory
 ├── rawdata/                  # Input FITS files
 │   ├── bias_*.fits
 │   ├── flat_*.fits
@@ -206,8 +206,8 @@ specproc --config ./specproc.cfg
 ```ini
 [data]
 # Raw FITS data directory (relative to working directory)
-# Example: If running in /home/user/obs1 and rawpath=20241102_hrs,
-# data will be loaded from /home/user/obs1/20241102_hrs/
+# Example: If running in /myworkspace/20241102 and rawpath=20241102_hrs,
+# data will be loaded from /myworkspace/20241102/20241102_hrs/
 rawpath = 20241102_hrs
 ```
 
@@ -216,8 +216,8 @@ rawpath = 20241102_hrs
 ```ini
 [reduce]
 # Output directory (relative to working directory)
-# Example: If running in /home/user/obs1 and output=output,
-# results will be saved in /home/user/obs1/output/
+# Example: If running in /myworkspace/20241102 and output=output,
+# results will be saved in /myworkspace/20241102/output/
 #
 # Output directory structure (corresponds to 9 processing steps):
 # output/
@@ -239,8 +239,8 @@ out_path = output
 All paths are relative to **current working directory**:
 
 ```bash
-# Assume working directory is /home/user/obs1/2024/11/02
-cd /home/user/obs1/2024/11/02
+# Assume working directory is ~/MyWorkDir/20241102
+cd ~/MyWorkDir/20241102
 
 # Config file:
 [data]
@@ -249,8 +249,8 @@ rawpath = 20241102_hrs
 out_path = output
 
 # Actual paths used:
-# Input:  /home/user/obs1/2024/11/02/20241102_hrs/
-# Output: /home/user/obs1/2024/11/02/output/
+# Input:  ~/MyWorkDir/20241102/20241102_hrs/
+# Output: ~/MyWorkDir/20241102/output/
 ```
 
 ### Intermediate Results Saving

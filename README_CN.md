@@ -206,8 +206,8 @@ specproc --config ./specproc.cfg
 ```ini
 [data]
 # 原始数据目录（相对于当前工作目录）
-# 例如：在 /home/user/obs1 目录运行 specproc
-# 如果 rawpath=20241102_hrs，则数据从 /home/user/obs1/20241102_hrs/ 加载
+# 例如：在 /myworkspace/20241102 目录运行 specproc
+# 如果 rawpath=20241102_hrs，则数据从 /myworkspace/20241102/20241102_hrs/ 加载
 rawpath = 20241102_hrs
 ```
 
@@ -216,21 +216,20 @@ rawpath = 20241102_hrs
 ```ini
 [reduce]
 # 输出目录（相对于当前工作目录）
-# 例如：在 /home/user/obs1 目录运行 specproc
-# 如果 out_path=output，则结果保存到 /home/user/obs1/output/
+# 例如：在 /myworkspace/20241102 目录运行 specproc
+# 如果 out_path=output，则结果保存到 /myworkspace/20241102/output/
 #
 # 输出目录结构（对应 9 个处理步骤）：
 # output/
-#   ├── step0_overscan/         # 第0步：过扫描校正后的图像（所有帧）
-#   ├── step1_bias/             # 第1步：主偏置帧
-#   ├── step2_flat/             # 第2步：主平场及 Blaze 轮廓
-#   ├── step3_background/       # 第3步：背景模型
-#   ├── step4_cosmic/           # 第4步：宇宙线校正后的科学图像（如启用）
-#   ├── step5_extraction/       # 第5步：提取的一维光谱（像素空间）
-#   ├── step6_wavelength/       # 第6步：波长定标解
-#   ├── step7_deblazing/        # 第7步：去 Blaze 的定标光谱（如保存）
-#   ├── step8_final_spectra/    # 第8步：科学帧的最终一维光谱
-#   └── step8_final_spectra/    # 每一步的诊断图表
+#   ├── step0_overscan/         # 第0步：过扫描校正后的图像和诊断图
+#   ├── step1_bias/             # 第1步：主偏置帧和诊断图
+#   ├── step2_flat/             # 第2步：主平场、Blaze 轮廓和诊断图
+#   ├── step3_background/       # 第3步：背景模型和诊断图
+#   ├── step4_cosmic/           # 第4步：宇宙线校正后的图像和诊断图（如启用）
+#   ├── step5_extraction/       # 第5步：提取的一维光谱和诊断图
+#   ├── step6_wavelength/       # 第6步：波长定标解和诊断图
+#   ├── step7_deblazing/        # 第7步：去 Blaze 的光谱和诊断图（如保存）
+#   └── step8_final_spectra/    # 第8步：科学帧的最终一维光谱和诊断图
 out_path = output
 ```
 
@@ -239,8 +238,8 @@ out_path = output
 所有路径都是相对于**当前工作目录**的：
 
 ```bash
-# 假设工作目录是 /home/user/obs1/2024/11/02
-cd /home/user/obs1/2024/11/02
+# 假设工作目录是 /myworkspace/20241102
+cd /myworkspace/20241102
 
 # 配置文件：
 [data]
@@ -249,8 +248,8 @@ rawpath = 20241102_hrs
 out_path = output
 
 # 实际使用的路径：
-# 输入：/home/user/obs1/2024/11/02/20241102_hrs/
-# 输出：/home/user/obs1/2024/11/02/output/
+# 输入：/myworkspace/20241102/20241102_hrs/
+# 输出：/myworkspace/20241102/output/
 ```
 
 ### 中间结果保存

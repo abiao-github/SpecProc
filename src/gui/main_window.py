@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
 
         self.bias_list = QListWidget()
         self.bias_list.setMinimumHeight(40)
+        self.bias_list.setSelectionMode(QListWidget.ExtendedSelection)
         layout.addWidget(self.bias_list, 1)
 
         # ===== FLAT FRAMES =====
@@ -161,6 +162,7 @@ class MainWindow(QMainWindow):
 
         self.flat_list = QListWidget()
         self.flat_list.setMinimumHeight(40)
+        self.flat_list.setSelectionMode(QListWidget.ExtendedSelection)
         layout.addWidget(self.flat_list, 1)
 
         # ===== CALIBRATION FRAMES =====
@@ -177,6 +179,7 @@ class MainWindow(QMainWindow):
 
         self.calib_list = QListWidget()
         self.calib_list.setMinimumHeight(40)
+        self.calib_list.setSelectionMode(QListWidget.ExtendedSelection)
         layout.addWidget(self.calib_list, 1)
 
         # ===== SCIENCE IMAGES =====
@@ -193,6 +196,7 @@ class MainWindow(QMainWindow):
 
         self.raw_list = QListWidget()
         self.raw_list.setMinimumHeight(40)
+        self.raw_list.setSelectionMode(QListWidget.ExtendedSelection)
         layout.addWidget(self.raw_list, 1)
 
         layout.addStretch()
@@ -366,12 +370,14 @@ class MainWindow(QMainWindow):
             self, "Select Wavelength Calibration Frame(s)", "", "FITS Files (*.fits *.fit)"
         )
         if files:
-            self.calib_file = files  # Store as list
-            self.calib_list.clear()
+            # Initialize as list if not already
+            if not isinstance(self.calib_file, list):
+                self.calib_file = []
+            # Append new files to existing list
             for f in files:
                 self.calib_file.append(f)
                 self.calib_list.addItem(Path(f).name)
-            self.statusBar.showMessage(f"Added {len(files)} calibration frame(s)")
+            self.statusBar.showMessage(f"Added {len(files)} calibration frame(s), total: {len(self.calib_file)}")
 
     def _remove_calib_file(self):
         """Remove selected calibration file from list."""
@@ -391,11 +397,11 @@ class MainWindow(QMainWindow):
             self, "Select Science Image(s)", "", "FITS Files (*.fits *.fit)"
         )
         if files:
-            self.raw_files = files
-            self.raw_list.clear()
+            # Append new files to existing list
             for f in files:
+                self.raw_files.append(f)
                 self.raw_list.addItem(Path(f).name)
-            self.statusBar.showMessage(f"Added {len(files)} science image(s)")
+            self.statusBar.showMessage(f"Added {len(files)} science image(s), total: {len(self.raw_files)}")
 
     def _remove_raw_file(self):
         """Remove selected science image from list."""

@@ -133,9 +133,6 @@ class MainWindow(QMainWindow):
 
         # ===== BIAS FRAMES =====
         layout.addWidget(QLabel("📊 Bias Frames:"))
-        self.bias_list = QListWidget()
-        self.bias_list.setMinimumHeight(40)
-        layout.addWidget(self.bias_list, 1)
 
         bias_btn_layout = QHBoxLayout()
         bias_add_btn = QPushButton("➕ Add Bias Frames...")
@@ -146,11 +143,12 @@ class MainWindow(QMainWindow):
         bias_btn_layout.addWidget(bias_del_btn)
         layout.addLayout(bias_btn_layout)
 
+        self.bias_list = QListWidget()
+        self.bias_list.setMinimumHeight(40)
+        layout.addWidget(self.bias_list, 1)
+
         # ===== FLAT FRAMES =====
         layout.addWidget(QLabel("📹 Flat Frames:"))
-        self.flat_list = QListWidget()
-        self.flat_list.setMinimumHeight(40)
-        layout.addWidget(self.flat_list, 1)
 
         flat_btn_layout = QHBoxLayout()
         flat_add_btn = QPushButton("➕ Add Flat Frames...")
@@ -161,11 +159,12 @@ class MainWindow(QMainWindow):
         flat_btn_layout.addWidget(flat_del_btn)
         layout.addLayout(flat_btn_layout)
 
+        self.flat_list = QListWidget()
+        self.flat_list.setMinimumHeight(40)
+        layout.addWidget(self.flat_list, 1)
+
         # ===== CALIBRATION FRAMES =====
         layout.addWidget(QLabel("🔬 Wavelength Calibration Frames (ThAr/Ar/Ne):"))
-        self.calib_list = QListWidget()
-        self.calib_list.setMinimumHeight(40)
-        layout.addWidget(self.calib_list, 1)
 
         calib_btn_layout = QHBoxLayout()
         calib_add_btn = QPushButton("➕ Add Calibration Frame(s)...")
@@ -176,11 +175,12 @@ class MainWindow(QMainWindow):
         calib_btn_layout.addWidget(calib_del_btn)
         layout.addLayout(calib_btn_layout)
 
+        self.calib_list = QListWidget()
+        self.calib_list.setMinimumHeight(40)
+        layout.addWidget(self.calib_list, 1)
+
         # ===== SCIENCE IMAGES =====
         layout.addWidget(QLabel("🌟 Science Image(s):"))
-        self.raw_list = QListWidget()
-        self.raw_list.setMinimumHeight(40)
-        layout.addWidget(self.raw_list, 1)
 
         raw_btn_layout = QHBoxLayout()
         raw_add_btn = QPushButton("➕ Add Science Image(s)...")
@@ -190,6 +190,10 @@ class MainWindow(QMainWindow):
         raw_btn_layout.addWidget(raw_add_btn)
         raw_btn_layout.addWidget(raw_del_btn)
         layout.addLayout(raw_btn_layout)
+
+        self.raw_list = QListWidget()
+        self.raw_list.setMinimumHeight(40)
+        layout.addWidget(self.raw_list, 1)
 
         layout.addStretch()
 

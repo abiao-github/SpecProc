@@ -76,6 +76,11 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QFormLayout()
 
+        # Raw data path
+        self.rawdata_path_edit = QLineEdit()
+        layout.addRow("Raw Data Path:", self.rawdata_path_edit)
+
+        # FITS header keywords
         self.statime_key_edit = QLineEdit()
         layout.addRow("Start Time Key:", self.statime_key_edit)
 
@@ -86,6 +91,15 @@ class SettingsDialog(QDialog):
         self.direction_combo = QComboBox()
         self.direction_combo.addItems(['xr-', 'xl-', 'yr-', 'yl-'])
         layout.addRow("Dispersion Direction:", self.direction_combo)
+
+        # Overscan configuration
+        self.overscan_start_column = QSpinBox()
+        self.overscan_start_column.setRange(1, 10000)
+        layout.addRow("Overscan Start Column:", self.overscan_start_column)
+
+        self.overscan_method_combo = QComboBox()
+        self.overscan_method_combo.addItems(['median', 'polynomial'])
+        layout.addRow("Overscan Method:", self.overscan_method_combo)
 
         widget.setLayout(layout)
         return widget
@@ -151,9 +165,12 @@ class SettingsDialog(QDialog):
     def load_current_values(self):
         """Load current configuration values into UI."""
         # Data tab
+        self.rawdata_path_edit.setText(self.config.get('data', 'rawdata_path', ''))
         self.statime_key_edit.setText(self.config.get('data', 'statime_key', 'DATE-OBS'))
         self.exptime_key_edit.setText(self.config.get('data', 'exptime_key', 'EXPTIME'))
         self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xr-'))
+        self.overscan_start_column.setValue(self.config.get_int('data', 'overscan_start_column', 4097))
+        self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'median'))
 
         # Reduce tab
         self.output_path_edit.setText(self.config.get('reduce', 'output_path', './output'))
@@ -164,8 +181,6 @@ class SettingsDialog(QDialog):
 
         # Overscan tab
         self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'median'))
-
-        # Simplified overscan
         self.overscan_start_column.setValue(self.config.get_int('data', 'overscan_start_column', 4097))
 
 
@@ -183,6 +198,10 @@ class SettingsDialog(QDialog):
             self.config.set('reduce', 'fig_format', self.fig_format_combo.currentText())
             self.config.set('reduce', 'oned_suffix', self.oned_suffix_edit.text())
             self.config.set('reduce', 'auto_process_all_images', 'yes' if self.auto_process_check.isChecked() else 'no')
+
+            # Overscan tab
+            self.config.set('data', 'overscan_method', self.overscan_method_combo.currentText())
+            self.config.set('data', 'overscan_start_column', str(self.overscan_start_column.value()))
 
             # Overscan tab
             self.config.set('data', 'overscan_method', self.overscan_method_combo.currentText())

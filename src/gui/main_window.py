@@ -320,20 +320,20 @@ class MainWindow(QMainWindow):
             self, "Select Bias Frames", "", "FITS Files (*.fits *.fit)"
         )
         if files:
-            self.bias_files = files
-            self.bias_list.clear()
             for f in files:
+                self.bias_files.append(f)
                 self.bias_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} bias frames")
 
     def _remove_bias_file(self):
         """Remove selected bias file from list."""
         for item in self.bias_list.selectedItems():
-            idx = self.bias_list.row(item)
-            if idx < len(self.bias_files):
-                self.bias_files.pop(idx)
-                self.bias_list.takeItem(idx)
-        self.statusBar.showMessage(f"Bias frames: {len(self.bias_files)} remaining")
+            try:
+                idx = self.bias_list.row(item)
+                if idx < len(self.bias_files):
+                    self.bias_files.pop(idx)
+                    self.bias_list.takeItem(idx)
+            self.statusBar.showMessage(f"Bias frames: {len(self.bias_files)} remaining")
 
     def _select_flat_files(self):
         """Select flat frame files."""
@@ -341,20 +341,20 @@ class MainWindow(QMainWindow):
             self, "Select Flat Frames", "", "FITS Files (*.fits *.fit)"
         )
         if files:
-            self.flat_files = files
-            self.flat_list.clear()
             for f in files:
+                self.flat_files.append(f)
                 self.flat_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} flat frames")
 
     def _remove_flat_file(self):
         """Remove selected flat file from list."""
         for item in self.flat_list.selectedItems():
-            idx = self.flat_list.row(item)
-            if idx < len(self.flat_files):
-                self.flat_files.pop(idx)
-                self.flat_list.takeItem(idx)
-        self.statusBar.showMessage(f"Flat frames: {len(self.flat_files)} remaining")
+            try:
+                idx = self.flat_list.row(item)
+                if idx < len(self.flat_files):
+                    self.flat_files.pop(idx)
+                    self.flat_list.takeItem(idx)
+            self.statusBar.showMessage(f"Flat frames: {len(self.flat_files)} remaining")
 
     def _select_calib_files(self):
         """Select wavelength calibration frame(s)."""
@@ -365,17 +365,19 @@ class MainWindow(QMainWindow):
             self.calib_file = files  # Store as list
             self.calib_list.clear()
             for f in files:
+                self.calib_file.append(f)
                 self.calib_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} calibration frame(s)")
 
     def _remove_calib_file(self):
         """Remove selected calibration file from list."""
         for item in self.calib_list.selectedItems():
-            idx = self.calib_list.row(item)
-            if isinstance(self.calib_file, list) and idx < len(self.calib_file):
-                self.calib_file.pop(idx)
-                self.calib_list.takeItem(idx)
-        self.statusBar.showMessage(f"Calibration frames: {len(self.calib_file) if isinstance(self.calib_file, list) else 0} remaining")
+            try:
+                idx = self.calib_list.row(item)
+                if isinstance(self.calib_file, list) and idx < len(self.calib_file):
+                    self.calib_file.pop(idx)
+                    self.calib_list.takeItem(idx)
+                self.statusBar.showMessage(f"Calibration frames: {len(self.calib_file)} remaining")
 
     def _select_raw_files(self):
         """Select science image file(s)."""
@@ -383,9 +385,8 @@ class MainWindow(QMainWindow):
             self, "Select Science Image(s)", "", "FITS Files (*.fits *.fit)"
         )
         if files:
-            self.raw_files = files  # Store as list
-            self.raw_list.clear()
             for f in files:
+                self.raw_files.append(f)
                 self.raw_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} science image(s)")
 

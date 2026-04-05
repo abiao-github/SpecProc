@@ -3,6 +3,15 @@
 SpecProc Application Launcher
 
 PyQt-based GUI or CLI for echelle spectrograph FITS data reduction.
+
+Note: If you encounter import errors, please use the proper launch method:
+- For GUI:  python3 run.py --mode gui
+- For CLI:  python3 run.py --mode cli
+
+Or install in development mode:
+  pip install -e .
+
+Make sure SpecProc is installed in your Python environment.
 """
 
 import argparse

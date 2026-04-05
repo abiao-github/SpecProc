@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SpecProc"
+version = "1.0.0"
+description = "A spectral processing tool"
+readme = "README.md"
+requires-python = ">=3.6"
+license = {text = "MIT"}
+authors = [
+    {name = "Niu, Hubiao", email = "your.email@example.com"}
+]
+keywords = ["spectroscopy", "FITS", "data-reduction"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "matplotlib",
+    "PyQt5",
+    "configparser",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/specproc"
+Repository = "https://github.com/yourusername/specproc"
+
+[project.scripts]
+specproc = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+src = ["*.cfg", "*.sample"]

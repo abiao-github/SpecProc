@@ -333,7 +333,9 @@ class MainWindow(QMainWindow):
                 if idx < len(self.bias_files):
                     self.bias_files.pop(idx)
                     self.bias_list.takeItem(idx)
-            self.statusBar.showMessage(f"Bias frames: {len(self.bias_files)} remaining")
+                self.statusBar.showMessage(f"Bias frames: {len(self.bias_files)} remaining")
+            except Exception as e:
+                self.statusBar.showMessage(f"Error removing bias file: {e}")
 
     def _select_flat_files(self):
         """Select flat frame files."""
@@ -354,7 +356,9 @@ class MainWindow(QMainWindow):
                 if idx < len(self.flat_files):
                     self.flat_files.pop(idx)
                     self.flat_list.takeItem(idx)
-            self.statusBar.showMessage(f"Flat frames: {len(self.flat_files)} remaining")
+                self.statusBar.showMessage(f"Flat frames: {len(self.flat_files)} remaining")
+            except Exception as e:
+                self.statusBar.showMessage(f"Error removing flat file: {e}")
 
     def _select_calib_files(self):
         """Select wavelength calibration frame(s)."""
@@ -378,6 +382,8 @@ class MainWindow(QMainWindow):
                     self.calib_file.pop(idx)
                     self.calib_list.takeItem(idx)
                 self.statusBar.showMessage(f"Calibration frames: {len(self.calib_file)} remaining")
+            except Exception as e:
+                self.statusBar.showMessage(f"Error removing calibration file: {e}")
 
     def _select_raw_files(self):
         """Select science image file(s)."""
@@ -385,19 +391,23 @@ class MainWindow(QMainWindow):
             self, "Select Science Image(s)", "", "FITS Files (*.fits *.fit)"
         )
         if files:
+            self.raw_files = files
+            self.raw_list.clear()
             for f in files:
-                self.raw_files.append(f)
                 self.raw_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} science image(s)")
 
     def _remove_raw_file(self):
         """Remove selected science image from list."""
         for item in self.raw_list.selectedItems():
-            idx = self.raw_list.row(item)
-            if idx < len(self.raw_files):
-                self.raw_files.pop(idx)
-                self.raw_list.takeItem(idx)
-        self.statusBar.showMessage(f"Science images: {len(self.raw_files)} remaining")
+            try:
+                idx = self.raw_list.row(item)
+                if idx < len(self.raw_files):
+                    self.raw_files.pop(idx)
+                    self.raw_list.takeItem(idx)
+                self.statusBar.showMessage(f"Science images: {len(self.raw_files)} remaining")
+            except Exception as e:
+                self.statusBar.showMessage(f"Error removing science image: {e}")
 
     def _run_full_pipeline(self):
         """Execute full processing pipeline."""

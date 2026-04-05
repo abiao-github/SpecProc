@@ -260,9 +260,33 @@ class ConfigManager:
             self.config[section] = {}
         self.config[section][key] = str(value)
 
+    def get_rawdata_path(self) -> str:
+        """
+        Get raw data directory path with proper expansion.
+
+        Returns:
+            Expanded path (absolute or relative to current working directory)
+        """
+        rawdata_path = self.get('data', 'rawdata_path', './rawdata')
+        # Expand ~ to user's home directory
+        rawdata_path = Path(rawdata_path).expanduser().as_posix()
+        return rawdata_path
+
+    def get_output_path(self) -> str:
+        """
+        Get output directory path with proper expansion.
+
+        Returns:
+            Expanded path (absolute or relative to current working directory)
+        """
+        output_path = self.get('reduce', 'output_path', './output')
+        # Expand ~ to user's home directory
+        output_path = Path(output_path).expanduser().as_posix()
+        return output_path
+
     def create_directories(self):
         """Create output directories specified in config."""
-        output_path = self.get('reduce', 'output_path', './output')
+        output_path = self.get_output_path()
 
         dirs = [
             output_path,

@@ -147,7 +147,7 @@ def process_overscan_stage(config: ConfigManager, image_filenames: List[str],
 
     # Use default midpath if not provided
     if midpath is None:
-        output_path = config.get('reduce', 'output_path', './output')
+        output_path = config.get_output_path()
 
     stage = OverscanCorrectionStage(config)
 

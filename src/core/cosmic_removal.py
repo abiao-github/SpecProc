@@ -58,7 +58,7 @@ def process_cosmic_stage(config: ConfigManager, image_filenames: List[str], midp
     logger.info("=" * 60)
 
     if midpath is None:
-        base_output_path = config.get('reduce', 'output_path', './output')
+        base_output_path = config.get_output_path()
 
     cosmic_path = Path(base_output_path) / 'step4_cosmic'
     cosmic_path.mkdir(parents=True, exist_ok=True)

@@ -205,19 +205,35 @@ specproc --config ./specproc.cfg
 
 ```ini
 [data]
-# 原始数据目录（相对于当前工作目录）
+# 原始数据目录路径
 # 例如：在 /myworkspace/ 目录运行 specproc
-# 如果 rawdata_path=20241102_hrs，则数据从 /myworkspace/20241102_hrs/ 加载
-rawdata_path = 20241102_hrs
+#
+# 路径行为：
+# - rawdata_path = /data/20241102_hrs  → 绝对路径，从 /data/20241102_hrs/ 加载数据
+# - rawdata_path = ./20241102_hrs       → 相对路径，从工作目录/20241102_hrs/ 加载数据
+#   （例如：在 /myworkspace/ 目录下运行，则从 /myworkspace/20241102_hrs/ 加载）
+#
+# 示例（假设工作目录是 /myworkspace/）：
+#   rawdata_path = ./20241102_hrs      → 数据从 /myworkspace/20241102_hrs/ 加载
+#   rawdata_path = /data/20241102_hrs   → 数据从 /data/20241102_hrs/ 加载
+rawdata_path = ./20241102_hrs
 ```
 
 #### 输出路径
 
 ```ini
 [reduce]
-# 输出目录（相对于当前工作目录）
+# 输出目录路径（所有处理结果）
 # 例如：在 /myworkspace/ 目录运行 specproc
-# 如果 output_path=output，则结果保存到 /myworkspace/output/
+#
+# 路径行为：
+# - output_path = /data/output  → 绝对路径，结果保存到 /data/output/
+# - output_path = ./output      → 相对路径，结果保存到工作目录/output/
+#   （例如：在 /myworkspace/ 目录下运行，则保存到 /myworkspace/output/）
+#
+# 示例（假设工作目录是 /myworkspace/）：
+#   output_path = ./output        → 结果保存到 /myworkspace/output/
+#   output_path = /data/output    → 结果保存到 /data/output/
 #
 # 输出目录结构（对应 9 个处理步骤）：
 # output/
@@ -233,23 +249,31 @@ rawdata_path = 20241102_hrs
 output_path = output
 ```
 
-#### 路径相对性说明
-
-所有路径都是相对于**当前工作目录**的：
+#### 路径示例
 
 ```bash
 # 假设工作目录是 /myworkspace/
 cd /myworkspace/
 
-# 配置文件：
+# 配置文件（相对路径示例）：
 [data]
-rawdata_path = 20241102_hrs
+rawdata_path = ./20241102_hrs
 [reduce]
-output_path = output
+output_path = ./output
 
 # 实际使用的路径：
 # 输入：/myworkspace/20241102_hrs/
 # 输出：/myworkspace/output/
+
+# 配置文件（绝对路径示例）：
+[data]
+rawdata_path = /data/20241102_hrs
+[reduce]
+output_path = /data/output
+
+# 实际使用的路径：
+# 输入：/data/20241102_hrs/
+# 输出：/data/output/
 ```
 
 ### 中间结果保存

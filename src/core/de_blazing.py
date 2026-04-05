@@ -141,7 +141,7 @@ def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
 
     # Save de-blazed spectra if enabled
     if save_output and config.get_bool('reduce.save_intermediate', 'save_deblaze', True):
-        base_output_path = config.get('reduce', 'output_path', './output')
+        base_output_path = config.get_output_path()
         deblazed_file = Path(base_output_path) / 'step7_deblazing' / 'deblazed_spectra.fits'
         deblazed_file.parent.mkdir(parents=True, exist_ok=True)
         save_deblazed_spectra(str(deblazed_file), deblazed_spectra)

@@ -61,12 +61,15 @@ def choose_files(files: List[Path], prompt: str) -> List[Path]:
 def run_cli(config_path: str = None):
     config = ConfigManager(config_path)
 
-    rawdata_path = config.get('data', 'rawdata_path', './rawdata')
+    rawdata_path = config.get_rawdata_path()
     if not Path(rawdata_path).exists():
         rawdata_path = input(f"当前 rawdata_path 路径 '{rawdata_path}' 不存在，请输入 RawData 路径或回车使用默认：").strip() or rawdata_path
+        # Store the path as entered (without expanding for config file)
+        config.set('data', 'rawdata_path', rawdata_path)
+        config.save()
+        # Re-read with expansion for use
+        rawdata_path = Path(rawdata_path).expanduser().as_posix()
     Path(rawdata_path).mkdir(parents=True, exist_ok=True)
-    config.set('data', 'rawdata_path', rawdata_path)
-    config.save()
 
     files = sorted(Path(rawdata_path).glob("*.fits"))
     if not files:

@@ -149,7 +149,7 @@ def process_bias_stage(config: ConfigManager, bias_filenames: List[str],
     master_bias, uncertainty = corrector.combine_bias_frames(bias_filenames)
 
     # Save master bias
-    base_output_path = config.get('reduce', 'output_path', './output')
+    base_output_path = config.get_output_path()
     output_path = Path(base_output_path) / 'step1_bias' / 'master_bias.fits'
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corrector.save_master_bias(str(output_path))

@@ -512,7 +512,7 @@ class ProcessingPipeline:
             final_spectra = self.stage_de_blazing(calibrated_spectra)
 
             # Save final spectra to output/step8_final_spectra/
-            base_output_path = self.config.get('reduce', 'output_path', './output')
+            base_output_path = self.config.get_output_path()
             spectra_dir = Path(base_output_path) / 'step8_final_spectra'
             spectra_dir.mkdir(parents=True, exist_ok=True)
 

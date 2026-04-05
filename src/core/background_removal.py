@@ -154,7 +154,7 @@ def process_background_stage(config: ConfigManager, science_image: np.ndarray,
     """
     # Use default midpath if not provided
     if midpath is None:
-        base_output_path = config.get('reduce', 'output_path', './output')
+        base_output_path = config.get_output_path()
         midpath = str(Path(base_output_path) / 'midpath')
 
     remover = BackgroundRemover(config)
@@ -166,7 +166,7 @@ def process_background_stage(config: ConfigManager, science_image: np.ndarray,
     background = remover.estimate_background(science_image, order=poly_order)
 
     # Save background
-    base_output_path = config.get('reduce', 'output_path', './output')
+    base_output_path = config.get_output_path()
     background_file = Path(base_output_path) / 'step3_background' / 'background_model.fits'
     background_file.parent.mkdir(parents=True, exist_ok=True)
     remover.save_background(str(background_file))

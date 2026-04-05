@@ -370,13 +370,13 @@ flowchart TD
     subgraph Stage3 [STAGE 3: Background Subtraction]
         D0[Read bias corrected image] --> D1[Estimate background]
         D1 --> D2[Fit 2D polynomial]
-        D2a --> D3a[Median filter]
-        D2b --> D3b[Apply 2D polynomial]
+        D2 --> D3a[Median filter]
+        D2 --> D3b[Apply 2D polynomial]
         D3a --> End3a[Output: Background subtracted image]
-        D3b --> End3b[Continue to stage 4a]
+        D3b --> End3b[Continue to stage 4]
     end
-
-    End3 --> Stage4
+    End3a --> Stage4
+    End3b --> Stage4
 
     subgraph Stage4 [STAGE 4: Cosmic Ray Correction]
         E0[Read background subtracted image] --> E1[Detect cosmic rays]
@@ -392,7 +392,7 @@ flowchart TD
         F1 --> F2b[Optimal extraction Horne 1986]
         F2a --> F3[Extract 1D spectrum for each order]
         F2b --> F4[Calculate extraction errors]
-        F4 --> End5[Output: SpectraSet (pixel space)]
+        F4 --> End5[Output: SpectraSet pixel space]
     end
     End5 --> Stage6
 
@@ -410,15 +410,15 @@ flowchart TD
     subgraph Stage7 [STAGE 7: De-blazing]
         H0[Read wavelength calibrated spectrum] --> H1[Read flat spectrum blaze function]
         H1 --> H2{Order matching}
-        H2 --> H3[Match corresponding orders B lambda]
-        H3 --> H4[Divide by blaze function F_corrected lambda]
+        H2 --> H3[Match corresponding orders]
+        H3 --> H4[Divide by blaze function]
         H4 --> H5[Normalize to unit continuum]
         H5 --> End7[Output: Final calibrated spectrum]
     end
 
     End7 --> Final
 
-    Final([End]) --> Output[Output files output/spectra/*.fits output/midpath/ output/figures/*.png]
+    Final([End]) --> Output[Output files]
 
     style Stage0 fill:#e1f5ff
     style Stage1 fill:#fff4e1

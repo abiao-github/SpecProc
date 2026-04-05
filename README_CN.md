@@ -338,88 +338,88 @@ calibration_file = wlcalib_20211123011_A.fits
 
 ```mermaid
 flowchart TD
-    Start([开始]) --> Stage0
-    subgraph Stage0 [第0步: 过扫描校正]
-        A0[读取原始 FITS 文件] --> A1[提取 overscan 区域]
-        A1 --> A2[计算中值或多项式拟合]
-        A2 --> A3[从图像减去 overscan 偏置]
-        A3 --> End0[输出: overscan 校正的图像]
+    Start([开始 Start]) --> Stage0
+    subgraph Stage0 [STAGE 0: Overscan Correction]
+        A0[读取原始 FITS 文件 Read raw FITS files] --> A1[提取 overscan 区域 Extract overscan region]
+        A1 --> A2[计算中值或多项式拟合 Calculate median or polynomial fit]
+        A2 --> A3[从图像减去 overscan 偏置 Subtract overscan bias from image]
+        A3 --> End0[输出: overscan 校正的图像 Output: Overscan corrected image]
     end
     End0 --> Stage1
 
-    subgraph Stage1 [第1步: 偏置减除]
-        B0[读取 overscan 校正的图像] --> B1[合并 bias 帧]
-        B1 --> B2[生成 master bias]
-        B2 --> B3[从图像减去 master bias]
-        B3 --> End1[输出: 偏置校正的图像]
+    subgraph Stage1 [STAGE 1: Bias Subtraction]
+        B0[读取 overscan 校正的图像 Read overscan corrected images] --> B1[合并 bias 帧 Combine bias frames]
+        B1 --> B2[生成 master bias Generate master bias]
+        B2 --> B3[从图像减去 master bias Subtract master bias from images]
+        B3 --> End1[输出: 偏置校正的图像 Output: Bias corrected image]
     end
     End1 --> Stage2
 
-    subgraph Stage2 [第2步: 平场改正与阶序追踪]
-        C0[读取偏置校正的平场图像] --> C1[合并平场图像]
-        C1 --> C2[生成 master flat]
-        C2 --> C3[检测阶梯阶序]
-        C3 --> C4[为每个阶序拟合多项式轨迹]
-        C4 --> C5[提取 blaze 函数]
-        C5 --> End2[输出: master flat 和阶序]
+    subgraph Stage2 [STAGE 2: Flat Fielding and Order Tracing]
+        C0[读取偏置校正的平场图像 Read bias corrected flat frames] --> C1[合并平场图像 Combine flat frames]
+        C1 --> C2[生成 master flat Generate master flat]
+        C2 --> C3[检测阶梯阶序 Detect echelle orders]
+        C3 --> C4[为每个阶序拟合多项式轨迹 Fit polynomial traces for each order]
+        C4 --> C5[提取 blaze 函数 Extract blaze profiles]
+        C5 --> End2[输出: master flat 和阶序 Output: Master flat and apertures]
     end
     End2 --> Stage3
 
-    subgraph Stage3 [第3步: 背景扣除]
-        D0[读取偏置校正的图像] --> D1[估计背景]
-        D1 --> D2{方法?}
-        D2 -- 2D 多项式 --> D3a[拟合 2D 多项式]
-        D2 -- 中值滤波 --> D3b[应用中值滤波]
-        D3a --> D4[减去背景]
+    subgraph Stage3 [STAGE 3: Background Subtraction]
+        D0[读取偏置校正的图像 Read bias corrected image] --> D1[估计背景 Estimate background]
+        D1 --> D2{方法? Method?}
+        D2 -- 2D 多项式 2D Polynomial --> D3a[拟合 2D 多项式 Fit 2D polynomial]
+        D2 -- 中值滤波 Median Filter --> D3b[应用中值滤波 Apply median filter]
+        D3a --> D4[减去背景 Subtract background]
         D3b --> D4
-        D4 --> End3a[输出: 背景扣除的图像]
-        D4 --> End3b[继续到第4步]
+        D4 --> End3a[输出: 背景扣除的图像 Output: Background subtracted image]
+        D4 --> End3b[继续到第4步 Continue to stage 4]
     end
     End3a --> Stage4a
     End3b --> Stage4b
 
-    subgraph Stage4 [第4步: 宇宙线去除]
-        E0[读取背景扣除的图像] --> E1[检测宇宙线]
-        E1 --> E2[均值 + σ×std 阈值]
-        E2 --> E3[识别宇宙线像素]
-        E3 --> E4[用中值滤波插值]
-        E4 --> End4[输出: 宇宙线校正的图像]
+    subgraph Stage4 [STAGE 4: Cosmic Ray Correction]
+        E0[读取背景扣除的图像 Read background subtracted image] --> E1[检测宇宙线 Detect cosmic rays]
+        E1 --> E2[均值 + sigma 阈值 Mean + sigma threshold]
+        E2 --> E3[识别宇宙线像素 Identify cosmic ray pixels]
+        E3 --> E4[用中值滤波插值 Interpolate with median filter]
+        E4 --> End4[输出: 宇宙线校正的图像 Output: Cosmic ray corrected image]
     end
     End4 --> Stage5
 
-    subgraph Stage5 [第5步: 一维谱提取]
-        F0[读取宇宙线校正的图像] --> F1{提取方法?}
-        F1 -- 求和提取 --> F2a[简单孔径求和]
-        F1 -- 最优提取 --> F2b[最优提取 Horne 1986]
-        F2a --> F3[提取每个阶序的 1D 光谱]
+    subgraph Stage5 [STAGE 5: 1D Spectrum Extraction]
+        F0[读取宇宙线校正的图像 Read cosmic ray corrected image] --> F1{提取方法? Extraction method?}
+        F1 -- 求和提取 Sum extraction --> F2a[简单孔径求和 Simple aperture sum]
+        F1 -- 最优提取 Optimal extraction --> F2b[最优提取 Horne 1986]
+        F2a --> F3[提取每个阶序的 1D 光谱 Extract 1D spectrum for each order]
         F2b --> F3
-        F3 --> F4[计算提取误差]
-        F4 --> End5[输出: SpectraSet (像素空间)]
+        F3 --> F4[计算提取误差 Calculate extraction errors]
+        F4 --> End5[输出: SpectraSet 像素空间 Output: SpectraSet pixel space]
     end
     End5 --> Stage6
 
-    subgraph Stage6 [第6步: 波长定标]
-        G0[第一步: ThAr 灯谱定标] --> G1[提取 ThAr 1D 光谱]
-        G1 --> G2[识别发射谱线]
-        G2 --> G3[拟合 2D 波长多项式 λ x,y = Σ p_ij·x^i·y^j]
-        G3 --> G4[建立像素→波长映射]
-        G4 --> G5[第二步: 应用到 science 光谱]
-        G5 --> G6[转换像素坐标为波长单位]
-        G6 --> End6[输出: 波长定标的 1D 光谱]
+    subgraph Stage6 [STAGE 6: Wavelength Calibration]
+        G0[第一步: ThAr 灯谱定标 Step 1: ThAr lamp calibration] --> G1[提取 ThAr 1D 光谱 Extract ThAr 1D spectrum]
+        G1 --> G2[识别发射谱线 Identify emission lines]
+        G2 --> G3[拟合 2D 波长多项式 Fit 2D wavelength polynomial]
+        G3 --> G4[建立像素到波长映射 Establish pixel to wavelength mapping]
+        G4 --> G5[第二步: 应用到 science 光谱 Step 2: Apply to science spectrum]
+        G5 --> G6[转换像素坐标为波长单位 Convert pixel coordinates to wavelength units]
+        G6 --> End6[输出: 波长定标的 1D 光谱 Output: Wavelength calibrated 1D spectrum]
     end
     End6 --> Stage7
 
-    subgraph Stage7 [第7步: Blaze 函数改正]
-        H0[读取波长定标的光谱] --> H1[读取 flat 光谱的 Blaze 函数]
-        H1 --> H2{阶序匹配}
-        H2 --> H3[匹配对应阶序的 B λ]
-        H3 --> H4[除以 Blaze 函数 F_corrected λ = F_observed λ / B λ]
-        H4 --> H5[归一化到单位连续谱]
-        H5 --> End7[输出: 最终校准光谱]
+    subgraph Stage7 [STAGE 7: De-blazing]
+        H0[读取波长定标的光谱 Read wavelength calibrated spectrum] --> H1[读取 flat 光谱的 Blaze 函数 Read flat spectrum blaze function]
+        H1 --> H2{阶序匹配 Order matching}
+        H2 --> H3[匹配对应阶序 Match corresponding orders]
+        H3 --> H4[除以 Blaze 函数 Divide by blaze function]
+        H4 --> H5[归一化到单位连续谱 Normalize to unit continuum]
+        H5 --> End7[输出: 最终校准光谱 Output: Final calibrated spectrum]
     end
     End7 --> Final
 
-    Final([结束]) --> Output[输出文件 output/spectra/*.fits output/midpath/ output/figures/*.png]
+    Final([结束 End]) --> Output[输出文件 Output files]
 
     style Stage0 fill:#e1f5ff
     style Stage1 fill:#fff4e1

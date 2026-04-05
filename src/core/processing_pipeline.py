@@ -46,13 +46,6 @@ class ProcessingPipeline:
         """
         self.progress_callback = callback
 
-    def _get_midpath(self, suffix: str = 'midpath') -> str:
-        """Get midpath subdirectory under out_path."""
-        out_path = self.config.get('reduce', 'out_path', './output')
-        midpath = Path(out_path) / suffix
-        midpath.mkdir(parents=True, exist_ok=True)
-        return str(midpath)
-
     def _report_progress(self, progress: float, stage: str):
         """Report progress to callback."""
         self.state.progress = progress
@@ -78,8 +71,7 @@ class ProcessingPipeline:
         self._report_progress(0.01, "Overscan Correction")
 
         try:
-            midpath = self._get_midpath('midpath')
-            corrected_files = process_overscan_stage(self.config, raw_filenames, midpath)
+            corrected_files = process_overscan_stage(self.config, raw_filenames, None)
 
             self._report_progress(0.05, "Overscan Correction Complete")
             logger.info("✓ Overscan correction stage complete")
@@ -112,8 +104,7 @@ class ProcessingPipeline:
         self._report_progress(0.06, "Cosmic Ray Correction")
 
         try:
-            midpath = self._get_midpath('midpath')
-            corrected_files = process_cosmic_stage(self.config, filenames, midpath)
+            corrected_files = process_cosmic_stage(self.config, filenames, None)
 
             self._report_progress(0.08, "Cosmic Ray Correction Complete")
             logger.info("✓ Cosmic ray correction stage complete")
@@ -144,8 +135,7 @@ class ProcessingPipeline:
         self._report_progress(0.05, "Bias Correction")
 
         try:
-            midpath = self._get_midpath('midpath')
-            master_bias, bias_file = process_bias_stage(self.config, bias_filenames, midpath)
+            master_bias, bias_file = process_bias_stage(self.config, bias_filenames, None)
 
             self.state.bias_frame = master_bias
             self.state.bias_done = True
@@ -178,8 +168,7 @@ class ProcessingPipeline:
         self._report_progress(0.15, "Flat Fielding")
 
         try:
-            midpath = self._get_midpath('midpath')
-            flat_field, apertures = process_flat_stage(self.config, flat_filenames, midpath)
+            flat_field, apertures = process_flat_stage(self.config, flat_filenames, None)
 
             self.state.flat_field = flat_field
             self.state.apertures = apertures
@@ -212,8 +201,7 @@ class ProcessingPipeline:
         self._report_progress(0.30, "Wavelength Calibration")
 
         try:
-            midpath = self._get_midpath('midpath')
-            wave_calib = process_wavelength_stage(self.config, calib_filename, midpath)
+            wave_calib = process_wavelength_stage(self.config, calib_filename, None)
 
             self.state.wavelength_calib = wave_calib
             self.state.wavelength_done = True
@@ -251,8 +239,7 @@ class ProcessingPipeline:
         try:
             # First, calibrate the calibration frame if not already done
             if self.state.wavelength_calib is None:
-                midpath = self._get_midpath('midpath')
-                wave_calib = process_wavelength_stage(self.config, calib_filename, midpath)
+                wave_calib = process_wavelength_stage(self.config, calib_filename, None)
                 self.state.wavelength_calib = wave_calib
             else:
                 wave_calib = self.state.wavelength_calib
@@ -305,8 +292,7 @@ class ProcessingPipeline:
         self._report_progress(0.45, "Background Removal")
 
         try:
-            midpath = self._get_midpath('midpath')
-            background = process_background_stage(self.config, science_image, midpath)
+            background = process_background_stage(self.config, science_image, None)
 
             self.state.background_done = True
 
@@ -400,12 +386,11 @@ class ProcessingPipeline:
             raise RuntimeError("Apertures not available. Run flat fielding stage first.")
 
         try:
-            midpath = self._get_midpath('spectra')
             # Extract without wavelength calibration (will be applied in next stage)
             extracted_spectra = process_extraction_stage(
                 self.config, science_image, self.state.apertures,
                 None,  # No wavelength calibration yet
-                self.state.flat_field, midpath
+                self.state.flat_field, None
             )
 
             self.state.extracted_spectra = extracted_spectra
@@ -525,6 +510,34 @@ class ProcessingPipeline:
 
             # Stage 9: De-blazing correction
             final_spectra = self.stage_de_blazing(calibrated_spectra)
+
+            # Save final spectra to output/step8_final_spectra/
+            out_path = self.config.get('reduce', 'out_path', './output')
+            spectra_dir = Path(out_path) / 'step8_final_spectra'
+            spectra_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate output filename from science image
+            science_filename = Path(raw_image_path).stem
+            final_spectra_file = spectra_dir / f'{science_filename}_final.fits'
+
+            from src.core.de_blazing import save_deblazed_spectra
+            save_deblazed_spectra(str(final_spectra_file), final_spectra)
+
+            # Save diagnostic plots if enabled
+            save_plots = self.config.get_bool('reduce', 'save_plots', True)
+            if save_plots:
+                from src.plotting.spectra_plotter import plot_spectrum_to_file
+                fig_format = self.config.get('reduce', 'fig_format', 'png')
+                for spectrum in final_spectra.spectra.values():
+                    order = spectrum.aperture
+                    plot_file = spectra_dir / f'final_order_{order:02d}.{fig_format}'
+                    plot_spectrum_to_file(
+                        spectrum.wavelength,
+                        spectrum.flux,
+                        str(plot_file),
+                        spectrum.error if spectrum.error is not None else None,
+                        f"Final Spectrum - Order {order}"
+                    )
 
             self._report_progress(1.0, "Pipeline Complete")
 

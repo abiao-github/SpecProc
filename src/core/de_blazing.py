@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 from src.core.data_structures import SpectraSet, FlatField
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_spectrum_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,58 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
     return corrected_spectra
 
 
+def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
+    """Save de-blazed spectra to FITS file."""
+    if spectra_set is None:
+        raise RuntimeError("No de-blazed spectra to save")
+
+    from astropy.io import fits
+    from pathlib import Path
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create structured array for table
+    norders = spectra_set.norders
+    max_pixels = max([s.npixel() for s in spectra_set.spectra.values()])
+
+    # Create binary table
+    cols = []
+    for aperture_id in spectra_set.get_orders():
+        spec = spectra_set.get_spectrum(aperture_id)
+
+        # Pad arrays to same length
+        wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)))
+        fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)))
+
+        cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=[wl]))
+        cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=[fl]))
+
+        if spec.error is not None:
+            err = np.pad(spec.error, (0, max_pixels - len(spec.error)))
+            cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=[err]))
+
+    coldefs = fits.ColDefs(cols)
+    table_hdu = fits.BinTableHDU.from_columns(coldefs)
+
+    # Create header
+    header = fits.Header()
+    header['NORDERS'] = norders
+    header['NPX'] = max_pixels
+    header['CONTENTS'] = 'De-blazed calibrated spectra'
+    header['COMMENT'] = 'Wavelength in Angstroms, Flux in ADU'
+
+    primary_hdu = fits.PrimaryHDU(header=header)
+
+    hdul = fits.HDUList([primary_hdu, table_hdu])
+    hdul.writeto(str(output_path), overwrite=True)
+
+    logger.info(f"Saved {norders} de-blazed spectra to {output_path}")
+
+
 def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
-                           flat_field: Optional[FlatField] = None) -> SpectraSet:
+                           flat_field: Optional[FlatField] = None,
+                           save_output: bool = True) -> SpectraSet:
     """
     Execute de-blazing correction stage.
 
@@ -77,6 +128,7 @@ def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
         config: Configuration manager
         spectra_set: Extracted spectra
         flat_field: Flat field data with blaze profiles
+        save_output: Whether to save de-blazed spectra to file
 
     Returns:
         De-blazed spectra set
@@ -85,4 +137,30 @@ def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
         logger.warning("No flat field provided, skipping de-blazing")
         return spectra_set
 
-    return apply_de_blazing(spectra_set, flat_field)
+    deblazed_spectra = apply_de_blazing(spectra_set, flat_field)
+
+    # Save de-blazed spectra if enabled
+    if save_output and config.get_bool('reduce.save_intermediate', 'save_deblaze', True):
+        out_path = config.get('reduce', 'out_path', './output')
+        deblazed_file = Path(out_path) / 'step7_deblazing' / 'deblazed_spectra.fits'
+        deblazed_file.parent.mkdir(parents=True, exist_ok=True)
+        save_deblazed_spectra(str(deblazed_file), deblazed_spectra)
+
+        # Save diagnostic plots if enabled
+        save_plots = config.get_bool('reduce', 'save_plots', True)
+        if save_plots:
+            out_dir = deblazed_file.parent
+            fig_format = config.get('reduce', 'fig_format', 'png')
+            for spectrum in deblazed_spectra.spectra.values():
+                order = spectrum.aperture
+                if len(spectrum.wavelength) > 0:
+                    plot_file = out_dir / f'deblazed_order_{order:02d}.{fig_format}'
+                    plot_spectrum_to_file(
+                        spectrum.wavelength,
+                        spectrum.flux,
+                        str(plot_file),
+                        spectrum.error if spectrum.error is not None else None,
+                        f"De-blazed Spectrum - Order {order}"
+                    )
+
+    return deblazed_spectra

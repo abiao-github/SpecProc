@@ -11,6 +11,7 @@ from typing import List, Tuple, Optional
 from src.utils.fits_io import read_fits_image, write_fits_image, combine_fits_images
 from src.utils.image_processing import combine_images
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_2d_image_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,14 @@ class BiasCorrector:
         write_fits_image(output_path, self.master_bias, header=header)
         logger.info(f"Saved master bias to {output_path}")
 
+        # Save diagnostic plot if enabled
+        save_plots = self.config.get_bool('reduce', 'save_plots', True)
+        if save_plots:
+            out_dir = Path(output_path).parent
+            fig_format = self.config.get('reduce', 'fig_format', 'png')
+            plot_file = out_dir / f'master_bias.{fig_format}'
+            plot_2d_image_to_file(self.master_bias, str(plot_file), "Master Bias Frame")
+
     def load_master_bias(self, filepath: str):
         """Load pre-computed master bias from file."""
         self.master_bias, header = read_fits_image(filepath)
@@ -140,7 +149,8 @@ def process_bias_stage(config: ConfigManager, bias_filenames: List[str],
     master_bias, uncertainty = corrector.combine_bias_frames(bias_filenames)
 
     # Save master bias
-    output_path = Path(midpath) / 'bias.fits'
+    out_path = config.get('reduce', 'out_path', './output')
+    output_path = Path(out_path) / 'step1_bias' / 'master_bias.fits'
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corrector.save_master_bias(str(output_path))
 

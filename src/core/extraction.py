@@ -6,10 +6,12 @@ Handles 1D spectrum extraction using sum or optimal (Gaussian) methods.
 
 import numpy as np
 import logging
+from pathlib import Path
 from typing import Tuple, Optional
 from scipy.optimize import curve_fit
 from src.core.data_structures import Spectrum, SpectraSet, ApertureSet, WaveCalib, FlatField
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_spectrum_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -271,9 +273,26 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
                                                 wavelength_calib)
 
     # Save spectra
-    from pathlib import Path
-    Path(midpath).mkdir(parents=True, exist_ok=True)
-    spectra_file = Path(midpath) / 'extracted_spectra.fits'
+    out_path = config.get('reduce', 'out_path', './output')
+    spectra_file = Path(out_path) / 'step5_extraction' / 'extracted_spectra.fits'
+    spectra_file.parent.mkdir(parents=True, exist_ok=True)
     extractor.save_spectra(str(spectra_file), spectra_set)
+
+    # Save diagnostic plots if enabled
+    save_plots = config.get_bool('reduce', 'save_plots', True)
+    if save_plots:
+        out_dir = spectra_file.parent
+        fig_format = config.get('reduce', 'fig_format', 'png')
+        for spectrum in spectra_set.spectra.values():
+            order = spectrum.aperture
+            if wavelength_calib is not None and len(spectrum.wavelength) > 0:
+                plot_file = out_dir / f'extracted_order_{order:02d}.{fig_format}'
+                plot_spectrum_to_file(
+                    spectrum.wavelength,
+                    spectrum.flux,
+                    str(plot_file),
+                    spectrum.error if spectrum.error is not None else None,
+                    f"Extracted Spectrum - Order {order}"
+                )
 
     return spectra_set

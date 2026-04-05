@@ -6,10 +6,12 @@ Handles inter-order background (stray light) estimation and removal.
 
 import numpy as np
 import logging
+from pathlib import Path
 from typing import Tuple, Optional
 from scipy.ndimage import median_filter
 from src.utils.image_processing import estimate_background_2d
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_background_residuals
 
 logger = logging.getLogger(__name__)
 
@@ -164,9 +166,17 @@ def process_background_stage(config: ConfigManager, science_image: np.ndarray,
     background = remover.estimate_background(science_image, order=poly_order)
 
     # Save background
-    from pathlib import Path
-    Path(midpath).mkdir(parents=True, exist_ok=True)
-    background_file = Path(midpath) / 'background.fits'
+    out_path = config.get('reduce', 'out_path', './output')
+    background_file = Path(out_path) / 'step3_background' / 'background_model.fits'
+    background_file.parent.mkdir(parents=True, exist_ok=True)
     remover.save_background(str(background_file))
+
+    # Save diagnostic plot if enabled
+    save_plots = config.get_bool('reduce', 'save_plots', True)
+    if save_plots:
+        out_dir = background_file.parent
+        fig_format = config.get('reduce', 'fig_format', 'png')
+        plot_file = out_dir / f'background_residuals.{fig_format}'
+        plot_background_residuals(science_image, background, str(plot_file))
 
     return background

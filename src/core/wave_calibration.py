@@ -13,6 +13,7 @@ from pathlib import Path
 from src.core.data_structures import WaveCalib, Spectrum, SpectraSet
 from src.config.config_manager import ConfigManager
 from src.utils.fits_io import read_fits_image
+from src.plotting.spectra_plotter import plot_wavelength_calibration
 
 logger = logging.getLogger(__name__)
 
@@ -259,9 +260,23 @@ def process_wavelength_stage(config: ConfigManager, calib_filename: str,
     )
 
     # Save calibration
-    Path(midpath).mkdir(parents=True, exist_ok=True)
-    calib_file = Path(midpath) / 'wlcalib.fits'
+    out_path = config.get('reduce', 'out_path', './output')
+    calib_file = Path(out_path) / 'step6_wavelength' / 'wavelength_calibration.fits'
+    calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.wave_calib = wave_calib
     calibrator.save_calibration(str(calib_file))
+
+    # Save diagnostic plot if enabled
+    save_plots = config.get_bool('reduce', 'save_plots', True)
+    if save_plots and calibrator.line_pixels is not None:
+        out_dir = calib_file.parent
+        fig_format = config.get('reduce', 'fig_format', 'png')
+        plot_file = out_dir / f'wavelength_calibration.{fig_format}'
+        plot_wavelength_calibration(
+            calibrator.line_pixels,
+            calibrator.line_wavelengths,
+            calibrator.fitted_wavelengths,
+            str(plot_file)
+        )
 
     return wave_calib

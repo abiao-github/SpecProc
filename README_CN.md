@@ -139,7 +139,7 @@ mkdir -p ~/projects/2024/obs1
 cd ~/projects/2024/obs1
 
 # 2. 创建数据处理所需的子目录
-mkdir -p rawdata output/midpath output/spectra output/figures
+mkdir -p rawdata output
 
 # 3. 将 FITS 数据文件放到 rawdata 目录
 cp /somewhere/bias_*.fits ./rawdata/
@@ -165,13 +165,15 @@ specproc --config ./specproc.cfg
 │   ├── thar_*.fits      # ThAr 灯谱
 │   └── science_*.fits   # 科学图像
 ├── output/                    # 处理结果（自动生成）
-│   ├── overscan_corrected/      # 第0步：过扫描校正结果
-│   ├── bias_corrected/          # 第1步：偏置减除结果
-│   ├── flat_corrected/           # 第2步：平场改正结果
-│   ├── background_corrected/     # 第4步：背景扣除结果
-│   ├── cosmic_corrected/        # 第5步：宇宙线去除结果（仅科学图像）
-│   ├── spectra/                 # 最终一维光谱
-│   └── figures/                 # 诊断图像
+│   ├── step0_overscan/         # 第0步：过扫描校正后的图像和诊断图
+│   ├── step1_bias/             # 第1步：主偏置帧和诊断图
+│   ├── step2_flat/             # 第2步：主平场、Blaze 轮廓和诊断图
+│   ├── step3_background/       # 第3步：背景模型和诊断图
+│   ├── step4_cosmic/           # 第4步：宇宙线校正后的图像和诊断图（如启用）
+│   ├── step5_extraction/       # 第5步：提取的一维光谱和诊断图
+│   ├── step6_wavelength/       # 第6步：波长定标解和诊断图
+│   ├── step7_deblazing/        # 第7步：去 Blaze 的光谱和诊断图（如保存）
+│   └── step8_final_spectra/    # 第8步：科学帧的最终一维光谱和诊断图
 ├── specproc.cfg              # 用户配置文件（可选）
 └── ...
 ```
@@ -217,15 +219,18 @@ rawpath = 20241102_hrs
 # 例如：在 /home/user/obs1 目录运行 specproc
 # 如果 out_path=output，则结果保存到 /home/user/obs1/output/
 #
-# 输出目录结构：
+# 输出目录结构（对应 9 个处理步骤）：
 # output/
-#   ├── overscan_corrected/      # 第0步结果
-#   ├── bias_corrected/          # 第1步结果
-#   ├── flat_corrected/           # 第2步结果
-#   ├── background_corrected/     # 第4步结果
-#   ├── cosmic_corrected/        # 第5步结果（仅科学图像）
-#   ├── spectra/                 # 最终一维光谱
-#   └── figures/                 # 诊断图像
+#   ├── step0_overscan/         # 第0步：过扫描校正后的图像（所有帧）
+#   ├── step1_bias/             # 第1步：主偏置帧
+#   ├── step2_flat/             # 第2步：主平场及 Blaze 轮廓
+#   ├── step3_background/       # 第3步：背景模型
+#   ├── step4_cosmic/           # 第4步：宇宙线校正后的科学图像（如启用）
+#   ├── step5_extraction/       # 第5步：提取的一维光谱（像素空间）
+#   ├── step6_wavelength/       # 第6步：波长定标解
+#   ├── step7_deblazing/        # 第7步：去 Blaze 的定标光谱（如保存）
+#   ├── step8_final_spectra/    # 第8步：科学帧的最终一维光谱
+#   └── step8_final_spectra/    # 每一步的诊断图表
 out_path = output
 ```
 
@@ -257,18 +262,20 @@ out_path = output
 # 每一步是否保存中间结果
 # 可以单独控制每一步是否保存
 # 默认所有步骤都保存
-save_overscan = yes        # 第0步：过扫描校正
-save_bias = yes             # 第1步：偏置减除
-save_flat = yes              # 第2步：平场改正
-save_background = yes        # 第4步：背景扣除
-save_cosmic = yes           # 第5步：宇宙线去除
-save_extraction = yes       # 第6步：一维谱提取
-save_wlcalib = yes          # 第7步：波长定标
-save_deblaze = yes          # 第8步：Blaze 函数改正
+save_overscan = yes        # 第0步：过扫描校正（保存到 output/step0_overscan/）
+save_bias = yes             # 第1步：偏置减除（保存主偏置帧到 output/step1_bias/）
+save_flat = yes              # 第2步：平场改正（保存主平场到 output/step2_flat/）
+save_background = yes        # 第3步：背景扣除（保存背景模型到 output/step3_background/）
+save_cosmic = yes           # 第4步：宇宙线去除（保存校正后的图像到 output/step4_cosmic/）
+save_extraction = yes       # 第5步：一维谱提取（保存到 output/step5_extraction/）
+save_wlcalib = yes          # 第6步：波长定标（保存定标解到 output/step6_wavelength/）
+save_deblaze = yes          # 第7步：Blaze 函数改正（保存到 output/step7_deblazing/）
 ```
 
 **效果**：
-- 如果某一步设置为 `no`，则不会在 `output/` 下创建对应的子目录
+- 如果某一步设置为 `no`，则不会创建对应的输出子目录
+- 最终光谱总是保存到 `output/step8_final_spectra/`，不受这些设置影响
+- 诊断图表可以保存到对应的步骤子目录中
 - 在 GUI 中应该有对应的取消勾选选项
 - 默认所有步骤都保存
 

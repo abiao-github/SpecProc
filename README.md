@@ -139,7 +139,7 @@ mkdir -p ~/projects/2024/obs1
 cd ~/projects/2024/obs1
 
 # 2. Create subdirectories for data processing
-mkdir -p rawdata output/midpath output/spectra output/figures
+mkdir -p rawdata output
 
 # 3. Copy/move FITS data files to rawdata directory
 cp /somewhere/bias_*.fits ./rawdata/
@@ -165,13 +165,15 @@ specproc --config ./specproc.cfg
 │   ├── thar_*.fits      # ThAr lamp spectrum
 │   └── science_*.fits   # Science images
 ├── output/                    # Processing results (auto-created)
-│   ├── overscan_corrected/      # Stage 0: Overscan correction results
-│   ├── bias_corrected/          # Stage 1: Bias correction results
-│   ├── flat_corrected/           # Stage 2: Flat fielding results
-│   ├── background_corrected/     # Stage 4: Background subtraction results
-│   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
-│   ├── spectra/                 # Final 1D spectra
-│   └── figures/                 # Diagnostic plots
+│   ├── step0_overscan/         # Step 0: Overscan-corrected images and diagnostic plots
+│   ├── step1_bias/             # Step 1: Master bias frame and diagnostic plots
+│   ├── step2_flat/             # Step 2: Master flat field, blaze profiles, and diagnostic plots
+│   ├── step3_background/       # Step 3: Background model and diagnostic plots
+│   ├── step4_cosmic/           # Step 4: Cosmic ray corrected images and diagnostic plots (if enabled)
+│   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
+│   ├── step6_wavelength/       # Step 6: Wavelength calibration solution and diagnostic plots
+│   ├── step7_deblazing/        # Step 7: De-blazed spectra and diagnostic plots (if saved)
+│   └── step8_final_spectra/    # Step 8: Final 1D spectra and diagnostic plots for science frames
 ├── specproc.cfg              # User config file (optional)
 └── ...
 ```
@@ -217,15 +219,18 @@ rawpath = 20241102_hrs
 # Example: If running in /home/user/obs1 and output=output,
 # results will be saved in /home/user/obs1/output/
 #
-# Output directory structure:
+# Output directory structure (corresponds to 9 processing steps):
 # output/
-#   ├── overscan_corrected/      # Stage 0: Overscan correction results
-#   ├── bias_corrected/          # Stage 1: Bias correction results
-#   ├── flat_corrected/           # Stage 2: Flat fielding results
-#   ├── background_corrected/     # Stage 4: Background subtraction results
-#   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
-#   ├── spectra/                 # Final 1D spectra
-#   └── figures/                 # Diagnostic plots
+#   ├── step0_overscan/         # Step 0: Overscan-corrected images (all frames)
+#   ├── step1_bias/             # Step 1: Master bias frame
+#   ├── step2_flat/             # Step 2: Master flat field with blaze profiles
+#   ├── step3_background/       # Step 3: Background model
+#   ├── step4_cosmic/           # Step 4: Cosmic ray corrected science images (if enabled)
+#   ├── step5_extraction/       # Step 5: Extracted 1D spectra (pixel space)
+#   ├── step6_wavelength/       # Step 6: Wavelength calibration solution
+#   ├── step7_deblazing/        # Step 7: De-blazed calibrated spectra (if saved)
+#   ├── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
+#   └── step8_final_spectra/    # Diagnostic plots for each step
 out_path = output
 ```
 
@@ -254,23 +259,25 @@ Control which processing steps to save intermediate results:
 
 ```ini
 [reduce.save_intermediate]
-# Whether to save intermediate results for each stage
-# Set to 'yes' or 'no' for each stage independently
-# Default is 'yes' for all stages
-save_overscan = yes        # Stage 0: Overscan correction
-save_bias = yes             # Stage 1: Bias correction
-save_flat = yes              # Stage 2: Flat fielding
-save_background = yes        # Stage 4: Background subtraction
-save_cosmic = yes           # Stage 5: Cosmic ray correction
-save_extraction = yes       # Stage 6: Spectrum extraction
-save_wlcalib = yes          # Stage 7: Wavelength calibration
-save_deblaze = yes          # Stage 8: De-blazing
+# Whether to save intermediate results for each step
+# Set to 'yes' or 'no' for each step independently
+# Default is 'yes' for all steps
+save_overscan = yes        # Step 0: Overscan correction (saves to output/step0_overscan/)
+save_bias = yes             # Step 1: Bias correction (saves master bias to output/step1_bias/)
+save_flat = yes              # Step 2: Flat fielding (saves master flat to output/step2_flat/)
+save_background = yes        # Step 3: Background subtraction (saves model to output/step3_background/)
+save_cosmic = yes           # Step 4: Cosmic ray correction (saves corrected images to output/step4_cosmic/)
+save_extraction = yes       # Step 5: Spectrum extraction (saves to output/step5_extraction/)
+save_wlcalib = yes          # Step 6: Wavelength calibration (saves solution to output/step6_wavelength/)
+save_deblaze = yes          # Step 7: De-blazing (saves to output/step7_deblazing/)
 ```
 
 **Effect**:
-- If a stage is set to `no`, the corresponding subdirectory will NOT be created in `output/`
+- If a step is set to `no`, the corresponding output subdirectory will NOT be created
+- Final spectra are always saved to `output/step8_final_spectra/` regardless of these settings
+- Diagnostic plots can be saved in corresponding step subdirectories
 - In GUI, there should be corresponding checkboxes to enable/disable saving
-- Default: All stages save intermediate results
+- Default: All steps save intermediate results
 
 ### Telescope and Calibration Configuration
 

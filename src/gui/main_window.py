@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
             self.log_text.append("  ✓ Overscan Correction")
             try:
                 all_raw_files = [science_file] + self.bias_files + self.flat_files + self.calib_file
-                corrected_files = process_overscan_stage(self.config, all_raw_files, str(Path(self.config.get('reduce', 'out_path', './output')) / 'midpath'))
+                corrected_files = process_overscan_stage(self.config, all_raw_files, None)
                 # Update file paths for subsequent stages
                 science_file = corrected_files[0]
                 self.bias_files = corrected_files[1:1+len(self.bias_files)]

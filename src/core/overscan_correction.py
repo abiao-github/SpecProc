@@ -12,6 +12,7 @@ from typing import List, Tuple, Optional
 from src.utils.overscan import OverscanCorrector
 from src.utils.fits_io import read_fits_image, write_fits_image
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_2d_image_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,15 @@ class OverscanCorrectionStage:
         write_fits_image(output_path, corrected, header=header, overwrite=True)
         logger.info(f"Saved overscan-corrected image: {output_path}")
 
+        # Save diagnostic plot if enabled
+        save_plots = self.config.get_bool('reduce', 'save_plots', True)
+        if save_plots and output_path is not None and output_path != input_path:
+            out_dir = Path(output_path).parent
+            stem = Path(input_path).stem
+            fig_format = self.config.get('reduce', 'fig_format', 'png')
+            plot_file = out_dir / f'{stem}_overscan.{fig_format}'
+            plot_2d_image_to_file(corrected, str(plot_file), "Overscan Corrected Image")
+
         return output_path
 
 
@@ -138,13 +148,11 @@ def process_overscan_stage(config: ConfigManager, image_filenames: List[str],
     # Use default midpath if not provided
     if midpath is None:
         out_path = config.get('reduce', 'out_path', './output')
-        midpath = str(Path(out_path) / 'midpath')
 
     stage = OverscanCorrectionStage(config)
 
     # Create output directory
-    Path(midpath).mkdir(parents=True, exist_ok=True)
-    overscan_path = Path(midpath) / 'overscan_corrected'
+    overscan_path = Path(out_path) / 'step0_overscan'
     overscan_path.mkdir(parents=True, exist_ok=True)
 
     corrected_files = []

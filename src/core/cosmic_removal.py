@@ -59,9 +59,8 @@ def process_cosmic_stage(config: ConfigManager, image_filenames: List[str], midp
 
     if midpath is None:
         out_path = config.get('reduce', 'out_path', './output')
-        midpath = str(Path(out_path) / 'midpath')
 
-    cosmic_path = Path(midpath) / 'cosmic_corrected'
+    cosmic_path = Path(out_path) / 'step4_cosmic'
     cosmic_path.mkdir(parents=True, exist_ok=True)
 
     sigma = config.get_float('reduce', 'cosmic_sigma', 5.0)

@@ -14,6 +14,7 @@ from src.utils.fits_io import read_fits_image, write_fits_image
 from src.utils.image_processing import combine_images, normalize_flat, find_bad_pixels
 from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
 from src.config.config_manager import ConfigManager
+from src.plotting.spectra_plotter import plot_2d_image_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,7 @@ class FlatFieldProcessor:
         peaks, _ = find_peaks(array, height=min_height, distance=distance, prominence=prominence)
         return peaks.tolist()
 
-    def save_flat_field(self, output_path: str):
+    def save_flat_field(self, output_path: str, config: ConfigManager):
         """Save flat field data to FITS file."""
         if self.flat_data is None:
             raise RuntimeError("No flat data to save")
@@ -295,6 +296,17 @@ class FlatFieldProcessor:
 
         hdul.writeto(str(output_path), overwrite=True)
         logger.info(f"Saved flat field to {output_path}")
+
+        # Save diagnostic plots if enabled
+        save_plots = config.get_bool('reduce', 'save_plots', True)
+        if save_plots:
+            out_dir = Path(output_path).parent
+            fig_format = config.get('reduce', 'fig_format', 'png')
+            # Plot master flat
+            plot_2d_image_to_file(self.flat_data, str(out_dir / f'master_flat.{fig_format}'), "Master Flat Field")
+            # Plot normalized flat
+            if self.flat_norm is not None:
+                plot_2d_image_to_file(self.flat_norm, str(out_dir / f'flat_normalized.{fig_format}'), "Normalized Flat Field")
 
 
 def process_flat_stage(config: ConfigManager, flat_filenames: List[str],
@@ -327,12 +339,11 @@ def process_flat_stage(config: ConfigManager, flat_filenames: List[str],
     # Extract blaze profiles
     blaze_profiles = processor.extract_blaze_profiles(apertures)
 
-    # Create output directory
-    Path(midpath).mkdir(parents=True, exist_ok=True)
-
     # Save flat field
-    flat_file = Path(midpath) / 'flat.fits'
-    processor.save_flat_field(str(flat_file))
+    out_path = config.get('reduce', 'out_path', './output')
+    flat_file = Path(out_path) / 'step2_flat' / 'master_flat.fits'
+    flat_file.parent.mkdir(parents=True, exist_ok=True)
+    processor.save_flat_field(str(flat_file), config)
 
     # Create FlatField object
     flat_field = FlatField(

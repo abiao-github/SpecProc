@@ -34,13 +34,15 @@ overscan_method = median
 #
 # Output directory structure:
 # output/
-#   ├── overscan_corrected/      # Stage 0: Overscan correction results
-#   ├── bias_corrected/          # Stage 1: Bias correction results
-#   ├── flat_corrected/           # Stage 2: Flat fielding results
-#   ├── background_corrected/     # Stage 4: Background subtraction results
-#   ├── cosmic_corrected/        # Stage 5: Cosmic ray correction results
-#   ├── spectra/                 # Final 1D spectra
-#   └── figures/                 # Diagnostic plots
+#   ├── step0_overscan/         # Step 0: Overscan-corrected images and diagnostic plots
+#   ├── step1_bias/             # Step 1: Master bias frame and diagnostic plots
+#   ├── step2_flat/             # Step 2: Master flat field, blaze profiles, and diagnostic plots
+#   ├── step3_background/       # Step 3: Background model and diagnostic plots
+#   ├── step4_cosmic/           # Step 4: Cosmic ray corrected images and diagnostic plots (if enabled)
+#   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
+#   ├── step6_wavelength/       # Step 6: Wavelength calibration solution and diagnostic plots
+#   ├── step7_deblazing/        # Step 7: De-blazed spectra and diagnostic plots (if saved)
+#   └── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
 out_path = output
 
 # Processing mode: normal or debug

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.6"
 license = {text = "MIT"}
 authors = [
-    {name = "Niu, Hubiao", email = "your.email@example.com"}
+    {name = "Niu, Hubiao", email = "niuhubiao@xao.ac.cn"}
 ]
 keywords = ["spectroscopy", "FITS", "data-reduction"]
 classifiers = [

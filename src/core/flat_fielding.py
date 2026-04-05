@@ -340,8 +340,8 @@ def process_flat_stage(config: ConfigManager, flat_filenames: List[str],
     blaze_profiles = processor.extract_blaze_profiles(apertures)
 
     # Save flat field
-    out_path = config.get('reduce', 'out_path', './output')
-    flat_file = Path(out_path) / 'step2_flat' / 'master_flat.fits'
+    base_output_path = config.get('reduce', 'output_path', './output')
+    flat_file = Path(base_output_path) / 'step2_flat' / 'master_flat.fits'
     flat_file.parent.mkdir(parents=True, exist_ok=True)
     processor.save_flat_field(str(flat_file), config)
 

@@ -135,17 +135,17 @@ specproc
 
 ```bash
 # 1. 创建工作目录（用于观测项目）
-mkdir -p ~/projects/2024/obs1
-cd ~/projects/2024/obs1
+mkdir -p /myworkspace
+cd /myworkspace
 
 # 2. 创建数据处理所需的子目录
-mkdir -p rawdata output
+mkdir -p 20241102_hrs output
 
-# 3. 将 FITS 数据文件放到 rawdata 目录
-cp /somewhere/bias_*.fits ./rawdata/
-cp /somewhere/flat_*.fits ./rawdata/
-cp /somewhere/thar_*.fits ./rawdata/
-cp /somewhere/science_*.fits ./rawdata/
+# 3. 将 FITS 数据文件放到 20241102_hrs 目录
+cp /somewhere/bias_*.fits ./20241102_hrs/
+cp /somewhere/flat_*.fits ./20241102_hrs/
+cp /somewhere/thar_*.fits ./20241102_hrs/
+cp /somewhere/science_*.fits ./20241102_hrs/
 
 # 4. 创建用户配置文件（可选）
 cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
@@ -158,8 +158,8 @@ specproc --config ./specproc.cfg
 
 **工作目录**（你处理数据的地方）：
 ```
-~/projects/2024/obs1/       # 你的工作目录
-├── rawdata/                  # 原始 FITS 数据
+/myworkspace/                  # 你的工作目录
+├── 20241102_hrs/              # 原始 FITS 数据
 │   ├── bias_*.fits
 │   ├── flat_*.fits
 │   ├── thar_*.fits      # ThAr 灯谱
@@ -206,9 +206,9 @@ specproc --config ./specproc.cfg
 ```ini
 [data]
 # 原始数据目录（相对于当前工作目录）
-# 例如：在 /myworkspace/20241102 目录运行 specproc
-# 如果 rawpath=20241102_hrs，则数据从 /myworkspace/20241102/20241102_hrs/ 加载
-rawpath = 20241102_hrs
+# 例如：在 /myworkspace/ 目录运行 specproc
+# 如果 rawdata_path=20241102_hrs，则数据从 /myworkspace/20241102_hrs/ 加载
+rawdata_path = 20241102_hrs
 ```
 
 #### 输出路径
@@ -216,8 +216,8 @@ rawpath = 20241102_hrs
 ```ini
 [reduce]
 # 输出目录（相对于当前工作目录）
-# 例如：在 /myworkspace/20241102 目录运行 specproc
-# 如果 out_path=output，则结果保存到 /myworkspace/20241102/output/
+# 例如：在 /myworkspace/ 目录运行 specproc
+# 如果 output_path=output，则结果保存到 /myworkspace/output/
 #
 # 输出目录结构（对应 9 个处理步骤）：
 # output/
@@ -230,7 +230,7 @@ rawpath = 20241102_hrs
 #   ├── step6_wavelength/       # 第6步：波长定标解和诊断图
 #   ├── step7_deblazing/        # 第7步：去 Blaze 的光谱和诊断图（如保存）
 #   └── step8_final_spectra/    # 第8步：科学帧的最终一维光谱和诊断图
-out_path = output
+output_path = output
 ```
 
 #### 路径相对性说明
@@ -238,18 +238,18 @@ out_path = output
 所有路径都是相对于**当前工作目录**的：
 
 ```bash
-# 假设工作目录是 /myworkspace/20241102
-cd /myworkspace/20241102
+# 假设工作目录是 /myworkspace/
+cd /myworkspace/
 
 # 配置文件：
 [data]
-rawpath = 20241102_hrs
+rawdata_path = 20241102_hrs
 [reduce]
-out_path = output
+output_path = output
 
 # 实际使用的路径：
-# 输入：/myworkspace/20241102/20241102_hrs/
-# 输出：/myworkspace/20241102/output/
+# 输入：/myworkspace/20241102_hrs/
+# 输出：/myworkspace/output/
 ```
 
 ### 中间结果保存

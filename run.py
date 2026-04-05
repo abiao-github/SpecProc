@@ -61,14 +61,14 @@ def choose_files(files: List[Path], prompt: str) -> List[Path]:
 def run_cli(config_path: str = None):
     config = ConfigManager(config_path)
 
-    rawpath = config.get('data', 'rawpath', './rawdata')
-    if not Path(rawpath).exists():
-        rawpath = input(f"当前 rawdata 路径 '{rawpath}' 不存在，请输入 RawData 路径或回车使用默认：").strip() or rawpath
-    Path(rawpath).mkdir(parents=True, exist_ok=True)
-    config.set('data', 'rawpath', rawpath)
+    rawdata_path = config.get('data', 'rawdata_path', './rawdata')
+    if not Path(rawdata_path).exists():
+        rawdata_path = input(f"当前 rawdata_path 路径 '{rawdata_path}' 不存在，请输入 RawData 路径或回车使用默认：").strip() or rawdata_path
+    Path(rawdata_path).mkdir(parents=True, exist_ok=True)
+    config.set('data', 'rawdata_path', rawdata_path)
     config.save()
 
-    files = sorted(Path(rawpath).glob("*.fits"))
+    files = sorted(Path(rawdata_path).glob("*.fits"))
     if not files:
         print('没有发现 FITS 文件。请检查 rawdata 路径。')
         return

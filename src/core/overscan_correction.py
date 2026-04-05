@@ -147,12 +147,12 @@ def process_overscan_stage(config: ConfigManager, image_filenames: List[str],
 
     # Use default midpath if not provided
     if midpath is None:
-        out_path = config.get('reduce', 'out_path', './output')
+        output_path = config.get('reduce', 'output_path', './output')
 
     stage = OverscanCorrectionStage(config)
 
     # Create output directory
-    overscan_path = Path(out_path) / 'step0_overscan'
+    overscan_path = Path(output_path) / 'step0_overscan'
     overscan_path.mkdir(parents=True, exist_ok=True)
 
     corrected_files = []

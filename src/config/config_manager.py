@@ -88,7 +88,7 @@ class ConfigManager:
 
         # Reduce section
         self.config['reduce'] = {
-            'out_path': './output',
+            'output_path': './output',
             'mode': 'normal',
             'fig_format': 'png',
             'oned_suffix': '_ods',
@@ -262,10 +262,10 @@ class ConfigManager:
 
     def create_directories(self):
         """Create output directories specified in config."""
-        out_path = self.get('reduce', 'out_path', './output')
+        output_path = self.get('reduce', 'output_path', './output')
 
         dirs = [
-            out_path,
+            output_path,
         ]
 
         for dir_path in dirs:

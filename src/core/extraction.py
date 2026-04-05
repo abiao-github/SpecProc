@@ -263,8 +263,8 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
     """
     # Use default midpath if not provided
     if midpath is None:
-        out_path = config.get('reduce', 'out_path', './output')
-        midpath = str(Path(out_path) / 'spectra')
+        base_output_path = config.get('reduce', 'output_path', './output')
+        midpath = str(Path(base_output_path) / 'spectra')
 
     extractor = SpectrumExtractor(config)
 
@@ -273,8 +273,8 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
                                                 wavelength_calib)
 
     # Save spectra
-    out_path = config.get('reduce', 'out_path', './output')
-    spectra_file = Path(out_path) / 'step5_extraction' / 'extracted_spectra.fits'
+    base_output_path = config.get('reduce', 'output_path', './output')
+    spectra_file = Path(base_output_path) / 'step5_extraction' / 'extracted_spectra.fits'
     spectra_file.parent.mkdir(parents=True, exist_ok=True)
     extractor.save_spectra(str(spectra_file), spectra_set)
 

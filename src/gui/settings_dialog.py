@@ -96,8 +96,8 @@ class SettingsDialog(QDialog):
         layout = QFormLayout()
 
         # Paths
-        self.out_path_edit = QLineEdit()
-        layout.addRow("Output Path:", self.out_path_edit)
+        self.output_path_edit = QLineEdit()
+        layout.addRow("Output Path:", self.output_path_edit)
 
         # Processing options
         self.mode_combo = QComboBox()
@@ -156,7 +156,7 @@ class SettingsDialog(QDialog):
         self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xr-'))
 
         # Reduce tab
-        self.out_path_edit.setText(self.config.get('reduce', 'out_path', './output'))
+        self.output_path_edit.setText(self.config.get('reduce', 'output_path', './output'))
         self.mode_combo.setCurrentText(self.config.get('reduce', 'mode', 'normal'))
         self.fig_format_combo.setCurrentText(self.config.get('reduce', 'fig_format', 'png'))
         self.oned_suffix_edit.setText(self.config.get('reduce', 'oned_suffix', '_ods'))
@@ -178,7 +178,7 @@ class SettingsDialog(QDialog):
             self.config.set('data', 'direction', self.direction_combo.currentText())
 
             # Reduce tab
-            self.config.set('reduce', 'out_path', self.out_path_edit.text())
+            self.config.set('reduce', 'output_path', self.output_path_edit.text())
             self.config.set('reduce', 'mode', self.mode_combo.currentText())
             self.config.set('reduce', 'fig_format', self.fig_format_combo.currentText())
             self.config.set('reduce', 'oned_suffix', self.oned_suffix_edit.text())

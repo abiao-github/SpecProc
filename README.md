@@ -135,17 +135,17 @@ specproc
 
 ```bash
 # 1. Create your working directory (e.g., for an observation project)
-mkdir -p ~/MyWorkDir/20241102
-cd ~/MyWorkDir/20241102
+mkdir -p /myworkspace
+cd /myworkspace
 
 # 2. Create subdirectories for data processing
-mkdir -p rawdata output
+mkdir -p 20241102_hrs output
 
-# 3. Copy/move FITS data files to rawdata directory
-cp /somewhere/bias_*.fits ./rawdata/
-cp /somewhere/flat_*.fits ./rawdata/
-cp /somewhere/thar_*.fits ./rawdata/
-cp /somewhere/science_*.fits ./rawdata/
+# 3. Copy/move FITS data files to 20241102_hrs directory
+cp /somewhere/bias_*.fits ./20241102_hrs/
+cp /somewhere/flat_*.fits ./20241102_hrs/
+cp /somewhere/thar_*.fits ./20241102_hrs/
+cp /somewhere/science_*.fits ./20241102_hrs/
 
 # 4. Create user config file (optional)
 cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
@@ -158,8 +158,8 @@ specproc --config ./specproc.cfg
 
 **Working directory** (where you process data):
 ```
-~/myworkspace/20241102/     # Your working directory
-├── rawdata/                  # Input FITS files
+/myworkspace/                  # Your working directory
+├── 20241102_hrs/              # Input FITS files
 │   ├── bias_*.fits
 │   ├── flat_*.fits
 │   ├── thar_*.fits      # ThAr lamp spectrum
@@ -206,9 +206,9 @@ specproc --config ./specproc.cfg
 ```ini
 [data]
 # Raw FITS data directory (relative to working directory)
-# Example: If running in /myworkspace/20241102 and rawpath=20241102_hrs,
-# data will be loaded from /myworkspace/20241102/20241102_hrs/
-rawpath = 20241102_hrs
+# Example: If running in /myworkspace/ and rawdata_path=20241102_hrs,
+# data will be loaded from /myworkspace/20241102_hrs/
+rawdata_path = 20241102_hrs
 ```
 
 #### Output Path
@@ -216,8 +216,8 @@ rawpath = 20241102_hrs
 ```ini
 [reduce]
 # Output directory (relative to working directory)
-# Example: If running in /myworkspace/20241102 and output=output,
-# results will be saved in /myworkspace/20241102/output/
+# Example: If running in /myworkspace/ and output=output,
+# results will be saved in /myworkspace/output/
 #
 # Output directory structure (corresponds to 9 processing steps):
 # output/
@@ -231,7 +231,7 @@ rawpath = 20241102_hrs
 #   ├── step7_deblazing/        # Step 7: De-blazed calibrated spectra (if saved)
 #   ├── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
 #   └── step8_final_spectra/    # Diagnostic plots for each step
-out_path = output
+output_path = output
 ```
 
 #### Path Relativity
@@ -239,18 +239,18 @@ out_path = output
 All paths are relative to **current working directory**:
 
 ```bash
-# Assume working directory is ~/MyWorkDir/20241102
-cd ~/MyWorkDir/20241102
+# Assume working directory is /myworkspace/
+cd /myworkspace/
 
 # Config file:
 [data]
-rawpath = 20241102_hrs
+rawdata_path = 20241102_hrs
 [reduce]
-out_path = output
+output_path = output
 
 # Actual paths used:
-# Input:  ~/MyWorkDir/20241102/20241102_hrs/
-# Output: ~/MyWorkDir/20241102/output/
+# Input:  /myworkspace/20241102_hrs/
+# Output: /myworkspace/output/
 ```
 
 ### Intermediate Results Saving

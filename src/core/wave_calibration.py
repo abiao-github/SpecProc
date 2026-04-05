@@ -260,8 +260,8 @@ def process_wavelength_stage(config: ConfigManager, calib_filename: str,
     )
 
     # Save calibration
-    out_path = config.get('reduce', 'out_path', './output')
-    calib_file = Path(out_path) / 'step6_wavelength' / 'wavelength_calibration.fits'
+    base_output_path = config.get('reduce', 'output_path', './output')
+    calib_file = Path(base_output_path) / 'step6_wavelength' / 'wavelength_calibration.fits'
     calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.wave_calib = wave_calib
     calibrator.save_calibration(str(calib_file))

@@ -154,8 +154,25 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
                                 smooth_sigma: float = 20.0,
                                 sigma_clip: float = 3.0,
                                 maxiters: int = 4,
+<<<<<<< HEAD
                                 bspline_smooth: float = 1.0) -> np.ndarray:
     """Estimate smooth 2D background for a single (non-split) image."""
+=======
+                                bspline_smooth: float = 1.0,
+                                clip_mode: str = 'both') -> np.ndarray:
+    """Estimate smooth 2D background for a single (non-split) image.
+
+    Parameters
+    ----------
+    clip_mode : {'both', 'upper', 'lower'}
+        Sigma-clipping mode.  'both' rejects outliers on both sides
+        (symmetric, the traditional behaviour).  'upper' rejects only
+        positive outliers (pixels brighter than the model) which is
+        recommended for flat-field background estimation where unmasked
+        faint orders contaminate the inter-order region.  'lower' rejects
+        only negative outliers.
+    """
+>>>>>>> cef6f04 (	modified:   README.md)
     rows, cols = image.shape
     yy, xx = np.meshgrid(np.arange(rows), np.arange(cols), indexing='ij')
 
@@ -169,7 +186,11 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
 
     work_data = image.astype(np.float64)
 
+<<<<<<< HEAD
     if method == 'smooth':
+=======
+    if method in ('smooth', 'gaussian_smooth'):
+>>>>>>> cef6f04 (	modified:   README.md)
         current = fit_mask.copy()
         s = max(1.0, float(smooth_sigma))
 
@@ -191,7 +212,17 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
             if sig <= 0:
                 break
 
+<<<<<<< HEAD
             keep = np.abs(work_data - model) <= sigma_clip * sig
+=======
+            diff = work_data - model
+            if clip_mode == 'upper':
+                keep = diff <= sigma_clip * sig
+            elif clip_mode == 'lower':
+                keep = diff >= -sigma_clip * sig
+            else:
+                keep = np.abs(diff) <= sigma_clip * sig
+>>>>>>> cef6f04 (	modified:   README.md)
             new_current = current & keep
             if np.array_equal(new_current, current):
                 break
@@ -231,16 +262,28 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
                 A_img = _build_design_matrix(x_norm.ravel(), y_norm.ravel(), order, fit_kind)
                 model = (A_img @ coeffs).reshape(rows, cols)
         except Exception as e:
+<<<<<<< HEAD
             logger.warning(f"Background {method} fit failed, fallback to smooth: {e}")
+=======
+            logger.warning(f"Background {method} fit failed, fallback to gaussian_smooth: {e}")
+>>>>>>> cef6f04 (	modified:   README.md)
             return _estimate_single_background(
                 image,
                 order=order,
                 valid_mask=valid_mask,
+<<<<<<< HEAD
                 method='smooth',
+=======
+                method='gaussian_smooth',
+>>>>>>> cef6f04 (	modified:   README.md)
                 smooth_sigma=smooth_sigma,
                 sigma_clip=sigma_clip,
                 maxiters=maxiters,
                 bspline_smooth=bspline_smooth,
+<<<<<<< HEAD
+=======
+                clip_mode=clip_mode,
+>>>>>>> cef6f04 (	modified:   README.md)
             )
 
         if sigma_clip <= 0:
@@ -252,7 +295,16 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
             break
 
         center = np.median(resid[keep])
+<<<<<<< HEAD
         new_keep = np.abs(resid - center) <= sigma_clip * sig
+=======
+        if clip_mode == 'upper':
+            new_keep = (resid - center) <= sigma_clip * sig
+        elif clip_mode == 'lower':
+            new_keep = (resid - center) >= -sigma_clip * sig
+        else:
+            new_keep = np.abs(resid - center) <= sigma_clip * sig
+>>>>>>> cef6f04 (	modified:   README.md)
         if np.array_equal(new_keep, keep):
             break
         keep = new_keep
@@ -260,6 +312,14 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
     return model
 
 
+<<<<<<< HEAD
+=======
+# Public alias: estimate a single region without any internal splitting.
+# Use this when the caller handles detector-half splitting externally.
+estimate_background_region = _estimate_single_background
+
+
+>>>>>>> cef6f04 (	modified:   README.md)
 def estimate_background_2d(image: np.ndarray, order: int = 2,
                            split_vertically: bool = True,
                            valid_mask: Optional[np.ndarray] = None,
@@ -280,7 +340,11 @@ def estimate_background_2d(image: np.ndarray, order: int = 2,
         split_vertically: Split image into upper/lower halves for independent 
                          background fitting (default: True)
         valid_mask: Optional boolean mask of valid sampling pixels (True = use)
+<<<<<<< HEAD
         method: 'chebyshev', 'bspline', 'smooth', or 'poly'
+=======
+        method: 'chebyshev', 'bspline', 'gaussian_smooth', or 'poly'
+>>>>>>> cef6f04 (	modified:   README.md)
         smooth_sigma: Gaussian sigma for smooth method
         sigma_clip: Sigma-clipping threshold for robust rejection
         maxiters: Maximum sigma-clipping iterations

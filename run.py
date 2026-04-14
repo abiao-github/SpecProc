@@ -140,7 +140,7 @@ def run_cli(config_path: str = None):
                 science_image = science_image.astype(float) - master_bias
 
             if 4 in stage_indices:
-                science_image = science_image - pipeline.stage_background_removal(science_image)
+                science_image = pipeline.stage_scattered_light_subtraction_science(science_image)
 
             if 5 in stage_indices:
                 if apertures is None:

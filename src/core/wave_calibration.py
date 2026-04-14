@@ -6,6 +6,9 @@ and wavelength solution computation.
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib import cm
 import logging
 from typing import Tuple, Optional, List, Dict
 from scipy.optimize import curve_fit
@@ -21,14 +24,8 @@ logger = logging.getLogger(__name__)
 class WavelengthCalibrator:
     """Handles wavelength calibration from reference lines."""
 
-    def __init__(self, config: ConfigManager):
-        """
-        Initialize wavelength calibrator.
-
-        Args:
-            config: Configuration manager
-        """
-        self.config = config
+    def __init__(self):
+        """Initialize wavelength calibrator."""
         self.wave_calib = None
         self.reference_lines = {}
 
@@ -99,9 +96,132 @@ class WavelengthCalibrator:
 
         return peaks, spectrum[peaks]
 
+    def load_anchor_file(self, anchor_file: str) -> Dict[int, List[Tuple[float, float]]]:
+        """
+        读取灯谱证认的发射线锚点文件。
+        预期包含 Order, Wavelength, X_pixel (或者 Order, X_pixel, Wavelength)。
+        """
+        anchors = {}
+        try:
+            # 使用 genfromtxt 解析 CSV，自动过滤掉带有字符串的 Header 行
+            data = np.genfromtxt(anchor_file, delimiter=',')
+            data = data[~np.isnan(data).any(axis=1)]
+            
+            if data.shape[1] >= 3:
+                # 动态判断哪列是波长，哪列是像素 (基于波长值一般>3000)
+                col1_mean = np.mean(data[:, 1])
+                col2_mean = np.mean(data[:, 2])
+                
+                if col1_mean > col2_mean and col1_mean > 2000:
+                    wave_col, x_col = 1, 2
+                else:
+                    x_col, wave_col = 1, 2
+                    
+                for row in data:
+                    m_ref = int(row[0])
+                    wave = float(row[wave_col])
+                    x_pix = float(row[x_col])
+                    if m_ref not in anchors:
+                        anchors[m_ref] = []
+                    anchors[m_ref].append((x_pix, wave))
+            else:
+                logger.error("Anchor file must contain at least 3 columns: Order, Wavelength, and X_pixel.")
+                raise ValueError(
+                    "提供的锚点文件只有 2 列。为进行盲配，必须包含参考的 X 像素坐标列 "
+                    "请检查是否为 [级次号, 波长, X像素] 格式。"
+                )
+        except Exception as e:
+            logger.error(f"Failed to load anchor file {anchor_file}: {e}")
+            raise
+        return anchors
+
+    def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, List[Tuple[float, float]]], pixel_tolerance: float = 5.0) -> Tuple[int, List[Tuple[float, int, float]]]:
+        """
+        寻找最佳级次偏移 (delta_m = m_ref - m_obs) 并返回成功匹配的锚点 (X_obs, m_true, wavelength)。
+        """
+        best_offset = 0
+        max_matches = -1
+        best_matched_points = []
+
+        # 枚举所有可能的级次偏移
+        for delta_m in range(-40, 41):
+            matches = 0
+            matched_points = []
+            for m_obs, peaks_x in detected_peaks.items():
+                m_ref = m_obs + delta_m
+                if m_ref not in anchors:
+                    continue
+                # 对该级次的每个参考锚点进行配对
+                for x_ref, wave_ref in anchors[m_ref]:
+                    if len(peaks_x) == 0:
+                        continue
+                    dist = np.abs(peaks_x - x_ref)
+                    idx = np.argmin(dist)
+                    if dist[idx] < pixel_tolerance:
+                        matches += 1
+                        matched_points.append((peaks_x[idx], m_ref, wave_ref))
+            
+            if matches > max_matches:
+                max_matches = matches
+                best_offset = delta_m
+                best_matched_points = matched_points
+
+        if max_matches == 0:
+            logger.warning("未能在观测到的 peaks 和锚点间找到匹配点，请检查提取数据或 pixel_tolerance！")
+            
+        return best_offset, best_matched_points
+
+    def rough_calibration(self, matched_points: List[Tuple[float, int, float]]) -> np.ndarray:
+        """
+        粗定标拟合全局方程: m * lambda = a * X^2 + b * X + c
+        """
+        if len(matched_points) < 3:
+            raise ValueError(f"匹配的锚点数量 ({len(matched_points)}) 太少，无法执行粗校准(最少3点)")
+        
+        X_arr = np.array([pt[0] for pt in matched_points])
+        m_arr = np.array([pt[1] for pt in matched_points])
+        wave_arr = np.array([pt[2] for pt in matched_points])
+        
+        m_lambda = m_arr * wave_arr
+        # 拟合 2 阶多项式
+        coeffs = np.polyfit(X_arr, m_lambda, 2)
+        logger.info(f"Rough calibration m*lambda = aX^2 + bX + c coefficients: {coeffs}")
+        return coeffs
+
+    def match_full_catalog(self, detected_peaks: Dict[int, np.ndarray], rough_coeffs: np.ndarray, delta_m: int, full_linelist: np.ndarray, tolerance: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        利用拟合的全局粗校准方程，预测所有 detected_peaks 的波长并匹配全量线库。
+        """
+        pix_pos = []
+        matched_wave = []
+
+        if len(full_linelist) == 0:
+            logger.error("全量线库为空，跳过全量匹配阶段。")
+            return np.array([]), np.array([])
+
+        for m_obs, peaks_x in detected_peaks.items():
+            if len(peaks_x) == 0:
+                continue
+            m_true = m_obs + delta_m
+            
+            # 利用粗定标预测波长: lambda = (aX^2 + bX + c) / m
+            m_lambda_pred = np.polyval(rough_coeffs, peaks_x)
+            wave_pred = m_lambda_pred / m_true
+            
+            # 全库匹配寻找最近线
+            for x_val, w_pred in zip(peaks_x, wave_pred):
+                dist = np.abs(full_linelist - w_pred)
+                idx = np.argmin(dist)
+                if dist[idx] < tolerance:
+                    pix_pos.append([x_val, m_true])
+                    matched_wave.append(full_linelist[idx])
+                    
+        return np.array(pix_pos), np.array(matched_wave)
+
     def fit_wavelength_polynomial(self, pixel_positions: np.ndarray,
                                  wavelengths: np.ndarray,
-                                 xorder: int = 4, yorder: int = 4) -> WaveCalib:
+                                 xorder: int = 4, yorder: int = 4,
+                                 poly_type: str = 'chebyshev') -> WaveCalib:
         """
         Fit 2D wavelength polynomial.
 
@@ -110,11 +230,12 @@ class WavelengthCalibrator:
             wavelengths: Corresponding wavelengths
             xorder: Polynomial order in X
             yorder: Polynomial order in Y
+            poly_type: Polynomial basis ('chebyshev', 'legendre' or 'polynomial')
 
         Returns:
             WaveCalib object with polynomial solution
         """
-        logger.info(f"Fitting wavelength polynomial (orders: {xorder}, {yorder})...")
+        logger.info(f"Fitting wavelength 2D {poly_type} polynomial (orders: {xorder}, {yorder})...")
 
         if len(pixel_positions) != len(wavelengths):
             raise ValueError("Pixel positions and wavelengths must have same length")
@@ -127,34 +248,50 @@ class WavelengthCalibrator:
             x_pix = pixel_positions
             y_pix = np.zeros_like(x_pix)
 
-        # Build polynomial design matrix
-        ncoeff = (xorder + 1) * (yorder + 1)
-        A = np.zeros((len(x_pix), ncoeff))
+        # 改为拟合 m * lambda
+        m_lambda = wavelengths * y_pix
 
-        idx = 0
-        for i in range(xorder + 1):
-            for j in range(yorder + 1):
-                A[:, idx] = (x_pix ** i) * (y_pix ** j)
-                idx += 1
+        # 获取参与定标数据的边界值，用于归一化
+        domain_x = (float(np.min(x_pix)), float(np.max(x_pix)))
+        domain_y = (float(np.min(y_pix)), float(np.max(y_pix)))
+
+        # 将像素和级次归一化到 [-1, 1] 区间
+        x_norm = 2.0 * (x_pix - domain_x[0]) / max(domain_x[1] - domain_x[0], 1e-6) - 1.0
+        y_norm = 2.0 * (y_pix - domain_y[0]) / max(domain_y[1] - domain_y[0], 1e-6) - 1.0
+
+        # 利用 numpy.polynomial 的 Vander 函数快速构建 2D 正交基设计矩阵
+        if poly_type == 'chebyshev':
+            from numpy.polynomial.chebyshev import chebvander2d
+            A = chebvander2d(x_norm, y_norm, [xorder, yorder])
+        elif poly_type == 'legendre':
+            from numpy.polynomial.legendre import legvander2d
+            A = legvander2d(x_norm, y_norm, [xorder, yorder])
+        else:
+            from numpy.polynomial.polynomial import polyvander2d
+            A = polyvander2d(x_norm, y_norm, [xorder, yorder])
 
         # Solve least squares
         try:
-            coeffs, residuals, rank, s = np.linalg.lstsq(A, wavelengths, rcond=None)
+            coeffs_1d, residuals, rank, s = np.linalg.lstsq(A, m_lambda, rcond=None)
 
             # Compute RMS of residuals
-            predicted = A @ coeffs
-            rms = np.sqrt(np.mean((predicted - wavelengths) ** 2))
+            pred_m_lambda = A @ coeffs_1d
+            pred_lambda = pred_m_lambda / y_pix
+            rms = np.sqrt(np.mean((pred_lambda - wavelengths) ** 2))
 
             logger.info(f"Wavelength fit RMS: {rms:.4f} Angstrom")
 
             # Reshape coefficients into 2D array
-            poly_coef = coeffs.reshape((xorder + 1, yorder + 1))
+            poly_coef = coeffs_1d.reshape((xorder + 1, yorder + 1))
 
             # Create WaveCalib object
             wave_calib = WaveCalib(
                 poly_coef=poly_coef,
                 xorder=xorder,
                 yorder=yorder,
+                poly_type=poly_type,
+                domain_x=domain_x,
+                domain_y=domain_y,
                 line_pixels=x_pix,
                 line_orders=y_pix,
                 line_catalog=wavelengths,
@@ -209,6 +346,14 @@ class WavelengthCalibrator:
         hdr['RMS']       = self.wave_calib.rms
         hdr['NLINES']    = self.wave_calib.nlines
         hdr['CALIB_TYP'] = self.wave_calib.calib_type
+<<<<<<< HEAD
+=======
+        hdr['DELTAM']    = getattr(self.wave_calib, 'delta_m', 0)
+        hdr['POLY_TYP']  = getattr(self.wave_calib, 'poly_type', 'chebyshev')
+        if hasattr(self.wave_calib, 'domain_x'):
+            hdr['X_MIN'], hdr['X_MAX'] = self.wave_calib.domain_x
+            hdr['Y_MIN'], hdr['Y_MAX'] = self.wave_calib.domain_y
+>>>>>>> cef6f04 (	modified:   README.md)
 
         hdul = fits.HDUList([
             fits.PrimaryHDU(data=self.wave_calib.poly_coef, header=hdr),
@@ -218,30 +363,224 @@ class WavelengthCalibrator:
         logger.info(f"Saved wavelength calibration to {output_path}")
 
 
-def process_wavelength_stage(config: ConfigManager, calib_filename: str,
-                            midpath: str = './midpath') -> WaveCalib:
+def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str):
+    """生成波长定标诊断图（散点图及拟合残差）。"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    
+    x_pix = wave_calib.line_pixels
+    m_orders = wave_calib.line_orders
+    wave_ref = wave_calib.line_catalog
+    wave_pred = wave_calib.apply_to_pixel(x_pix, m_orders)
+    residuals = wave_pred - wave_ref
+    
+    unique_orders = np.unique(m_orders)
+    cmap = cm.get_cmap('turbo')
+    
+    for i, m in enumerate(unique_orders):
+        mask = (m_orders == m)
+        color = cmap(i / max(1, len(unique_orders) - 1))
+        
+        # 上图：拟合曲线与参考点
+        label_str = f'Order {int(m)}' if len(unique_orders) <= 15 else None
+        ax1.scatter(x_pix[mask], wave_ref[mask], color=color, s=15, alpha=0.8, label=label_str)
+        x_smooth = np.linspace(x_pix[mask].min(), x_pix[mask].max(), 100)
+        wave_smooth = wave_calib.apply_to_pixel(x_smooth, np.full_like(x_smooth, m))
+        ax1.plot(x_smooth, wave_smooth, color=color, alpha=0.5)
+        
+        # 下图：残差
+        ax2.scatter(x_pix[mask], residuals[mask], color=color, s=15, alpha=0.8)
+        
+    ax1.set_ylabel(r'Wavelength ($\AA$)')
+    ax1.set_title(f'Wavelength Calibration (RMS = {wave_calib.rms:.4f} $\AA$, N = {wave_calib.nlines})')
+    if len(unique_orders) <= 15:
+        ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
+    ax1.grid(True, alpha=0.3)
+    
+    ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('Pixel (X)')
+    ax2.set_ylabel(r'Residual ($\AA$)')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(plot_file, dpi=150)
+    plt.close(fig)
+
+def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str):
+    """生成二维波长定标拟合曲面和残差诊断图。"""
+    fig = plt.figure(figsize=(14, 6))
+    
+    # 1. 3D 拟合曲面 (Wavelength Surface)
+    ax1 = fig.add_subplot(121, projection='3d')
+    x_pix = wave_calib.line_pixels
+    m_orders = wave_calib.line_orders
+    wave_ref = wave_calib.line_catalog
+    
+    # 生成用于绘制平滑曲面的网格
+    x_grid = np.linspace(x_pix.min(), x_pix.max(), 50)
+    m_grid = np.linspace(m_orders.min(), m_orders.max(), 50)
+    X, M = np.meshgrid(x_grid, m_grid)
+    WAVE = wave_calib.apply_to_pixel(X, M)
+    
+    # 绘制预测曲面和实际匹配散点
+    ax1.plot_surface(X, M, WAVE, cmap='viridis', alpha=0.6, edgecolor='none')
+    ax1.scatter(x_pix, m_orders, wave_ref, color='r', s=10, alpha=0.8, label='Matched Lines')
+    ax1.set_xlabel('Pixel (X)')
+    ax1.set_ylabel('Order (m)')
+    ax1.set_zlabel(r'Wavelength ($\AA$)')
+    ax1.set_title(f'2D Wavelength Solution Surface\n({wave_calib.poly_type.capitalize()} Poly, {wave_calib.xorder}x{wave_calib.yorder})')
+    
+    # 2. 拟合残差图 (二维散点，颜色区分级次)
+    ax2 = fig.add_subplot(122)
+    residuals = wave_calib.apply_to_pixel(x_pix, m_orders) - wave_ref
+    scatter = ax2.scatter(x_pix, residuals, c=m_orders, cmap='turbo', s=15, alpha=0.8)
+    ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('Pixel (X)')
+    ax2.set_ylabel(r'Residual ($\AA$)')
+    ax2.set_title(f'Fitting Residuals (RMS = {wave_calib.rms:.4f} $\AA$)')
+    ax2.grid(True, alpha=0.3)
+    fig.colorbar(scatter, ax=ax2, label='Order (m)')
+    
+    plt.tight_layout()
+    plt.savefig(plot_file, dpi=150)
+    plt.close(fig)
+
+def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray], 
+                              matched_anchors: List[Tuple[float, int, float]], delta_m: int, 
+                              pdf_path: str):
+    """将每个级次的光谱及匹配到的锚点画入一个多页 PDF 文件。"""
+    with PdfPages(pdf_path) as pdf:
+        matched_dict = {}
+        for x_obs, m_true, wave in matched_anchors:
+            if m_true not in matched_dict:
+                matched_dict[m_true] = []
+            matched_dict[m_true].append((x_obs, wave))
+            
+        spectra_dict = getattr(lamp_spectra, 'spectra', lamp_spectra) if not isinstance(lamp_spectra, dict) else lamp_spectra
+        
+        for m_obs in sorted(spectra_dict.keys()):
+            m_true = m_obs + delta_m
+            spec = spectra_dict[m_obs]
+            flux = getattr(spec, 'flux', spec)
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(flux, label='Lamp Flux', color='k', linewidth=0.7)
+            
+            if m_obs in detected_peaks and len(detected_peaks[m_obs]) > 0:
+                p_x = detected_peaks[m_obs].astype(int)
+                ax.plot(p_x, flux[p_x], 'r+', markersize=6, label='Detected Peaks')
+                
+            if m_true in matched_dict:
+                max_flux = np.nanmax(flux) if len(flux) > 0 and np.nanmax(flux) > 0 else 1.0
+                for x_obs, wave in matched_dict[m_true]:
+                    ax.axvline(x=x_obs, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
+                    ax.text(x_obs, max_flux * 1.05, f"{wave:.3f}", color='b', 
+                            rotation=90, va='bottom', ha='center', fontsize=8)
+                            
+            ax.set_title(f"Order {m_true} (Original: {m_obs}, Offset: {delta_m})")
+            ax.set_xlabel("Pixel (X)")
+            ax.set_ylabel("Flux")
+            
+            # 留出顶部 30% 空间写波长文本
+            max_val = np.nanmax(flux) if len(flux) > 0 and np.nanmax(flux) > 0 else 1.0
+            ax.set_ylim(bottom=0, top=max_val * 1.3)
+            ax.legend(loc='upper right')
+            
+            plt.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+def process_wavelength_stage(lamp_spectra: SpectraSet,
+                             config: ConfigManager,
+                             output_dir_base: str,
+                             anchor_file: Optional[str] = None,
+                             lamp_type: str = 'ThAr',
+                             save_plots: bool = True,
+                             fig_format: str = 'png') -> WaveCalib:
     """
-    Execute wavelength calibration stage.
+    执行波长定标 (Step 7).
 
     Args:
-        config: Configuration manager
-        calib_filename: Path to calibration (ThAr) FITS file
-        midpath: Intermediate output directory
+        lamp_spectra: 1D 提取的灯谱 SpectraSet
+        config: ConfigManager 实例
+        output_dir_base: 基础输出目录
+        anchor_file: 灯谱证认锚点 CSV 文件路径。为空则从 config 读取默认路径
 
     Returns:
         WaveCalib object
     """
-    calibrator = WavelengthCalibrator(config)
+    logger.info("Starting wavelength calibration stage...")
+    calibrator = WavelengthCalibrator()
 
-    # Load line list
-    lamp_type = config.get('reduce.wlcalib', 'linelist', 'ThAr')
-    linelist = calibrator.load_line_list(lamp_type)
+    # 1. 载入全量线库
+    linelist_dict = calibrator.load_line_list(lamp_type)
+    full_linelist = linelist_dict.get('wavelength', np.array([]))
 
-    # For demonstration, create synthetic wavelength calibration
-    # In real use, would extract spectrum and identify lines
+    # 2. 从 1D 灯谱中提取观测 peaks
+    detected_peaks = {}
+    detected_fluxes = {}
+    spectra_dict = getattr(lamp_spectra, 'spectra', lamp_spectra) if not isinstance(lamp_spectra, dict) else lamp_spectra
+    clipping_threshold = config.get_float('reduce.wlcalib', 'clipping', 3.0)
+    
+    for m_obs, spectrum in spectra_dict.items():
+        flux = spectrum.flux if hasattr(spectrum, 'flux') else spectrum
+        peaks, peak_fluxes = calibrator.detect_lines_in_spectrum(flux, threshold=clipping_threshold)
+        detected_peaks[m_obs] = peaks
+        detected_fluxes[m_obs] = peak_fluxes
+
+    # 3. 载入锚点文件
+    if anchor_file is None:
+        calib_path = config.get('telescope.linelist', 'calibration_path', 'calib_data/telescopes/xinglong216hrs/')
+        anchor_file = str(Path(calib_path) / 'xinglong_thar_lines.csv')
+        
+    anchors = calibrator.load_anchor_file(anchor_file)
+
+    # 提取最明显的 peaks 参与锚点盲配，加快速度并降低弱线干扰
+    # 保留数量设为单级次内最大锚点数的 1.5 倍，且至少保留 15 个
+    max_anchors = max([len(pts) for pts in anchors.values()]) if anchors else 10
+    top_n = max(int(max_anchors * 1.5), 15)
+    
+    prominent_peaks = {}
+    for m_obs, peaks_x in detected_peaks.items():
+        fluxes = detected_fluxes[m_obs]
+        if len(peaks_x) > top_n:
+            top_indices = np.argsort(fluxes)[-top_n:]
+            prominent_peaks[m_obs] = peaks_x[top_indices]
+        else:
+            prominent_peaks[m_obs] = peaks_x
+
+    # 4. 匹配锚点寻找最佳级次偏移 delta_m (仅使用过滤后的强峰)
+    pixel_tol = 5.0 # 允许的像素匹配误差
+    delta_m, matched_anchors = calibrator.find_order_offset_and_match(prominent_peaks, anchors, pixel_tolerance=pixel_tol)
+    logger.info(f"Determined order offset (delta_m = m_ref - m_obs): {delta_m}")
+
+    # 输出匹配锚点诊断图 PDF
+    if save_plots:
+        pdf_path = Path(output_dir_base) / 'step7_wavelength' / 'matched_anchors_diagnostic.pdf'
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        _plot_matched_anchors_pdf(lamp_spectra, prominent_peaks, matched_anchors, delta_m, str(pdf_path))
+        logger.info(f"Saved matched anchors diagnostic PDF to {pdf_path}")
+
+    # 5. 基于锚点拟合粗定标方程 (m * lambda = a*X^2 + b*X + c)
+    rough_coeffs = calibrator.rough_calibration(matched_anchors)
+
+    # 6. 使用粗定标预测波长，并进行全库匹配
+    wave_tol = config.get_float('reduce.wlcalib', 'rms_threshold', 0.5)
+    pix_pos, matched_wave = calibrator.match_full_catalog(
+        detected_peaks, rough_coeffs, delta_m, full_linelist, tolerance=wave_tol
+    )
+    logger.info(f"Successfully matched {len(matched_wave)} lines from the full catalog.")
+
+    if len(matched_wave) < 15:
+        logger.warning("Very few lines matched to the full catalog. Check the rough calibration or tolerance parameters.")
+
+    # 7. 全局精确 2D 拟合
     x_order = config.get_int('reduce.wlcalib', 'xorder', 4)
     y_order = config.get_int('reduce.wlcalib', 'yorder', 4)
+    poly_type = config.get('reduce.wlcalib', 'poly_type', 'chebyshev')
+    wave_calib = calibrator.fit_wavelength_polynomial(pix_pos, matched_wave, xorder=x_order, yorder=y_order, poly_type=poly_type)
+    wave_calib.delta_m = delta_m
 
+<<<<<<< HEAD
     # Create demo calibration (linear)
     coeffs = np.zeros(((x_order + 1) * (y_order + 1),))
     coeffs[0] = 3000.0  # Wavelength offset
@@ -261,21 +600,22 @@ def process_wavelength_stage(config: ConfigManager, calib_filename: str,
     # Save calibration
     base_output_path = config.get_output_path()
     calib_file = Path(base_output_path) / 'step5_wavelength' / 'wavelength_calibration.fits'
+=======
+    # 保存校准结果
+    calib_file = Path(output_dir_base) / 'step7_wavelength' / 'wavelength_calibration.fits'
+>>>>>>> cef6f04 (	modified:   README.md)
     calib_file.parent.mkdir(parents=True, exist_ok=True)
-    calibrator.wave_calib = wave_calib
     calibrator.save_calibration(str(calib_file))
 
-    # Save diagnostic plot if enabled
-    save_plots = config.get_bool('reduce', 'save_plots', True)
-    if save_plots and calibrator.line_pixels is not None:
+    # 绘制验证图并保存
+    if save_plots and getattr(wave_calib, 'line_pixels', None) is not None:
         out_dir = calib_file.parent
-        fig_format = config.get('reduce', 'fig_format', 'png')
         plot_file = out_dir / f'wavelength_calibration.{fig_format}'
-        plot_wavelength_calibration(
-            calibrator.line_pixels,
-            calibrator.line_wavelengths,
-            calibrator.fitted_wavelengths,
-            str(plot_file)
-        )
+        surf_plot_file = out_dir / f'wavelength_calibration_surface.{fig_format}'
+        try:
+            _plot_calib_diagnostic(wave_calib, str(plot_file))
+            _plot_calib_surface_diagnostic(wave_calib, str(surf_plot_file))
+        except Exception as e:
+            logger.warning(f"Could not generate wavelength calibration plot: {e}")
 
     return wave_calib

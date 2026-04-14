@@ -20,14 +20,14 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 
 **8-stage automated spectral reduction**:
 
-1. **Overscan Correction** - Overscan correction (all images)
-2. **Bias Subtraction** - Bias subtraction (combined using mean/median)
-3. **Flat Fielding & Order Tracing** - Flat field correction and order tracing
-4. **Background Subtraction** - Background removal
-5. **Cosmic Ray Correction** - Cosmic ray removal (science images only)
-6. **1D Spectrum Extraction** - 1D spectrum extraction
-7. **Wavelength Calibration** - Wavelength calibration (applied to extracted 1D spectra)
-8. **De-blazing** - Blaze function correction
+1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
+2. **Orders Tracing** - Master flat generation and echelle order tracing
+3. **Scattered Light Subtraction** - Inter-order background modeling and removal
+4. **2D Flat-Field Correction** - 2D pixel flat correction
+5. **1D Spectrum Extraction** - 1D spectrum extraction (sum or optimal)
+6. **De-blazing** - Blaze function correction
+7. **Wavelength Calibration** - Wavelength calibration (applied to de-blazed 1D spectra)
+8. **Order Stitching** - Merge overlapping orders into a continuous 1D spectrum
 
 ### Interactive GUI
 
@@ -165,14 +165,15 @@ specproc --config ./specproc.cfg
 │   ├── thar_*.fits      # ThAr lamp spectrum
 │   └── science_*.fits   # Science images
 ├── output/                    # Processing results (auto-created)
-│   ├── step0_overscan/         # Step 0: Overscan-corrected images and diagnostic plots
-│   ├── step1_bias/             # Step 1: Master bias frame and diagnostic plots
+│   ├── step1_basic/            # Step 1: Basic pre-processing
+│   │   ├── overscan_corrected/ # Overscan-corrected images and diagnostic plots
+│   │   ├── bias_subtracted/    # Master bias and bias-corrected images
+│   │   └── cosmic_corrected/   # Cosmic ray corrected science images (if enabled)
 │   ├── step2_flat/             # Step 2: Master flat field, blaze profiles, and diagnostic plots
 │   ├── step3_background/       # Step 3: Background model and diagnostic plots
-│   ├── step4_cosmic/           # Step 4: Cosmic ray corrected images and diagnostic plots (if enabled)
 │   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
-│   ├── step6_wavelength/       # Step 6: Wavelength calibration solution and diagnostic plots
-│   ├── step7_deblazing/        # Step 7: De-blazed spectra and diagnostic plots (if saved)
+│   ├── step6_deblazing/        # Step 6: De-blazed spectra and diagnostic plots (if saved)
+│   ├── step7_wavelength/       # Step 7: Wavelength calibration solution and diagnostic plots
 │   └── step8_final_spectra/    # Step 8: Final 1D spectra and diagnostic plots for science frames
 ├── specproc.cfg              # User config file (optional)
 └── ...
@@ -241,18 +242,18 @@ rawdata_path = ./20241102_hrs
 #   output_path = output            → Same as above, results to /myworkspace/output/
 #   output_path = /data/output      → Results to /data/output/
 #
-# Output directory structure (corresponds to 9 processing steps):
+# Output directory structure:
 # output/
-#   ├── step0_overscan/         # Step 0: Overscan-corrected images (all frames)
-#   ├── step1_bias/             # Step 1: Master bias frame
+#   ├── step1_basic/            # Step 1: Basic pre-processing
+#   │   ├── overscan_corrected/ # Overscan-corrected images
+#   │   ├── bias_subtracted/    # Master bias and bias-corrected images
+#   │   └── cosmic_corrected/   # Cosmic ray corrected science images (if enabled)
 #   ├── step2_flat/             # Step 2: Master flat field with blaze profiles
 #   ├── step3_background/       # Step 3: Background model
-#   ├── step4_cosmic/           # Step 4: Cosmic ray corrected science images (if enabled)
 #   ├── step5_extraction/       # Step 5: Extracted 1D spectra (pixel space)
-#   ├── step6_wavelength/       # Step 6: Wavelength calibration solution
-#   ├── step7_deblazing/        # Step 7: De-blazed calibrated spectra (if saved)
-#   ├── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
-#   └── step8_final_spectra/    # Diagnostic plots for each step
+#   ├── step6_deblazing/        # Step 6: De-blazed spectra (if saved)
+#   ├── step7_wavelength/       # Step 7: Wavelength calibration solution
+#   └── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
 output_path = output
 
 #### Path Examples
@@ -291,14 +292,14 @@ Control which processing steps to save intermediate results:
 # Whether to save intermediate results for each step
 # Set to 'yes' or 'no' for each step independently
 # Default is 'yes' for all steps
-save_overscan = yes        # Step 0: Overscan correction (saves to output/step0_overscan/)
-save_bias = yes             # Step 1: Bias correction (saves master bias to output/step1_bias/)
+save_overscan = yes        # Step 1: Overscan correction (saves to output/step1_basic/overscan_corrected/)
+save_bias = yes             # Step 1: Bias correction (saves to output/step1_basic/bias_subtracted/)
 save_flat = yes              # Step 2: Flat fielding (saves master flat to output/step2_flat/)
 save_background = yes        # Step 3: Background subtraction (saves model to output/step3_background/)
-save_cosmic = yes           # Step 4: Cosmic ray correction (saves corrected images to output/step4_cosmic/)
+save_cosmic = yes           # Step 1: Cosmic ray correction (saves to output/step1_basic/cosmic_corrected/)
 save_extraction = yes       # Step 5: Spectrum extraction (saves to output/step5_extraction/)
-save_wlcalib = yes          # Step 6: Wavelength calibration (saves solution to output/step6_wavelength/)
-save_deblaze = yes          # Step 7: De-blazing (saves to output/step7_deblazing/)
+save_deblaze = yes          # Step 6: De-blazing (saves to output/step6_deblazing/)
+save_wlcalib = yes          # Step 7: Wavelength calibration (saves solution to output/step7_wavelength/)
 ```
 
 **Effect**:
@@ -530,26 +531,22 @@ flowchart TD
 
 ### Stage Descriptions
 
-#### STAGE 0: Overscan Correction
+#### STEP 1: Basic Pre-processing
 - **Input**: Raw FITS files (bias, flat, ThAr, science)
 - **Processing**:
   - Extract overscan region (readout bias area)
   - Calculate median or polynomial fit
   - Subtract overscan bias from image
-- **Output**: Overscan corrected image
-- **Note**: Must be first step, applied to all image types
-
-#### STAGE 1: Bias Subtraction
-- **Input**: Overscan corrected images
-- **Processing**:
   - Combine multiple bias frames (mean/median)
   - Generate master bias
   - Subtract master bias from science/flat/ThAr images
-- **Output**: Bias corrected image
-- **Note**: Bias is 0s exposure, no cosmic ray correction needed
+  - Detect cosmic rays using sigma-threshold (science images only)
+  - Interpolate cosmic rays with median filter
+- **Output**: Pre-processed images (overscan, bias, cosmic-ray corrected)
+- **Note**: Fundamental corrections applied to prepare data for tracing and extraction.
 
-#### STAGE 2: Flat Fielding & Order Tracing
-- **Input**: Bias corrected flat frames
+#### STEP 2: Orders Tracing
+- **Input**: Pre-processed flat frames
 - **Processing**:
   - Combine flat frames
   - Generate master flat
@@ -559,33 +556,43 @@ flowchart TD
 - **Output**: Master flat, apertures, and blaze profiles
 - **Note**: Provides apertures and blaze profiles for later stages
 
-#### STAGE 3: Background Subtraction
-- **Input**: Bias corrected image
+#### STEP 3: Scattered Light Subtraction
+- **Input**: Pre-processed science image
 - **Processing**:
-  - Estimate background using 2D polynomial or median filter
-  - Subtract background from image
+  - Estimate background scattered light using 2D convolution or splines
+  - Subtract background model from science image
 - **Output**: Background subtracted image
-- **Note**: Applied to science images after cosmic ray correction
+- **Note**: Removes inter-order stray light.
 
-#### STAGE 4: Cosmic Ray Correction
-- **Input**: Background subtracted image (science only)
+#### STEP 4: 2D Flat-Field Correction
+- **Input**: Background subtracted science image
 - **Processing**:
-  - Detect cosmic rays using sigma-threshold
-  - Interpolate with median filter
-- **Output**: Cosmic ray corrected image
-- **Note**: Applied to science images only (long exposure)
+  - Generate 2D pixel-to-pixel flat correction map
+  - Apply 2D flat correction to science image
+- **Output**: 2D Flat-fielded image
+- **Note**: Corrects for pixel-to-pixel sensitivity variations.
 
-#### STAGE 5: 1D Spectrum Extraction
-- **Input**: Cosmic ray corrected image
+#### STEP 5: 1D Spectrum Extraction
+- **Input**: 2D Flat-fielded image
 - **Processing**:
   - Extract 1D spectrum for each echelle order
   - Method: Sum extraction or Optimal extraction (Horne 1986)
   - Calculate extraction errors
 - **Output**: SpectraSet (pixel space)
-- **Note**: Depends on apertures from Stage 2
+- **Note**: Converts 2D traces to 1D pixel space spectra.
 
-#### STAGE 6: Wavelength Calibration
+#### STEP 6: De-blazing
 - **Input**: Extracted 1D spectra (pixel space)
+- **Processing**:
+  - Read flat spectrum blaze function
+  - Match orders
+  - Divide by blaze function: F_corrected(λ) = F_observed(λ) / B(λ)
+  - Normalize to unit continuum
+- **Output**: De-blazed spectra
+- **Note**: Corrects for the blaze function of the spectrograph grating.
+
+#### STEP 7: Wavelength Calibration
+- **Input**: De-blazed 1D spectra (pixel space)
 - **Processing**:
   - Step 1: Calibrate ThAr lamp spectrum
     - Extract 1D spectrum
@@ -594,17 +601,15 @@ flowchart TD
   - Step 2: Apply to science spectra
     - Convert pixel coordinates to wavelength units
 - **Output**: Wavelength calibrated 1D spectra
-- **Note**: Must be after spectrum extraction
+- **Note**: Must be after De-blazing
 
-#### STAGE 7: De-blazing
+#### STEP 8: Order Stitching
 - **Input**: Wavelength calibrated 1D spectra
 - **Processing**:
-  - Read flat spectrum blaze function
-  - Match orders
-  - Divide by blaze function: F_corrected(λ) = F_observed(λ) / B(λ)
-  - Normalize to unit continuum
-- **Output**: Final calibrated spectra
-- **Note**: Must be after wavelength calibration
+  - Merge overlapping neighboring orders
+  - Handle SNR-based weighting at overlap regions
+- **Output**: Final continuous 1D spectrum
+- **Note**: Final data product ready for scientific analysis.
 
 ## Usage
 

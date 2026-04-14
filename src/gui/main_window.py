@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 import json
+import numpy as np
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -269,7 +270,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(science_group)
         layout.addWidget(self.raw_list, 1)
 
-        layout.addStretch()
+        science_group.setLayout(science_layout)
+        layout.addWidget(science_group, 2)
 
         return panel
 
@@ -1520,7 +1522,7 @@ class MainWindow(QMainWindow):
         from src.core.overscan_correction import process_overscan_stage
         from src.core.flat_fielding import process_flat_stage
         from src.core.wave_calibration import process_wavelength_stage
-        from src.core.background_removal import process_background_stage
+        from src.core.scattered_light import process_background_stage
         from src.core.extraction import process_extraction_stage
         from src.utils.fits_io import read_fits_image, write_fits_image
 

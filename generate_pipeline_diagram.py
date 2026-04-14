@@ -72,17 +72,17 @@ stages = [
     },
     {
         'name': 'Stage 6',
-        'title': 'Wavelength Calibration',
+        'title': 'De-blazing',
         'y': 7,
         'color': stage_colors[6],
-        'steps': ['Fit 2D polynomial', 'Pixel to wavelength', 'Calibrate all spectra']
+        'steps': ['Match orders', 'Divide by blaze', 'Normalize continuum']
     },
     {
         'name': 'Stage 7',
-        'title': 'De-blazing',
+        'title': 'Wavelength Calibration',
         'y': 5,
         'color': stage_colors[7],
-        'steps': ['Match orders', 'Divide by blaze', 'Normalize continuum']
+        'steps': ['Fit 2D polynomial', 'Pixel to wavelength', 'Calibrate all spectra']
     }
 ]
 
@@ -149,8 +149,8 @@ legend_items = [
     (stage_colors[3], 'Stage 3: Background'),
     (stage_colors[4], 'Stage 4: Cosmic Ray'),
     (stage_colors[5], 'Stage 5: Extraction'),
-    (stage_colors[6], 'Stage 6: Wavelength'),
-    (stage_colors[7], 'Stage 7: De-blazing'),
+    (stage_colors[6], 'Stage 6: De-blazing'),
+    (stage_colors[7], 'Stage 7: Wavelength'),
 ]
 
 for i, (color, label) in enumerate(legend_items):

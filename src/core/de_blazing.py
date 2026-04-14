@@ -10,8 +10,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from src.core.data_structures import SpectraSet, FlatField
-from src.config.config_manager import ConfigManager
-from src.plotting.spectra_plotter import plot_spectrum_to_file
+from src.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,11 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
         De-blazed spectra set
     """
     logger.info("=" * 60)
+<<<<<<< HEAD
     logger.info("STEP 7: DE-BLAZING CORRECTION")
+=======
+    logger.info("STEP 6: DE-BLAZING (Blaze Function Correction)")
+>>>>>>> cef6f04 (	modified:   README.md)
     logger.info("=" * 60)
 
     if flat_field.blaze_profiles is None or len(flat_field.blaze_profiles) == 0:
@@ -93,12 +96,12 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
         wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)))
         fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)))
 
-        cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=[wl]))
-        cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=[fl]))
+        cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=wl))
+        cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=fl))
 
         if spec.error is not None:
             err = np.pad(spec.error, (0, max_pixels - len(spec.error)))
-            cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=[err]))
+            cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=err))
 
     coldefs = fits.ColDefs(cols)
     table_hdu = fits.BinTableHDU.from_columns(coldefs)
@@ -118,17 +121,28 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
     logger.info(f"Saved {norders} de-blazed spectra to {output_path}")
 
 
-def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
+def process_de_blazing_stage(spectra_set: SpectraSet,
+                           output_dir_base: str,
                            flat_field: Optional[FlatField] = None,
-                           save_output: bool = True) -> SpectraSet:
+                           save_output: bool = True,
+                           save_deblaze: bool = True,
+                           output_filename: str = 'deblazed_spectra.fits',
+                           plot_prefix: str = 'deblazed',
+                           save_plots: bool = True,
+                           fig_format: str = 'png') -> SpectraSet:
     """
     Execute de-blazing correction stage.
 
     Args:
-        config: Configuration manager
         spectra_set: Extracted spectra
+        output_dir_base: Base output directory
         flat_field: Flat field data with blaze profiles
         save_output: Whether to save de-blazed spectra to file
+        save_deblaze: Whether to save de-blazed intermediate products
+        output_filename: Filename for the saved FITS file
+        plot_prefix: Prefix for saved plot files
+        save_plots: Whether to save diagnostic plots
+        fig_format: Format for diagnostic plots
 
     Returns:
         De-blazed spectra set
@@ -140,27 +154,25 @@ def process_de_blazing_stage(config: ConfigManager, spectra_set: SpectraSet,
     deblazed_spectra = apply_de_blazing(spectra_set, flat_field)
 
     # Save de-blazed spectra if enabled
+<<<<<<< HEAD
     if save_output and config.get_bool('reduce.save_intermediate', 'save_deblaze', True):
         base_output_path = config.get_output_path()
         deblazed_file = Path(base_output_path) / 'step6_deblazing' / 'deblazed_spectra.fits'
+=======
+    if save_output and save_deblaze:
+        deblazed_file = Path(output_dir_base) / 'step6_deblazing' / output_filename
+>>>>>>> cef6f04 (	modified:   README.md)
         deblazed_file.parent.mkdir(parents=True, exist_ok=True)
         save_deblazed_spectra(str(deblazed_file), deblazed_spectra)
 
         # Save diagnostic plots if enabled
-        save_plots = config.get_bool('reduce', 'save_plots', True)
         if save_plots:
             out_dir = deblazed_file.parent
-            fig_format = config.get('reduce', 'fig_format', 'png')
-            for spectrum in deblazed_spectra.spectra.values():
-                order = spectrum.aperture
-                if len(spectrum.wavelength) > 0:
-                    plot_file = out_dir / f'deblazed_order_{order:02d}.{fig_format}'
-                    plot_spectrum_to_file(
-                        spectrum.wavelength,
-                        spectrum.flux,
-                        str(plot_file),
-                        spectrum.error if spectrum.error is not None else None,
-                        f"De-blazed Spectrum - Order {order}"
-                    )
+            # Change plot_prefix e.g. "202411020024_1D_Deblaze" -> "202411020024_1D_pixel_Deblaze"
+            pdf_name = f"{plot_prefix}.pdf".replace('_1D_Deblaze', '_1D_pixel_Deblaze')
+            if '_pixel_' not in pdf_name:
+                pdf_name = f"{plot_prefix}_pixel.pdf"
+            pdf_path = out_dir / pdf_name
+            plot_spectra_to_pdf(deblazed_spectra, str(pdf_path), title_prefix="De-blazed Spectrum (pixels)", xlabel="Pixel")
 
     return deblazed_spectra

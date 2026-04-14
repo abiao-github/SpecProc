@@ -11,12 +11,22 @@ from typing import List, Callable, Optional
 import numpy as np
 from src.config.config_manager import ConfigManager
 from src.core.data_structures import ProcessingState, WaveCalib, SpectraSet
+<<<<<<< HEAD
 from src.core.overscan_correction import process_overscan_stage
 from src.core.cosmic_removal import process_cosmic_stage
 from src.core.bias_correction import process_bias_stage
 from src.core.flat_fielding import process_flat_stage, FlatFieldProcessor
+=======
+from src.core.basic_reduction import (
+    process_overscan_stage,
+    process_bias_stage,
+    process_cosmic_stage,
+)
+from src.core.order_tracing import process_order_tracing_stage
+from src.core.flat_correction import process_flat_correction_stage
+>>>>>>> cef6f04 (	modified:   README.md)
 from src.core.wave_calibration import WavelengthCalibrator, process_wavelength_stage
-from src.core.background_removal import process_background_stage
+from src.core.scattered_light import process_background_stage
 from src.core.extraction import process_extraction_stage
 from src.core.de_blazing import process_de_blazing_stage
 from src.core.order_stitching import process_order_stitching_stage
@@ -74,7 +84,23 @@ class ProcessingPipeline:
         self._report_progress(0.01, "Overscan Correction")
 
         try:
-            corrected_files = process_overscan_stage(self.config, raw_filenames, None)
+            # --- Extract config for overscan stage ---
+            overscan_kwargs = {
+                'overscan_start_column': self.config.get_int('data', 'overscan_start_column', -1),
+                'overscan_method': self.config.get('data', 'overscan_method', 'mean_only'),
+                'overscan_smooth_window': self.config.get_int('data', 'overscan_smooth_window', -1),
+                'overscan_poly_order': self.config.get_int('data', 'overscan_poly_order', 3),
+                'overscan_poly_type': self.config.get('data', 'overscan_poly_type', 'legendre'),
+                'trim_x_start': self.config.get_int('data', 'trim_x_start', -1),
+                'trim_x_end': self.config.get_int('data', 'trim_x_end', -1),
+                'trim_y_start': self.config.get_int('data', 'trim_y_start', -1),
+                'trim_y_end': self.config.get_int('data', 'trim_y_end', -1),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png')
+            }
+            corrected_files = process_overscan_stage(
+                raw_filenames, self.config.get_output_path(), **overscan_kwargs
+            )
 
             self._report_progress(0.05, "Overscan Correction Complete")
             logger.info("✓ Overscan correction stage complete")
@@ -85,38 +111,6 @@ class ProcessingPipeline:
             logger.error(f"Error in overscan correction: {e}")
             # Return original files if overscan correction fails
             return raw_filenames
-
-    def stage_cosmic_correction(self, filenames: List[str]) -> List[str]:
-        """
-        Execute cosmic ray correction stage.
-
-        Args:
-            filenames: List of image paths to correct
-
-        Returns:
-            List of cosmic-corrected image paths
-        """
-        if not self.config.get_bool('reduce', 'cosmic_enabled', True):
-            logger.info("Cosmic correction disabled, skipping stage.")
-            return filenames
-
-        logger.info("=" * 50)
-        logger.info("STAGE 0.5: COSMIC RAY CORRECTION")
-        logger.info("=" * 50)
-
-        self._report_progress(0.06, "Cosmic Ray Correction")
-
-        try:
-            corrected_files = process_cosmic_stage(self.config, filenames, None)
-
-            self._report_progress(0.08, "Cosmic Ray Correction Complete")
-            logger.info("✓ Cosmic ray correction stage complete")
-
-            return corrected_files
-
-        except Exception as e:
-            logger.error(f"Error in cosmic ray correction: {e}")
-            return filenames
 
     def stage_bias_correction(self, bias_filenames: List[str]) -> np.ndarray:
         """
@@ -138,7 +132,16 @@ class ProcessingPipeline:
         self._report_progress(0.05, "Bias Correction")
 
         try:
-            master_bias, bias_file = process_bias_stage(self.config, bias_filenames, None)
+            # --- Extract config for bias stage ---
+            bias_kwargs = {
+                'combine_method': self.config.get('reduce.bias', 'combine_method', 'median'),
+                'combine_sigma': self.config.get_float('reduce.bias', 'combine_sigma', 3.0),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
+            master_bias, bias_file = process_bias_stage(
+                bias_filenames, self.config.get_output_path(), **bias_kwargs
+            )
 
             self.state.bias_frame = master_bias
             self.state.bias_done = True
@@ -214,7 +217,31 @@ class ProcessingPipeline:
         self._report_progress(0.15, "Flat Fielding")
 
         try:
-            flat_field, apertures = process_flat_stage(self.config, flat_filenames, None)
+            # --- Extract config for flat / order tracing stage ---
+            output_dir_base = self.config.get_output_path()
+            flat_kwargs = {
+                'output_dir_base': output_dir_base,
+                'combine_method': self.config.get('reduce.flat', 'combine_method', 'median'),
+                'combine_sigma': self.config.get_float('reduce.bias', 'combine_sigma', 3.0),
+                'mosaic_maxcount': self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535),
+                'snr_threshold': self.config.get_float('reduce.trace', 'snr_threshold', 5.0),
+                'step_denominator': self.config.get_int('reduce.trace', 'step_denominator', 20),
+                'gap_fill_factor': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6),
+                'gap_fill_snr': self.config.get_float('reduce.trace', 'gap_fill_snr', 2.5),
+                'min_trace_coverage': self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20),
+                'trace_degree': self.config.get_int('reduce.trace', 'degree', 4),
+                'boundary_frac': self.config.get_float('reduce.trace', 'boundary_frac', 0.02),
+                'fwhm_scale': self.config.get_float('reduce.trace', 'fwhm_scale', 1.5),
+                'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
+                'n_extend_below': self.config.get_int('reduce.trace', 'n_extend_below', 0),
+                'n_extend_above': self.config.get_int('reduce.trace', 'n_extend_above', 0),
+                'gap_fill_factor_interp': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.35),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
+            flat_field, apertures = process_order_tracing_stage(
+                flat_filenames, **flat_kwargs
+            )
 
             self.state.flat_field = flat_field
             self.state.apertures = apertures
@@ -247,7 +274,34 @@ class ProcessingPipeline:
         self._report_progress(0.30, "Wavelength Calibration")
 
         try:
-            wave_calib = process_wavelength_stage(self.config, calib_filename, None)
+            logger.info(f"Extracting ThAr lamp spectrum from {calib_filename} ...")
+            lamp_img, _ = read_fits_image(calib_filename)
+            
+            extract_kwargs = {
+                'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
+                'extraction_method': 'sum',
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
+            lamp_spectra = process_extraction_stage(
+                lamp_img, self.state.apertures,
+                output_dir_base=self.config.get_output_path(),
+                wavelength_calib=None,
+                flat_field=self.state.flat_field,
+                method_override='sum',
+                output_filename='thar_1D_sum.fits',
+                plot_prefix='thar_1D_sum',
+                **extract_kwargs
+            )
+            
+            wave_calib = process_wavelength_stage(
+                lamp_spectra=lamp_spectra,
+                config=self.config,
+                output_dir_base=self.config.get_output_path(),
+                lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
+                save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                fig_format=self.config.get('reduce', 'fig_format', 'png'),
+            )
 
             self.state.wavelength_calib = wave_calib
             self.state.wavelength_done = True
@@ -262,7 +316,8 @@ class ProcessingPipeline:
             raise
 
     def stage_wavelength_calibration_on_spectra(self, spectra_set: SpectraSet,
-                                                calib_filename: str) -> SpectraSet:
+                                                calib_filename: str,
+                                                science_name: str = 'science') -> SpectraSet:
         """
         Apply wavelength calibration to extracted science spectra.
 
@@ -277,7 +332,11 @@ class ProcessingPipeline:
             SpectraSet with wavelength-calibrated spectra
         """
         logger.info("=" * 50)
+<<<<<<< HEAD
         logger.info("STEP 6: WAVELENGTH CALIBRATION (Science Spectra)")
+=======
+        logger.info("STEP 7: WAVELENGTH CALIBRATION (Science Spectra)")
+>>>>>>> cef6f04 (	modified:   README.md)
         logger.info("=" * 50)
 
         self._report_progress(0.82, "Applying Wavelength Calibration")
@@ -285,13 +344,55 @@ class ProcessingPipeline:
         try:
             # First, calibrate the calibration frame if not already done
             if self.state.wavelength_calib is None:
-                wave_calib = process_wavelength_stage(self.config, calib_filename, None)
+                logger.info(f"Extracting ThAr lamp spectrum from {calib_filename} ...")
+                lamp_img, _ = read_fits_image(calib_filename)
+                
+                extract_kwargs = {
+                    'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
+                    'extraction_method': 'sum',
+                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                }
+                lamp_spectra = process_extraction_stage(
+                    lamp_img, self.state.apertures,
+                    output_dir_base=self.config.get_output_path(),
+                    wavelength_calib=None,
+                    flat_field=self.state.flat_field,
+                    method_override='sum',
+                    output_filename='thar_1D_sum.fits',
+                    plot_prefix='thar_1D_sum',
+                    **extract_kwargs
+                )
+                
+                wave_calib = process_wavelength_stage(
+                    lamp_spectra=lamp_spectra,
+                    config=self.config,
+                    output_dir_base=self.config.get_output_path(),
+                    lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
+                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                )
                 self.state.wavelength_calib = wave_calib
             else:
                 wave_calib = self.state.wavelength_calib
 
+            # --- Apply Order Offset (Renumbering) ---
+            delta_m = getattr(wave_calib, 'delta_m', 0)
+            if delta_m != 0:
+                logger.info(f"Applying order offset delta_m = {delta_m} to renumber all extracted data...")
+                if self.state.apertures:
+                    self.state.apertures.shift_orders(delta_m)
+                if self.state.flat_field:
+                    self.state.flat_field.shift_orders(delta_m)
+                if self.state.extracted_spectra:
+                    self.state.extracted_spectra.shift_orders(delta_m)
+                if self.state.de_blazed_spectra:
+                    self.state.de_blazed_spectra.shift_orders(delta_m)
+                if spectra_set is not self.state.de_blazed_spectra:
+                    spectra_set.shift_orders(delta_m)
+
             # Apply wavelength calibration to each extracted spectrum
-            calibrator = WavelengthCalibrator(self.config)
+            calibrator = WavelengthCalibrator()
             calibrator.wave_calib = wave_calib
 
             calibrated_spectra = SpectraSet()
@@ -312,6 +413,23 @@ class ProcessingPipeline:
 
                 calibrated_spectra.add_spectrum(calibrated_spectrum)
 
+<<<<<<< HEAD
+=======
+            # === 将波长定标后的科学光谱独立保存到 Step 7 对应目录 ===
+            if self.config.get_bool('reduce.save_intermediate', 'save_wlcalib', True):
+                out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
+                out_dir.mkdir(parents=True, exist_ok=True)
+                
+                from src.core.de_blazing import save_deblazed_spectra
+                save_deblazed_spectra(str(out_dir / f'{science_name}_1D_calibrated.fits'), calibrated_spectra)
+                
+                if self.config.get_bool('reduce', 'save_plots', True):
+                    from src.plotting.spectra_plotter import plot_spectra_to_pdf
+                    pdf_path = out_dir / f"{science_name}_1D_calibrated.pdf"
+                    plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
+                                        title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
+
+>>>>>>> cef6f04 (	modified:   README.md)
             self._report_progress(0.88, "Wavelength Calibration Complete")
             logger.info(f"✓ Wavelength calibration applied to {len(calibrated_spectra.spectra)} spectra")
 
@@ -321,6 +439,7 @@ class ProcessingPipeline:
             logger.error(f"Error in wavelength calibration of spectra: {e}")
             raise
 
+<<<<<<< HEAD
     def stage_background_removal(self, science_image: np.ndarray) -> np.ndarray:
         """
         Execute background subtraction stage.
@@ -359,6 +478,8 @@ class ProcessingPipeline:
             logger.error(f"Error in background removal: {e}")
             raise
 
+=======
+>>>>>>> cef6f04 (	modified:   README.md)
     def stage_cosmic_correction_science(self, science_image: np.ndarray,
                                        science_name: str = 'science') -> np.ndarray:
         """
@@ -379,7 +500,11 @@ class ProcessingPipeline:
             Cosmic-ray corrected science image
         """
         logger.info("=" * 50)
+<<<<<<< HEAD
         logger.info("STEP 1: COSMIC RAY CORRECTION (Science Frame)")
+=======
+        logger.info("STEP 1 (sub): COSMIC RAY CORRECTION (Science Frame)")
+>>>>>>> cef6f04 (	modified:   README.md)
         logger.info("=" * 50)
 
         self._report_progress(0.45, "Cosmic Ray Correction")
@@ -387,7 +512,11 @@ class ProcessingPipeline:
         try:
             # Reuse the shared Step 1 cosmic detector so selected-step execution
             # and full-pipeline execution behave consistently.
+<<<<<<< HEAD
             from src.core.cosmic_removal import _detect_cosmics, _fix_cosmics
+=======
+            from src.core.basic_reduction import _detect_cosmics, _fix_cosmics
+>>>>>>> cef6f04 (	modified:   README.md)
 
             cosmic_sigma = self.config.get_float('reduce', 'cosmic_sigma', 5.0)
             cosmic_window = self.config.get_int('reduce', 'cosmic_window', 5)
@@ -440,12 +569,13 @@ class ProcessingPipeline:
             logger.error(f"Error in cosmic ray correction: {e}")
             raise
 
-    def stage_extraction(self, science_image: np.ndarray) -> SpectraSet:
+    def stage_extraction(self, science_image: np.ndarray, science_name: str = 'science') -> SpectraSet:
         """
         Execute spectrum extraction stage and output both sum/optimal products.
 
         Args:
             science_image: Background-corrected 2D science image
+            science_name: Base name of the science image
 
         Returns:
             SpectraSet with extracted 1D spectra (without wavelength calibration)
@@ -460,6 +590,7 @@ class ProcessingPipeline:
             raise RuntimeError("Apertures not available. Run flat fielding stage first.")
 
         try:
+<<<<<<< HEAD
             # Step 5 requirement: output both aperture-sum and optimal extraction.
             extracted_sum = process_extraction_stage(
                 self.config, science_image, self.state.apertures,
@@ -477,6 +608,36 @@ class ProcessingPipeline:
                 method_override='optimal',
                 output_filename='extracted_spectra_optimal.fits',
                 plot_prefix='extracted_optimal',
+=======
+            # --- Extract config for extraction stage ---
+            output_dir_base = self.config.get_output_path()
+            extract_kwargs = {
+                'output_dir_base': output_dir_base,
+                'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
+                'extraction_method': self.config.get('reduce.extract', 'method', 'optimal'),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
+            # Step 5 requirement: output both aperture-sum and optimal extraction.
+            extracted_sum = process_extraction_stage(
+                science_image, self.state.apertures,
+                wavelength_calib=None,
+                flat_field=self.state.flat_field,
+                method_override='sum',
+                output_filename=f'{science_name}_1D_sum.fits',
+                plot_prefix=f'{science_name}_1D_sum',
+                **extract_kwargs,
+            )
+
+            extracted_optimal = process_extraction_stage(
+                science_image, self.state.apertures,
+                wavelength_calib=None,
+                flat_field=self.state.flat_field,
+                method_override='optimal',
+                output_filename=f'{science_name}_1D_optimal.fits',
+                plot_prefix=f'{science_name}_1D_optimal',
+                **extract_kwargs,
+>>>>>>> cef6f04 (	modified:   README.md)
             )
 
             # Keep optimal extraction as default downstream product.
@@ -496,25 +657,38 @@ class ProcessingPipeline:
             logger.error(f"Error in spectrum extraction: {e}")
             raise
 
-    def stage_de_blazing(self, spectra_set: SpectraSet) -> SpectraSet:
+    def stage_de_blazing(self, spectra_set: SpectraSet, science_name: str = 'science') -> SpectraSet:
         """
         Execute de-blazing correction stage.
 
         Args:
             spectra_set: Extracted spectra
+            science_name: Base name of the science image
 
         Returns:
             De-blazed spectra
         """
         logger.info("=" * 50)
+<<<<<<< HEAD
         logger.info("STEP 7: DE-BLAZING CORRECTION")
+=======
+        logger.info("STEP 6: DE-BLAZING (Blaze Function Correction)")
+>>>>>>> cef6f04 (	modified:   README.md)
         logger.info("=" * 50)
 
         self._report_progress(0.90, "De-blazing Correction")
 
         try:
+            # --- Extract config for de-blazing stage ---
             de_blazed_spectra = process_de_blazing_stage(
-                self.config, spectra_set, self.state.flat_field
+                spectra_set,
+                output_dir_base=self.config.get_output_path(),
+                flat_field=self.state.flat_field,
+                save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
+                output_filename=f'{science_name}_1D_Deblaze.fits',
+                plot_prefix=f'{science_name}_1D_Deblaze',
+                save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                fig_format=self.config.get('reduce', 'fig_format', 'png'),
             )
 
             self.state.de_blazed_spectra = de_blazed_spectra
@@ -529,6 +703,7 @@ class ProcessingPipeline:
             logger.error(f"Error in de-blazing: {e}")
             raise
 
+<<<<<<< HEAD
     def _refresh_flat_model_after_scattered_subtraction(self, flat_clean: np.ndarray):
         """Rebuild flat response/pixel-flat products using scattered-subtracted master flat."""
         if self.state.flat_field is None or self.state.apertures is None:
@@ -633,19 +808,43 @@ class ProcessingPipeline:
                 clean_flat=clean_flat.astype(np.float32),
                 clean_flat_corrected=clean_flat_corrected,
             )
+=======
+
+
+
+
+    def _save_step4_flat_products(self, out_dir: Path):
+        """Delegate Step-4 flat-model persistence to flat_correction module."""
+        if self.state.flat_field is None:
+            return
+        from src.core.flat_correction import save_flat_correction_products
+        save_flat_correction_products(
+            self.state.flat_field, self.state.apertures, out_dir,
+            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+            save_plots=self.config.get_bool('reduce', 'save_plots', True),
+        )
+>>>>>>> cef6f04 (	modified:   README.md)
 
     def stage_scattered_light_subtraction_science(self, science_image: np.ndarray,
                                                   science_name: str = 'science') -> np.ndarray:
         """Step 3: build/subtract scattered-light models for master flat and current science frame."""
         logger.info("=" * 50)
+<<<<<<< HEAD
         logger.info("STEP 3: BACKGROUND SCATTERED-LIGHT MODELING AND SUBTRACTION")
         logger.info("=" * 50)
 
         self._report_progress(0.50, "Step 3: Master Flat Background")
+=======
+        logger.info("STEP 3: SCATTERED LIGHT MODELING AND SUBTRACTION")
+        logger.info("=" * 50)
+
+        self._report_progress(0.50, "Step 3: Master Flat Scattered Light")
+>>>>>>> cef6f04 (	modified:   README.md)
 
         if self.state.flat_field is None or self.state.apertures is None:
             raise RuntimeError("Flat/apertures unavailable for Step 3")
 
+<<<<<<< HEAD
         flat_background = process_background_stage(
             self.config,
             self.state.flat_field.flat_data,
@@ -654,12 +853,36 @@ class ProcessingPipeline:
             output_tag='master_flat_',
             apertures=self.state.apertures,
             mask_margin_scale=1.2,
+=======
+        # --- Extract config for background stage ---
+        output_dir_base = self.config.get_output_path()
+        # 读取用户设置的mask参数
+        mask_margin_pixels = self.config.get_int('reduce.background', 'mask_margin_pixels', 1)
+        n_mask_below = self.config.get_int('reduce.trace', 'n_mask_below', 2)
+        n_mask_above = self.config.get_int('reduce.trace', 'n_mask_above', 1)
+        bg_kwargs = {
+            'output_subdir': 'step3_scatterlight',
+            'output_tag': 'master_flat_',
+            'mask_margin_scale': 1.2,
+            'mask_margin_pixels': mask_margin_pixels,
+            'n_mask_below': n_mask_below,
+            'n_mask_above': n_mask_above,
+            'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+        }
+        flat_background = process_background_stage(
+            self.state.flat_field.flat_data,
+            output_dir_base,
+            apertures=self.state.apertures,
+            **bg_kwargs,
+>>>>>>> cef6f04 (	modified:   README.md)
         )
         flat_clean = np.clip(
             self.state.flat_field.flat_data.astype(np.float32) - flat_background.astype(np.float32),
             1e-6,
             None,
         )
+<<<<<<< HEAD
         self._refresh_flat_model_after_scattered_subtraction(flat_clean)
 
         self._report_progress(0.56, "Step 3: Science Background")
@@ -671,10 +894,32 @@ class ProcessingPipeline:
             output_tag=f'{science_name}_',
             apertures=self.state.apertures,
             mask_margin_scale=1.2,
+=======
+        self.state.flat_field.scattered_light = flat_background
+        
+        out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        write_fits_image(str(out_dir / 'master_flat_clean.fits'), flat_clean.astype(np.float32), dtype='float32')
+
+        self._report_progress(0.56, "Step 3: Science Scattered Light")
+        science_background = process_background_stage(
+            science_image,
+            output_dir_base,
+            output_subdir='step3_scatterlight',
+            output_tag=f'{science_name}_',
+            apertures=self.state.apertures,
+            mask_margin_scale=1.2,
+            mask_margin_pixels=mask_margin_pixels,
+            n_mask_below=n_mask_below,
+            n_mask_above=n_mask_above,
+            save_plots=self.config.get_bool('reduce', 'save_plots', True),
+            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+>>>>>>> cef6f04 (	modified:   README.md)
         )
 
         corrected = science_image.astype(np.float32) - science_background.astype(np.float32)
 
+<<<<<<< HEAD
         sci_out_dir = Path(self.config.get_output_path()) / 'step2_scatterlight'
         sci_out_dir.mkdir(parents=True, exist_ok=True)
         write_fits_image(
@@ -682,6 +927,9 @@ class ProcessingPipeline:
             corrected.astype(np.float32),
             dtype='float32'
         )
+=======
+        # The corrected image with original filename is already saved by process_background_stage.
+>>>>>>> cef6f04 (	modified:   README.md)
 
         self._report_progress(0.60, "Science Scattered Light Subtraction Complete")
         return corrected
@@ -689,6 +937,7 @@ class ProcessingPipeline:
     def stage_flat_fielding_science_2d(self, science_image: np.ndarray,
                                        science_name: str = 'science') -> np.ndarray:
         """Step 4: apply 2D pixel-flat correction map to science image."""
+<<<<<<< HEAD
         logger.info("=" * 50)
         logger.info("STEP 4: 2D FLAT FIELD CORRECTION")
         logger.info("=" * 50)
@@ -733,6 +982,28 @@ class ProcessingPipeline:
             plot_2d_image_to_file(safe_flat, str(out_dir / f'flat_correction_used.{fig_format}'), '2D Flat Correction Used')
             write_fits_image(str(out_dir / 'flat_correction_used.fits'), safe_flat.astype(np.float32), dtype='float32')
 
+=======
+        self._report_progress(0.62, "2D Flat Fielding")
+        # --- Extract config for flat correction stage ---
+        flat_corr_kwargs = {
+            'output_dir_base': self.config.get_output_path(),
+            'blaze_knot_spacing': self.config.get_int('reduce.flat', 'blaze_knot_spacing', 500),
+            'blaze_edge_nknots': self.config.get_int('reduce.flat', 'blaze_edge_nknots', 6),
+            'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+            'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+            'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+            'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+            'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+            'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+            'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+        }
+        corrected = process_flat_correction_stage(
+            science_image, self.state.flat_field,
+            apertures=self.state.apertures, science_name=science_name,
+            **flat_corr_kwargs,
+        )
+>>>>>>> cef6f04 (	modified:   README.md)
         self._report_progress(0.70, "2D Flat Fielding Complete")
         return corrected
 
@@ -743,10 +1014,24 @@ class ProcessingPipeline:
         logger.info("=" * 50)
 
         self._report_progress(0.96, "Order Stitching")
+<<<<<<< HEAD
         stitched = process_order_stitching_stage(self.config, spectra_set, output_subdir='step7_stitching')
         self._report_progress(1.00, "Pipeline Complete")
         return stitched
 
+=======
+        stitched = process_order_stitching_stage(
+            spectra_set,
+            output_dir_base=self.config.get_output_path(),
+            output_subdir='step8_stitching',
+            save_plots=self.config.get_bool('reduce', 'save_plots', True),
+            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+        )
+        self._report_progress(1.00, "Pipeline Complete")
+        return stitched
+
+
+>>>>>>> cef6f04 (	modified:   README.md)
     def run_full_pipeline(self, raw_image_path: str,
                          bias_filenames: List[str],
                          flat_filenames: List[str],
@@ -779,6 +1064,7 @@ class ProcessingPipeline:
             corrected_files = self.stage_overscan_correction(all_raw_files)
 
             # Extract corrected filenames
+<<<<<<< HEAD
             raw_image_path = corrected_files[0]
             bias_filenames = corrected_files[1:1+len(bias_filenames)]
             flat_start = 1 + len(bias_filenames)
@@ -797,6 +1083,34 @@ class ProcessingPipeline:
 
             # Step 2: Order tracing and flat model products
             flat_field, apertures = self.stage_flat_fielding(flat_filenames)
+=======
+            raw_image_path_corr = corrected_files[0]
+            bias_filenames_corr = corrected_files[1:1+len(bias_filenames)]
+            flat_start = 1 + len(bias_filenames)
+            flat_end = flat_start + len(flat_filenames)
+            flat_filenames_corr = corrected_files[flat_start:flat_end]
+            calib_filename_corr = corrected_files[-1]
+
+            # Step 2: Bias subtraction
+            master_bias = self.stage_bias_correction(bias_filenames_corr)
+
+            # Apply bias to flat/calib first.
+            flat_filenames_bias = self._apply_master_bias_to_files(flat_filenames_corr, master_bias, 'flat')
+            calib_corrected = self._apply_master_bias_to_files([calib_filename_corr], master_bias, 'calib')
+            if calib_corrected:
+                calib_filename_corr = calib_corrected[0]
+
+            # Determine which flats to use for master flat:
+            # If overscan/bias correction was run (i.e. flat_filenames_bias exists and is not empty), use those;
+            # otherwise, fall back to raw flat_filenames.
+            if flat_filenames_bias and all(Path(f).exists() for f in flat_filenames_bias):
+                master_flat_files = flat_filenames_bias
+            else:
+                master_flat_files = flat_filenames
+
+            # Step 2: Order tracing and flat model products
+            flat_field, apertures = self.stage_flat_fielding(master_flat_files)
+>>>>>>> cef6f04 (	modified:   README.md)
 
             # Read science image (already overscan-corrected)
             logger.info(f"Reading science image: {raw_image_path}")
@@ -821,6 +1135,7 @@ class ProcessingPipeline:
                 science_corrected,
                 science_name=science_name,
             )
+<<<<<<< HEAD
 
             # Step 4: 2D flat-field correction
             science_flat2d = self.stage_flat_fielding_science_2d(
@@ -837,6 +1152,25 @@ class ProcessingPipeline:
             # Step 7: de-blaze using 1D flat/blaze model
             final_spectra = self.stage_de_blazing(calibrated_spectra)
 
+=======
+
+            # Step 4: 2D flat-field correction
+            science_flat2d = self.stage_flat_fielding_science_2d(
+                science_scattered_sub,
+                science_name=science_name,
+            )
+
+            # Step 5: 1D extraction (sum + optimal outputs; optimal used downstream)
+            extracted_spectra = self.stage_extraction(science_flat2d, science_name=science_name)
+
+            # Step 6: de-blaze using 1D flat/blaze model (Blaze Function Correction)
+            deblazed_spectra = self.stage_de_blazing(extracted_spectra, science_name=science_name)
+
+            # Step 7: apply 2D wavelength solution λ=f(pixel, order) to de-blazed orders.
+            final_spectra = self.stage_wavelength_calibration_on_spectra(
+                deblazed_spectra, calib_filename, science_name=science_name)
+
+>>>>>>> cef6f04 (	modified:   README.md)
             # Step 8: order stitching to continuous 1D spectrum
             self.stage_order_stitching(final_spectra)
 

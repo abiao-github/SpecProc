@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 from src.config.config_manager import ConfigManager
 from src.utils.fits_io import read_fits_image
-from src.core.bias_correction import BiasCorrector
-from src.core.flat_fielding import FlatFieldProcessor
+from src.core.basic_reduction import BiasCorrector
+from src.core.order_tracing import FlatFieldProcessor
 
 
 def test_bias_stage():
@@ -37,7 +37,12 @@ def test_bias_stage():
 
     try:
         config = ConfigManager()
-        corrector = BiasCorrector(config)
+        corrector = BiasCorrector(
+            combine_method=config.get('reduce.bias', 'combine_method', 'median'),
+            combine_sigma=config.get_float('reduce.bias', 'combine_sigma', 3.0),
+            save_plots=config.get_bool('reduce', 'save_plots', True),
+            fig_format=config.get('reduce', 'fig_format', 'png')
+        )
 
         bias_files = [str(f) for f in fits_files[:3]]
         logger.info(f"Combining {len(bias_files)} bias frames...")
@@ -73,7 +78,7 @@ def test_flat_stage():
 
     try:
         config = ConfigManager()
-        processor = FlatFieldProcessor(config)
+        processor = FlatFieldProcessor()
 
         flat_files = [str(f) for f in fits_files[:3]]
         logger.info(f"Combining {len(flat_files)} flat frames...")
@@ -92,7 +97,7 @@ def test_flat_stage():
             logger.info(f"✓ Sensitivity map extracted")
 
             # Detect orders
-            apertures = processor.detect_orders(threshold=0.3)
+            apertures = processor.detect_orders(snr_threshold=3.0)
             logger.info(f"✓ Orders detected: {apertures.norders} orders")
 
             return True

@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Tuple, Optional
 from scipy.optimize import curve_fit
 from src.core.data_structures import Spectrum, SpectraSet, ApertureSet, WaveCalib, FlatField
-from src.config.config_manager import ConfigManager
-from src.plotting.spectra_plotter import plot_spectrum_to_file
+from src.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -19,26 +18,28 @@ logger = logging.getLogger(__name__)
 class SpectrumExtractor:
     """Handles 1D spectrum extraction from 2D images."""
 
-    def __init__(self, config: ConfigManager):
+    def __init__(self, optimal_sigma: float = 3.0, method: str = 'optimal'):
         """
         Initialize spectrum extractor.
 
         Args:
-            config: Configuration manager
+            optimal_sigma: Gaussian sigma for optimal extraction profile.
+            method: Default extraction method ('optimal' or 'sum').
         """
-        self.config = config
+        self.optimal_sigma = optimal_sigma
+        self.method = method
         self.extracted_spectra = None
 
     def sum_extraction(self, image: np.ndarray, aperture_positions: np.ndarray,
-                      lower_limit: float = -5.0, upper_limit: float = 5.0) -> np.ndarray:
+                      lower_bounds: np.ndarray = None, upper_bounds: np.ndarray = None) -> np.ndarray:
         """
         Extract spectrum using simple aperture sum.
 
         Args:
             image: 2D image array
             aperture_positions: Aperture center positions (per column)
-            lower_limit: Lower extraction limit relative to center (pixels)
-            upper_limit: Upper extraction limit relative to center (pixels)
+            lower_bounds: Lower boundary positions (per column, absolute y)
+            upper_bounds: Upper boundary positions (per column, absolute y)
 
         Returns:
             1D spectrum array
@@ -54,8 +55,12 @@ class SpectrumExtractor:
 
         for x in range(cols):
             center = aperture_positions[x]
-            y_min = max(0, int(center + lower_limit))
-            y_max = min(rows, int(center + upper_limit) + 1)
+            if lower_bounds is not None and upper_bounds is not None:
+                y_min = max(0, int(np.floor(lower_bounds[x])))
+                y_max = min(rows, int(np.ceil(upper_bounds[x])) + 1)
+            else:
+                y_min = max(0, int(center - 5))
+                y_max = min(rows, int(center + 5) + 1)
 
             if y_max > y_min:
                 spectrum[x] = np.sum(image[y_min:y_max, x])
@@ -68,7 +73,8 @@ class SpectrumExtractor:
 
     def optimal_extraction(self, image: np.ndarray, aperture_positions: np.ndarray,
                           profile: Optional[np.ndarray] = None,
-                          lower_limit: float = -5.0, upper_limit: float = 5.0) -> Tuple[np.ndarray, np.ndarray]:
+                          lower_bounds: np.ndarray = None,
+                          upper_bounds: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract spectrum using optimal extraction.
 
@@ -79,8 +85,8 @@ class SpectrumExtractor:
             image: 2D image array
             aperture_positions: Aperture center positions (per column)
             profile: Optional spatial profile shape (relative weights)
-            lower_limit: lower extraction limit relative to center (pixels)
-            upper_limit: upper extraction limit relative to center (pixels)
+            lower_bounds: Lower boundary positions (per column, absolute y)
+            upper_bounds: Upper boundary positions (per column, absolute y)
 
         Returns:
             Tuple of (spectrum, error)
@@ -97,8 +103,12 @@ class SpectrumExtractor:
 
         for x in range(cols):
             center = aperture_positions[x]
-            y_min = max(0, int(center + lower_limit))
-            y_max = min(rows, int(center + upper_limit) + 1)
+            if lower_bounds is not None and upper_bounds is not None:
+                y_min = max(0, int(np.floor(lower_bounds[x])))
+                y_max = min(rows, int(np.ceil(upper_bounds[x])) + 1)
+            else:
+                y_min = max(0, int(center - 5))
+                y_max = min(rows, int(center + 5) + 1)
 
             if y_max <= y_min:
                 spectrum[x] = 0.0
@@ -115,7 +125,7 @@ class SpectrumExtractor:
                 weights = profile[pstart:pend].astype(np.float64)
                 weights /= np.sum(weights) if np.sum(weights) > 0 else 1.0
             else:
-                sigma = self.config.get_float('reduce.extract', 'optimal_sigma', 3.0)
+                sigma = self.optimal_sigma
                 weights = np.exp(-0.5 * (local_y / sigma) ** 2)
                 weights /= np.sum(weights) if np.sum(weights) > 0 else 1.0
 
@@ -146,9 +156,13 @@ class SpectrumExtractor:
 
         spectra_set = SpectraSet()
 
+<<<<<<< HEAD
         method = method_override if method_override is not None else self.config.get('reduce.extract', 'method', 'sum')
         lower_limit = self.config.get_float('reduce.extract', 'lower_limit', -5.0)
         upper_limit = self.config.get_float('reduce.extract', 'upper_limit', 5.0)
+=======
+        method = method_override if method_override is not None else self.method
+>>>>>>> cef6f04 (	modified:   README.md)
 
         _, cols = image.shape
 
@@ -159,6 +173,8 @@ class SpectrumExtractor:
 
             x_pix = np.arange(cols)
             center_pos = aperture.get_position(x_pix)
+            lower_bounds = aperture.get_lower(x_pix)
+            upper_bounds = aperture.get_upper(x_pix)
 
             profile = None
             if flat_field is not None:
@@ -173,12 +189,12 @@ class SpectrumExtractor:
             if method == 'optimal':
                 flux, error = self.optimal_extraction(image, center_pos,
                                                       profile=profile,
-                                                      lower_limit=lower_limit,
-                                                      upper_limit=upper_limit)
+                                                      lower_bounds=lower_bounds,
+                                                      upper_bounds=upper_bounds)
             else:
                 flux = self.sum_extraction(image, center_pos,
-                                          lower_limit=lower_limit,
-                                          upper_limit=upper_limit)
+                                          lower_bounds=lower_bounds,
+                                          upper_bounds=upper_bounds)
                 error = np.sqrt(np.abs(flux))
 
             # Apply wavelength calibration if available
@@ -221,6 +237,7 @@ class SpectrumExtractor:
         norders = spectra_set.norders
         max_pixels = max([s.npixel() for s in spectra_set.spectra.values()])
 
+
         # Create binary table
         cols = []
         for aperture_id in spectra_set.get_orders():
@@ -230,12 +247,12 @@ class SpectrumExtractor:
             wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)))
             fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)))
 
-            cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=[wl]))
-            cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=[fl]))
+            cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=wl))
+            cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=fl))
 
             if spec.error is not None:
                 err = np.pad(spec.error, (0, max_pixels - len(spec.error)))
-                cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=[err]))
+                cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=err))
 
         # Create HDUs
         primary_hdu = fits.PrimaryHDU()
@@ -248,33 +265,46 @@ class SpectrumExtractor:
         logger.info(f"Saved {norders} spectra to {output_path}")
 
 
-def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
+def process_extraction_stage(science_image: np.ndarray,
                             apertures: ApertureSet,
+                            output_dir_base: str,
                             wavelength_calib: Optional[WaveCalib] = None,
                             flat_field: Optional[FlatField] = None,
+<<<<<<< HEAD
                             midpath: str = None,
                             method_override: Optional[str] = None,
                             output_filename: str = 'extracted_spectra.fits',
                             plot_prefix: str = 'extracted') -> SpectraSet:
+=======
+                            method_override: Optional[str] = None,
+                            output_filename: str = 'extracted_spectra.fits',
+                            plot_prefix: str = 'extracted',
+                            optimal_sigma: float = 3.0,
+                            extraction_method: str = 'optimal',
+                            save_plots: bool = True,
+                            fig_format: str = 'png') -> SpectraSet:
+>>>>>>> cef6f04 (	modified:   README.md)
     """
     Execute spectrum extraction stage.
 
     Args:
-        config: Configuration manager
         science_image: 2D science image
         apertures: Detected apertures
+        output_dir_base: Base output directory
         wavelength_calib: Wavelength calibration
-        midpath: Intermediate output directory
+        flat_field: Flat field data
+        method_override: Override default extraction method
+        output_filename: Name for output FITS file
+        plot_prefix: Prefix for diagnostic plots
+        optimal_sigma: Sigma for Gaussian profile in optimal extraction
+        extraction_method: Default extraction method
+        save_plots: Whether to save diagnostic plots
+        fig_format: Format for diagnostic plots
 
     Returns:
         SpectraSet with extracted 1D spectra
     """
-    # Use default midpath if not provided
-    if midpath is None:
-        base_output_path = config.get_output_path()
-        midpath = str(Path(base_output_path) / 'spectra')
-
-    extractor = SpectrumExtractor(config)
+    extractor = SpectrumExtractor(optimal_sigma=optimal_sigma, method=extraction_method)
 
     # Extract spectra
     spectra_set = extractor.extract_aperture_set(science_image, apertures,
@@ -282,15 +312,19 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
                                                 method_override=method_override)
 
     # Save spectra
+<<<<<<< HEAD
     base_output_path = config.get_output_path()
     spectra_file = Path(base_output_path) / 'step4_extraction' / output_filename
+=======
+    spectra_file = Path(output_dir_base) / 'step5_extraction' / output_filename
+>>>>>>> cef6f04 (	modified:   README.md)
     spectra_file.parent.mkdir(parents=True, exist_ok=True)
     extractor.save_spectra(str(spectra_file), spectra_set)
 
     # Save diagnostic plots if enabled
-    save_plots = config.get_bool('reduce', 'save_plots', True)
     if save_plots:
         out_dir = spectra_file.parent
+<<<<<<< HEAD
         fig_format = config.get('reduce', 'fig_format', 'png')
         for spectrum in spectra_set.spectra.values():
             order = spectrum.aperture
@@ -303,5 +337,69 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
                     spectrum.error if spectrum.error is not None else None,
                     f"Extracted Spectrum - Order {order}"
                 )
+=======
+        if wavelength_calib is not None:
+            pdf_path = out_dir / f"{plot_prefix}_all_orders.pdf"
+            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum")
+        else:
+            # If no wavelength calibration, plot raw pixels
+            pdf_name = f"{plot_prefix}.pdf".replace('_1D', '_1D_pixel')
+            if '_pixel' not in pdf_name:
+                pdf_name = f"{plot_prefix}_pixel.pdf"
+            pdf_path = out_dir / pdf_name
+            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum (pixels)", xlabel="Pixel")
+>>>>>>> cef6f04 (	modified:   README.md)
 
+    return spectra_set
+
+def load_extracted_spectra(filepath: str) -> SpectraSet:
+    """Load extracted spectra from FITS file."""
+    from astropy.io import fits
+    from src.core.data_structures import Spectrum, SpectraSet
+    
+    spectra_set = SpectraSet()
+    
+    with fits.open(filepath) as hdul:
+        if len(hdul) < 2:
+            raise ValueError("FITS file does not contain a binary table")
+            
+        table_hdu = hdul[1]
+        
+        # Extract unique aperture IDs from column names
+        aperture_ids = set()
+        for col in table_hdu.columns:
+            if col.name.startswith('FLUX_'):
+                try:
+                    aperture_ids.add(int(col.name.split('_')[1]))
+                except ValueError:
+                    pass
+                
+        for ap_id in sorted(list(aperture_ids)):
+            wav_col = f'WAV_{ap_id:02d}'
+            flux_col = f'FLUX_{ap_id:02d}'
+            err_col = f'ERR_{ap_id:02d}'
+            
+            if wav_col in table_hdu.data.columns.names and flux_col in table_hdu.data.columns.names:
+                wav = table_hdu.data[wav_col]
+                flux = table_hdu.data[flux_col]
+                err = table_hdu.data[err_col] if err_col in table_hdu.data.columns.names else None
+                
+                if len(wav.shape) > 1 and wav.shape[0] == 1:
+                    wav = wav[0]
+                if len(flux.shape) > 1 and flux.shape[0] == 1:
+                    flux = flux[0]
+                if err is not None and len(err.shape) > 1 and err.shape[0] == 1:
+                    err = err[0]
+                
+                spec = Spectrum(
+                    aperture=ap_id,
+                    order=ap_id, # order is same as aperture for now
+                    wavelength=wav,
+                    flux=flux,
+                    error=err,
+                    background=None,
+                    mask=None
+                )
+                spectra_set.add_spectrum(spec)
+                
     return spectra_set

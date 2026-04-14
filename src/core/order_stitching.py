@@ -157,18 +157,34 @@ def save_stitched_spectrum(output_path: str, wavelength: np.ndarray,
     logger.info(f"Saved stitched spectrum to {out}")
 
 
+<<<<<<< HEAD
 def process_order_stitching_stage(config: ConfigManager, spectra_set: SpectraSet,
                                  output_subdir: str = 'step7_stitching') -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """Run order stitching stage and save outputs."""
     wl, fl, er = stitch_orders(spectra_set)
 
     out_dir = Path(config.get_output_path()) / output_subdir
+=======
+def process_order_stitching_stage(spectra_set: SpectraSet,
+                                 output_dir_base: str,
+                                 output_subdir: str = 'step8_stitching',
+                                 save_plots: bool = True,
+                                 fig_format: str = 'png') -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    """Run order stitching stage and save outputs."""
+    wl, fl, er = stitch_orders(spectra_set)
+
+    out_dir = Path(output_dir_base) / output_subdir
+>>>>>>> cef6f04 (	modified:   README.md)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     save_stitched_spectrum(str(out_dir / 'stitched_spectrum.fits'), wl, fl, er)
 
+<<<<<<< HEAD
     if config.get_bool('reduce', 'save_plots', True):
         fig_format = config.get('reduce', 'fig_format', 'png')
+=======
+    if save_plots:
+>>>>>>> cef6f04 (	modified:   README.md)
         plot_spectrum_to_file(
             wl,
             fl,

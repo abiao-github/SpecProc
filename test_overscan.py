@@ -84,7 +84,7 @@ def test_overscan_stage():
     print("="*60)
 
     from src.config.config_manager import ConfigManager
-    from src.core.overscan_correction import OverscanCorrectionStage
+    from src.core.basic_reduction import OverscanCorrectionStage
 
     test_data_dir = Path('/Users/abiao/Documents/资料存档/软件工具/gitrepo/20241102_hrs')
     fits_files = sorted(test_data_dir.glob('*.fits'))[:2]
@@ -99,7 +99,19 @@ def test_overscan_stage():
         logger.info("✓ Configuration created")
 
         # Create stage
-        stage = OverscanCorrectionStage(config)
+        stage = OverscanCorrectionStage(
+            overscan_start_column=config.get_int('data', 'overscan_start_column', -1),
+            overscan_method=config.get('data', 'overscan_method', 'mean_only'),
+            overscan_smooth_window=config.get_int('data', 'overscan_smooth_window', -1),
+            overscan_poly_order=config.get_int('data', 'overscan_poly_order', 3),
+            overscan_poly_type=config.get('data', 'overscan_poly_type', 'legendre'),
+            trim_x_start=config.get_int('data', 'trim_x_start', -1),
+            trim_x_end=config.get_int('data', 'trim_x_end', -1),
+            trim_y_start=config.get_int('data', 'trim_y_start', -1),
+            trim_y_end=config.get_int('data', 'trim_y_end', -1),
+            save_plots=config.get_bool('reduce', 'save_plots', True),
+            fig_format=config.get('reduce', 'fig_format', 'png')
+        )
         logger.info("✓ OverscanCorrectionStage created")
 
         # Test single file correction

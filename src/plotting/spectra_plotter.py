@@ -121,12 +121,15 @@ def plot_spectrum_to_file(wavelength: np.ndarray, flux: np.ndarray,
 
 
 def plot_2d_image_to_file(image: np.ndarray, output_path: str,
-                         title: str = "", cmap: str = 'viridis'):
+                         title: str = "", cmap: str = 'viridis',
+                         vmin=None, vmax=None):
     """Save 2D image plot to file."""
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    vmin = np.percentile(image, 1)
-    vmax = np.percentile(image, 99)
+    if vmin is None:
+        vmin = np.percentile(image, 1)
+    if vmax is None:
+        vmax = np.percentile(image, 99)
 
     im = ax.imshow(image, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax)
     ax.set_title(title)
@@ -432,3 +435,34 @@ def plot_wavelength_calibration(line_pixels: np.ndarray, line_wavelengths: np.nd
     plt.close(fig)
 
     logger.info(f"Saved wavelength calibration plot to {output_path}")
+
+def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spectrum", xlabel: str = "Wavelength (Angstrom)"):
+    """Save all spectra in a SpectraSet to a single multi-page PDF file."""
+    from matplotlib.backends.backend_pdf import PdfPages
+    
+    with PdfPages(output_path) as pdf:
+        for aperture_id in sorted(spectra_set.spectra.keys()):
+            spectrum = spectra_set.get_spectrum(aperture_id)
+            if len(spectrum.wavelength) == 0:
+                continue
+                
+            fig, ax = plt.subplots(figsize=(12, 6))
+            ax.plot(spectrum.wavelength, spectrum.flux, 'b-', linewidth=0.7, label="Flux")
+
+            # Skip plotting error band by default in PDF to massively speed up rendering and reduce file size
+            # if spectrum.error is not None:
+            #     ax.fill_between(spectrum.wavelength, spectrum.flux - spectrum.error, 
+            #                     spectrum.flux + spectrum.error,
+            #                     alpha=0.3, color='blue', label="Error")
+
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Flux")
+            ax.set_title(f"{title_prefix} - Order {aperture_id}")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+    logger.info(f"Saved all spectra to PDF: {output_path}")

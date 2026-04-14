@@ -202,17 +202,16 @@ class WavelengthCalibrator:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create FITS HDUs
-        header = {
-            'XORDER': self.wave_calib.xorder,
-            'YORDER': self.wave_calib.yorder,
-            'RMS': self.wave_calib.rms,
-            'NLINES': self.wave_calib.nlines,
-            'CALIB_TYP': self.wave_calib.calib_type,
-        }
+        # Build a proper fits.Header (PrimaryHDU rejects plain dicts)
+        hdr = fits.Header()
+        hdr['XORDER']    = self.wave_calib.xorder
+        hdr['YORDER']    = self.wave_calib.yorder
+        hdr['RMS']       = self.wave_calib.rms
+        hdr['NLINES']    = self.wave_calib.nlines
+        hdr['CALIB_TYP'] = self.wave_calib.calib_type
 
         hdul = fits.HDUList([
-            fits.PrimaryHDU(data=self.wave_calib.poly_coef, header=header),
+            fits.PrimaryHDU(data=self.wave_calib.poly_coef, header=hdr),
         ])
 
         hdul.writeto(str(output_path), overwrite=True)
@@ -261,7 +260,7 @@ def process_wavelength_stage(config: ConfigManager, calib_filename: str,
 
     # Save calibration
     base_output_path = config.get_output_path()
-    calib_file = Path(base_output_path) / 'step6_wavelength' / 'wavelength_calibration.fits'
+    calib_file = Path(base_output_path) / 'step5_wavelength' / 'wavelength_calibration.fits'
     calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.wave_calib = wave_calib
     calibrator.save_calibration(str(calib_file))

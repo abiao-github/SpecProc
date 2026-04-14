@@ -26,15 +26,24 @@ class ApertureLocation:
     width: float = 30.0        # Aperture width (pixels)
 
     def get_position(self, y: np.ndarray) -> np.ndarray:
-        """Get aperture center position at spatial coordinate y."""
+        """Get aperture center position at spatial coordinate y.
+
+        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
+        """
         return np.polyval(self.center_coef, y)
 
     def get_lower(self, y: np.ndarray) -> np.ndarray:
-        """Get lower boundary at spatial coordinate y."""
+        """Get lower boundary at spatial coordinate y.
+
+        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
+        """
         return np.polyval(self.lower_coef, y)
 
     def get_upper(self, y: np.ndarray) -> np.ndarray:
-        """Get upper boundary at spatial coordinate y."""
+        """Get upper boundary at spatial coordinate y.
+
+        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
+        """
         return np.polyval(self.upper_coef, y)
 
 
@@ -58,6 +67,10 @@ class ApertureSet:
     def get_orders(self) -> list:
         """Return list of order numbers."""
         return sorted(self.apertures.keys())
+
+    def __len__(self) -> int:
+        """Return number of apertures (orders) in the set."""
+        return len(self.apertures)
 
 
 @dataclass
@@ -161,6 +174,21 @@ class FlatField:
     # Bad/saturated pixel mask
     flat_mask: np.ndarray
 
+    # Scattered light model subtracted from master flat
+    scattered_light: Optional[np.ndarray] = None
+
+    # Smoothed 2D model preserving blaze/order envelope
+    smoothed_model: Optional[np.ndarray] = None
+
+    # Pixel-to-pixel flat (high-frequency component near 1.0)
+    pixel_flat: Optional[np.ndarray] = None
+
+    # Illumination correction map (large-scale spatial profile)
+    illumination_flat: Optional[np.ndarray] = None
+
+    # Final 2D flat correction map used on science images
+    flat_corr_2d: Optional[np.ndarray] = None
+
     # Per-order 1D flat spectra (optional)
     flat_spec: Optional[SpectraSet] = None
 
@@ -175,8 +203,6 @@ class FlatField:
 
     # Metadata
     exptime: float = 1.0
-    nrows: int = 0
-    ncols: int = 0
 
 
 @dataclass

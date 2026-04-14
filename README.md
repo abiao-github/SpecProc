@@ -212,11 +212,13 @@ specproc --config ./specproc.cfg
 # Path behavior:
 # - rawdata_path = /data/20241102_hrs  → Absolute path, loads from /data/20241102_hrs/
 # - rawdata_path = ./20241102_hrs       → Relative path, loads from working_directory/20241102_hrs/
+# - rawdata_path = 20241102_hrs         → Same as above, also relative to working directory
 #   (e.g., if working in /myworkspace/, loads from /myworkspace/20241102_hrs/)
 #
 # Examples (assuming working directory is /myworkspace/):
 #   rawdata_path = ./20241102_hrs      → Data from /myworkspace/20241102_hrs/
-#   rawdata_path = /data/20241102_hrs   → Data from /data/20241102_hrs/
+#   rawdata_path = 20241102_hrs        → Same as above, data from /myworkspace/20241102_hrs/
+#   rawdata_path = /data/20241102_hrs  → Data from /data/20241102_hrs/
 rawdata_path = ./20241102_hrs
 ```
 
@@ -231,10 +233,12 @@ rawdata_path = ./20241102_hrs
 # Path behavior:
 # - output_path = /data/output      → Absolute path, saves to /data/output/
 # - output_path = ./output          → Relative path, saves to working_directory/output/
+# - output_path = output            → Same as above, also relative to working directory
 #   (e.g., if working in /myworkspace/, saves to /myworkspace/output/)
 #
 # Examples (assuming working directory is /myworkspace/):
 #   output_path = ./output          → Results to /myworkspace/output/
+#   output_path = output            → Same as above, results to /myworkspace/output/
 #   output_path = /data/output      → Results to /data/output/
 #
 # Output directory structure (corresponds to 9 processing steps):

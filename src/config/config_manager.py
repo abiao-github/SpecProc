@@ -82,8 +82,12 @@ class ConfigManager:
             'statime_key': 'DATE-OBS',
             'exptime_key': 'EXPTIME',
             'direction': 'xr-',
-            'overscan_start_column': '4097',
-            'overscan_method': 'median',
+            'overscan_start_column': '-1',  # Default: no overscan correction
+            'overscan_method': 'mean_savgol',
+            'trim_x_start': '-1',
+            'trim_x_end': '-1',
+            'trim_y_start': '-1',
+            'trim_y_end': '-1',
         }
 
         # Reduce section
@@ -96,22 +100,31 @@ class ConfigManager:
             'auto_process_all_images': 'yes',
             'cosmic_enabled': 'yes',
             'cosmic_sigma': '5.0',
-            'cosmic_window': '7',
+            'cosmic_window': '5',
+            'cosmic_fine_sigma': '2.0',
+            'cosmic_line_sigma': '1.5',
+            'cosmic_grow_sigma': '2.5',
+            'cosmic_maxsize': '8',
         }
 
         # Bias section
         self.config['reduce.bias'] = {
-            'method': 'combine',  # 'combine' or 'load'
             'combine_method': 'median',
             'combine_sigma': '3.0',
         }
 
         # Flat section
         self.config['reduce.flat'] = {
-            'method': 'combine',
             'combine_method': 'median',
             'q_threshold': '0.5',
             'mosaic_maxcount': '65535',
+            'blaze_smooth_method': 'savgol',
+            'blaze_smooth_window': '21',
+            'blaze_bspline_smooth': '0.5',
+            'width_smooth_window': '41',
+            'profile_bin_step': '0.01',
+            'pixel_flat_min': '0.5',
+            'pixel_flat_max': '1.5',
         }
 
         # Trace section
@@ -119,6 +132,17 @@ class ConfigManager:
             'scan_step': '10',
             'minimum': '50.0',
             'separation': '30.0',
+            'seed_threshold': '0.30',
+            'prominence_scale': '0.50',
+            'search_half_scale': '0.45',
+            'step_denominator': '220',
+            'fill_missing_orders': 'yes',
+            'gap_fill_factor': '1.6',
+            'fit_method': 'polynomial',
+            'bspline_smooth': '0.2',
+            'edge_degree': '3',
+            'aperture_root_fraction': '0.03',
+            'aperture_noise_floor_sigma': '3.0',
             'filling': '0.3',
             'degree': '3',
         }
@@ -146,8 +170,13 @@ class ConfigManager:
 
         # Background section
         self.config['reduce.background'] = {
-            'method': '2d_poly',
-            'poly_order': '2',
+            'method': 'chebyshev',
+            'poly_order': '3',
+            'smooth_sigma': '20.0',
+            'sigma_clip': '3.0',
+            'sigma_clip_maxiters': '4',
+            'mask_margin_pixels': '3',
+            'bspline_smooth': '1.0',
             'thar_pollution': 'no',
         }
 
@@ -161,8 +190,6 @@ class ConfigManager:
         # Instrument section
         self.config['instrument'] = {
             'detector': 'generic_ccd',
-            'nrows': '2048',
-            'ncols': '4096',
             'gain': '1.0',
             'readnoise': '5.0',
         }
@@ -269,8 +296,12 @@ class ConfigManager:
         """
         rawdata_path = self.get('data', 'rawdata_path', './rawdata')
         # Expand ~ to user's home directory
-        rawdata_path = Path(rawdata_path).expanduser().as_posix()
-        return rawdata_path
+        path = Path(rawdata_path).expanduser()
+        # If path is relative (not absolute), make it relative to current working directory
+        if not path.is_absolute():
+            # Resolve to get absolute path relative to current working directory
+            path = Path.cwd() / path
+        return path.as_posix()
 
     def get_output_path(self) -> str:
         """
@@ -280,9 +311,10 @@ class ConfigManager:
             Expanded path (absolute or relative to current working directory)
         """
         output_path = self.get('reduce', 'output_path', './output')
-        # Expand ~ to user's home directory
-        output_path = Path(output_path).expanduser().as_posix()
-        return output_path
+        path = Path(output_path).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        return path.as_posix()
 
     def create_directories(self):
         """Create output directories specified in config."""

@@ -55,7 +55,7 @@ def test_overscan_correction():
             logger.info(f"  Right overscan shape: {regions['right'].shape}")
 
         # Estimate overscan bias
-        bias = corrector.estimate_overscan_bias(raw_image, method='median')
+        bias = corrector.estimate_overscan_bias(raw_image, method='mean_savgol')
         logger.info(f"✓ Overscan bias estimated: shape={bias.shape}")
 
         # Apply correction

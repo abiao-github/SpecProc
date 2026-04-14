@@ -17,38 +17,46 @@ from src.config.config_manager import ConfigManager
 class SettingsDialog(QDialog):
     """Settings dialog for configuration editing."""
 
-    def __init__(self, config: ConfigManager, parent=None):
+    def __init__(self, config: ConfigManager, parent=None, initial_tab: int = 0):
         """
         Initialize settings dialog.
 
         Args:
             config: Configuration manager instance
             parent: Parent widget
+            initial_tab: Initial tab index to show (0: Data & Instruments, 1: Data Reduction, etc.)
         """
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("SpecProc Settings")
         self.setModal(True)
         self.resize(800, 600)
+        
+        self.initial_tab = initial_tab
+        self.tab_widget = None
 
         self.init_ui()
         self.load_current_values()
+        
+        # Set initial tab
+        if self.tab_widget:
+            self.tab_widget.setCurrentIndex(initial_tab)
 
     def init_ui(self):
         """Initialize user interface."""
         layout = QVBoxLayout()
 
         # Tab widget with different configuration categories
-        tab_widget = QTabWidget()
+        self.tab_widget = QTabWidget()
 
-        # Create tabs merging related parameters
-        tab_widget.addTab(self._create_data_tab(), "Data & Calibration")
-        tab_widget.addTab(self._create_correction_tab(), "Bias & Flat")
-        tab_widget.addTab(self._create_wlcalib_tab(), "Wavelength Calibration")
-        tab_widget.addTab(self._create_extraction_tab(), "Trace & Extraction")
-        tab_widget.addTab(self._create_processing_tab(), "Processing & Output")
+        # Create tabs following data reduction pipeline order
+        self.tab_widget.addTab(self._create_data_tab(), "Data & Instruments")
+        self.tab_widget.addTab(self._create_reduction_tab(), "Data Reduction")
+        self.tab_widget.addTab(self._create_extraction_tab(), "Trace & Extraction")
+        self.tab_widget.addTab(self._create_wlcalib_tab(), "Wavelength Calibration")
+        self.tab_widget.addTab(self._create_processing_tab(), "Processing & Output")
 
-        layout.addWidget(tab_widget)
+        layout.addWidget(self.tab_widget)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -64,7 +72,7 @@ class SettingsDialog(QDialog):
         self.setLayout(layout)
 
     def _create_data_tab(self) -> QWidget:
-        """Create data input, telescope and overscan settings tab."""
+        """Create data input and instrument settings tab."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         widget = QWidget()
@@ -87,26 +95,14 @@ class SettingsDialog(QDialog):
         self.direction_combo.addItems(['xr-', 'xl-', 'yr-', 'yl-'])
         data_layout.addRow("Dispersion Direction:", self.direction_combo)
 
+        self.output_path_edit = QLineEdit()
+        data_layout.addRow("Output Path:", self.output_path_edit)
+
         data_group.setLayout(data_layout)
         layout.addRow(data_group)
 
-        # Overscan configuration
-        overscan_group = QGroupBox("Overscan Configuration")
-        overscan_layout = QFormLayout()
-
-        self.overscan_start_column_spin = QSpinBox()
-        self.overscan_start_column_spin.setRange(1, 10000)
-        overscan_layout.addRow("Overscan Start Column (1-based):", self.overscan_start_column_spin)
-
-        self.overscan_method_combo = QComboBox()
-        self.overscan_method_combo.addItems(['median', 'polynomial'])
-        overscan_layout.addRow("Overscan Method:", self.overscan_method_combo)
-
-        overscan_group.setLayout(overscan_layout)
-        layout.addRow(overscan_group)
-
         # Telescope configuration
-        telescope_group = QGroupBox("Telescope Configuration")
+        telescope_group = QGroupBox("Telescope & Instrument")
         telescope_layout = QFormLayout()
 
         self.telescope_name_edit = QLineEdit()
@@ -118,8 +114,241 @@ class SettingsDialog(QDialog):
         telescope_group.setLayout(telescope_layout)
         layout.addRow(telescope_group)
 
-        # Calibration configuration (merged from Telescope & Calibration tab)
-        calib_group = QGroupBox("Calibration Configuration")
+        # Detector parameters
+        detector_group = QGroupBox("Detector Parameters")
+        detector_layout = QFormLayout()
+
+        self.detector_gain_spin = QDoubleSpinBox()
+        self.detector_gain_spin.setRange(0.1, 100.0)
+        self.detector_gain_spin.setSingleStep(0.1)
+        detector_layout.addRow("CCD Gain:", self.detector_gain_spin)
+
+        self.detector_readnoise_spin = QDoubleSpinBox()
+        self.detector_readnoise_spin.setRange(0.0, 100.0)
+        self.detector_readnoise_spin.setSingleStep(0.5)
+        detector_layout.addRow("Read Noise:", self.detector_readnoise_spin)
+
+        detector_group.setLayout(detector_layout)
+        layout.addRow(detector_group)
+
+        widget.setLayout(layout)
+        scroll.setWidget(widget)
+        return scroll
+
+    def _create_reduction_tab(self) -> QWidget:
+        """Create bias, flat, background and cosmic ray correction settings tab."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        widget = QWidget()
+        layout = QFormLayout()
+
+        # Overscan configuration
+        overscan_group = QGroupBox("Overscan Correction")
+        overscan_layout = QFormLayout()
+
+        self.overscan_start_column_spin = QSpinBox()
+        self.overscan_start_column_spin.setRange(-1, 10000)
+        self.overscan_start_column_spin.setSpecialValueText("None")
+        overscan_layout.addRow("Overscan Start Column (1-based):", self.overscan_start_column_spin)
+
+        self.overscan_method_combo = QComboBox()
+        self.overscan_method_combo.addItems(['mean_only', 'mean_savgol', 'mean_polynomial'])
+        self.overscan_method_combo.setToolTip(
+            "mean_only: Sigma-clipped mean only, no smoothing\n"
+            "mean_savgol: Sigma-clipped mean with Savitzky-Golay smoothing\n"
+            "mean_polynomial: Sigma-clipped mean with polynomial fitting (IRAF style)"
+        )
+        overscan_layout.addRow("Overscan Method:", self.overscan_method_combo)
+
+        self.overscan_smooth_window_spin = QSpinBox()
+        self.overscan_smooth_window_spin.setRange(-1, 10000)
+        self.overscan_smooth_window_spin.setSpecialValueText("Auto (1/5 height)")
+        self.overscan_smooth_window_spin.setToolTip("Savitzky-Golay smoothing window size. -1 for auto (1/5 of image height)")
+        overscan_layout.addRow("Smooth Window:", self.overscan_smooth_window_spin)
+
+        self.overscan_poly_type_combo = QComboBox()
+        self.overscan_poly_type_combo.addItems(['legendre', 'chebyshev', 'polynomial'])
+        self.overscan_poly_type_combo.setToolTip(
+            "Polynomial type for mean_polynomial method:\n"
+            "legendre: Legendre polynomial (IRAF default)\n"
+            "chebyshev: Chebyshev polynomial\n"
+            "polynomial: Standard power series"
+        )
+        overscan_layout.addRow("Poly Type:", self.overscan_poly_type_combo)
+
+        self.overscan_poly_order_spin = QSpinBox()
+        self.overscan_poly_order_spin.setRange(1, 10)
+        self.overscan_poly_order_spin.setValue(3)
+        self.overscan_poly_order_spin.setToolTip("Polynomial order (degree) for mean_polynomial method")
+        overscan_layout.addRow("Poly Order:", self.overscan_poly_order_spin)
+
+        overscan_group.setLayout(overscan_layout)
+        layout.addRow(overscan_group)
+
+        # Connect overscan method change to update parameter states
+        self.overscan_method_combo.currentTextChanged.connect(self._update_overscan_params_enabled)
+
+        # Bias correction
+        bias_group = QGroupBox("Bias Correction")
+        bias_layout = QFormLayout()
+
+        self.bias_combine_method_combo = QComboBox()
+        self.bias_combine_method_combo.addItems(['mean', 'median', 'sigma_clip'])
+        bias_layout.addRow("Combine Method:", self.bias_combine_method_combo)
+
+        self.bias_combine_sigma_spin = QDoubleSpinBox()
+        self.bias_combine_sigma_spin.setRange(1.0, 10.0)
+        self.bias_combine_sigma_spin.setSingleStep(0.1)
+        bias_layout.addRow("Sigma Clipping Threshold:", self.bias_combine_sigma_spin)
+
+        bias_group.setLayout(bias_layout)
+        layout.addRow(bias_group)
+
+        # Flat fielding
+        flat_group = QGroupBox("Flat Fielding")
+        flat_layout = QFormLayout()
+
+        self.flat_combine_method_combo = QComboBox()
+        self.flat_combine_method_combo.addItems(['mean', 'median'])
+        flat_layout.addRow("Combine Method:", self.flat_combine_method_combo)
+
+        self.flat_q_threshold_spin = QDoubleSpinBox()
+        self.flat_q_threshold_spin.setRange(0.0, 1.0)
+        self.flat_q_threshold_spin.setSingleStep(0.05)
+        flat_layout.addRow("Quality Threshold:", self.flat_q_threshold_spin)
+
+        self.flat_mosaic_maxcount_spin = QDoubleSpinBox()
+        self.flat_mosaic_maxcount_spin.setRange(0.0, 100000.0)
+        flat_layout.addRow("Mosaic Max Count:", self.flat_mosaic_maxcount_spin)
+
+        self.flat_blaze_smooth_method_combo = QComboBox()
+        self.flat_blaze_smooth_method_combo.addItems(['median', 'savgol', 'bspline'])
+        flat_layout.addRow("Blaze Smooth Method:", self.flat_blaze_smooth_method_combo)
+
+        self.flat_blaze_smooth_window_spin = QSpinBox()
+        self.flat_blaze_smooth_window_spin.setRange(5, 401)
+        self.flat_blaze_smooth_window_spin.setSingleStep(2)
+        flat_layout.addRow("Blaze Smooth Window:", self.flat_blaze_smooth_window_spin)
+
+        self.flat_blaze_bspline_smooth_spin = QDoubleSpinBox()
+        self.flat_blaze_bspline_smooth_spin.setRange(0.0, 20.0)
+        self.flat_blaze_bspline_smooth_spin.setSingleStep(0.1)
+        flat_layout.addRow("Blaze B-spline Smooth:", self.flat_blaze_bspline_smooth_spin)
+
+        self.flat_width_smooth_window_spin = QSpinBox()
+        self.flat_width_smooth_window_spin.setRange(5, 401)
+        self.flat_width_smooth_window_spin.setSingleStep(2)
+        flat_layout.addRow("Width Smooth Window:", self.flat_width_smooth_window_spin)
+
+        self.flat_profile_bin_step_spin = QDoubleSpinBox()
+        self.flat_profile_bin_step_spin.setRange(0.002, 0.2)
+        self.flat_profile_bin_step_spin.setDecimals(3)
+        self.flat_profile_bin_step_spin.setSingleStep(0.001)
+        flat_layout.addRow("y_norm Bin Step:", self.flat_profile_bin_step_spin)
+
+        self.flat_pixel_min_spin = QDoubleSpinBox()
+        self.flat_pixel_min_spin.setRange(0.01, 2.0)
+        self.flat_pixel_min_spin.setSingleStep(0.01)
+        flat_layout.addRow("Pixel Flat Min:", self.flat_pixel_min_spin)
+
+        self.flat_pixel_max_spin = QDoubleSpinBox()
+        self.flat_pixel_max_spin.setRange(0.1, 5.0)
+        self.flat_pixel_max_spin.setSingleStep(0.01)
+        flat_layout.addRow("Pixel Flat Max:", self.flat_pixel_max_spin)
+
+        flat_group.setLayout(flat_layout)
+        layout.addRow(flat_group)
+
+        # Background subtraction
+        bg_group = QGroupBox("Background Subtraction")
+        bg_layout = QFormLayout()
+
+        self.bg_method_combo = QComboBox()
+        self.bg_method_combo.addItems(['chebyshev', 'bspline', 'smooth'])
+        bg_layout.addRow("Background Method:", self.bg_method_combo)
+
+        self.bg_poly_order_spin = QSpinBox()
+        self.bg_poly_order_spin.setRange(1, 10)
+        bg_layout.addRow("Fit Order:", self.bg_poly_order_spin)
+
+        self.bg_smooth_sigma_spin = QDoubleSpinBox()
+        self.bg_smooth_sigma_spin.setRange(1.0, 200.0)
+        self.bg_smooth_sigma_spin.setSingleStep(1.0)
+        bg_layout.addRow("Smooth Sigma:", self.bg_smooth_sigma_spin)
+
+        self.bg_sigma_clip_spin = QDoubleSpinBox()
+        self.bg_sigma_clip_spin.setRange(0.0, 10.0)
+        self.bg_sigma_clip_spin.setSingleStep(0.1)
+        bg_layout.addRow("Sigma Clip:", self.bg_sigma_clip_spin)
+
+        self.bg_sigma_clip_iter_spin = QSpinBox()
+        self.bg_sigma_clip_iter_spin.setRange(1, 20)
+        bg_layout.addRow("Clip Iterations:", self.bg_sigma_clip_iter_spin)
+
+        self.bg_mask_margin_spin = QSpinBox()
+        self.bg_mask_margin_spin.setRange(0, 20)
+        bg_layout.addRow("Mask Margin (px):", self.bg_mask_margin_spin)
+
+        self.bg_bspline_smooth_spin = QDoubleSpinBox()
+        self.bg_bspline_smooth_spin.setRange(0.0, 100.0)
+        self.bg_bspline_smooth_spin.setSingleStep(0.1)
+        bg_layout.addRow("B-spline Smooth:", self.bg_bspline_smooth_spin)
+
+        bg_group.setLayout(bg_layout)
+        layout.addRow(bg_group)
+
+        # Cosmic ray correction
+        cosmic_group = QGroupBox("Cosmic Ray Correction")
+        cosmic_layout = QFormLayout()
+
+        self.cosmic_enabled_check = QCheckBox("Enable cosmic ray correction")
+        cosmic_layout.addRow(self.cosmic_enabled_check)
+
+        self.cosmic_sigma_spin = QDoubleSpinBox()
+        self.cosmic_sigma_spin.setRange(0.1, 20.0)
+        self.cosmic_sigma_spin.setSingleStep(0.1)
+        cosmic_layout.addRow("Sigma Threshold:", self.cosmic_sigma_spin)
+
+        self.cosmic_window_spin = QSpinBox()
+        self.cosmic_window_spin.setRange(1, 50)
+        cosmic_layout.addRow("Window Size:", self.cosmic_window_spin)
+
+        cosmic_group.setLayout(cosmic_layout)
+        layout.addRow(cosmic_group)
+
+        widget.setLayout(layout)
+        scroll.setWidget(widget)
+        return scroll
+
+    def _update_overscan_params_enabled(self):
+        """Enable/disable overscan parameters based on selected method."""
+        method = self.overscan_method_combo.currentText()
+        
+        if method == 'mean_only':
+            # No additional parameters needed
+            self.overscan_smooth_window_spin.setEnabled(False)
+            self.overscan_poly_type_combo.setEnabled(False)
+            self.overscan_poly_order_spin.setEnabled(False)
+        elif method == 'mean_savgol':
+            # Only smooth window needed
+            self.overscan_smooth_window_spin.setEnabled(True)
+            self.overscan_poly_type_combo.setEnabled(False)
+            self.overscan_poly_order_spin.setEnabled(False)
+        elif method == 'mean_polynomial':
+            # Poly type and order needed
+            self.overscan_smooth_window_spin.setEnabled(False)
+            self.overscan_poly_type_combo.setEnabled(True)
+            self.overscan_poly_order_spin.setEnabled(True)
+
+    def _create_wlcalib_tab(self) -> QWidget:
+        """Create wavelength calibration settings tab."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        widget = QWidget()
+        layout = QFormLayout()
+
+        # Calibration lamp type and files
+        calib_group = QGroupBox("Calibration Files")
         calib_layout = QFormLayout()
 
         self.linelist_combo = QComboBox()
@@ -144,113 +373,7 @@ class SettingsDialog(QDialog):
         calib_group.setLayout(calib_layout)
         layout.addRow(calib_group)
 
-        # Detector parameters
-        detector_group = QGroupBox("Detector Parameters")
-        detector_layout = QFormLayout()
-
-        self.detector_nrows_spin = QSpinBox()
-        self.detector_nrows_spin.setRange(1, 10000)
-        detector_layout.addRow("Number of Rows:", self.detector_nrows_spin)
-
-        self.detector_ncols_spin = QSpinBox()
-        self.detector_ncols_spin.setRange(1, 10000)
-        detector_layout.addRow("Number of Columns:", self.detector_ncols_spin)
-
-        self.detector_gain_spin = QDoubleSpinBox()
-        self.detector_gain_spin.setRange(0.1, 100.0)
-        self.detector_gain_spin.setSingleStep(0.1)
-        detector_layout.addRow("CCD Gain:", self.detector_gain_spin)
-
-        self.detector_readnoise_spin = QDoubleSpinBox()
-        self.detector_readnoise_spin.setRange(0.0, 100.0)
-        self.detector_readnoise_spin.setSingleStep(0.5)
-        detector_layout.addRow("Read Noise:", self.detector_readnoise_spin)
-
-        detector_group.setLayout(detector_layout)
-        layout.addRow(detector_group)
-
-        widget.setLayout(layout)
-        scroll.setWidget(widget)
-        return scroll
-
-    def _create_correction_tab(self) -> QWidget:
-        """Create bias, flat and background correction settings tab."""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        widget = QWidget()
-        layout = QFormLayout()
-
-        # Bias correction
-        bias_group = QGroupBox("Bias Correction")
-        bias_layout = QFormLayout()
-
-        self.bias_method_combo = QComboBox()
-        self.bias_method_combo.addItems(['combine', 'load'])
-        bias_layout.addRow("Bias Method:", self.bias_method_combo)
-
-        self.bias_combine_method_combo = QComboBox()
-        self.bias_combine_method_combo.addItems(['mean', 'median', 'sigma_clip'])
-        bias_layout.addRow("Combine Method:", self.bias_combine_method_combo)
-
-        self.bias_combine_sigma_spin = QDoubleSpinBox()
-        self.bias_combine_sigma_spin.setRange(1.0, 10.0)
-        self.bias_combine_sigma_spin.setSingleStep(0.1)
-        bias_layout.addRow("Sigma Clipping Threshold:", self.bias_combine_sigma_spin)
-
-        bias_group.setLayout(bias_layout)
-        layout.addRow(bias_group)
-
-        # Flat fielding
-        flat_group = QGroupBox("Flat Fielding")
-        flat_layout = QFormLayout()
-
-        self.flat_method_combo = QComboBox()
-        self.flat_method_combo.addItems(['combine', 'load'])
-        flat_layout.addRow("Flat Method:", self.flat_method_combo)
-
-        self.flat_combine_method_combo = QComboBox()
-        self.flat_combine_method_combo.addItems(['mean', 'median'])
-        flat_layout.addRow("Combine Method:", self.flat_combine_method_combo)
-
-        self.flat_q_threshold_spin = QDoubleSpinBox()
-        self.flat_q_threshold_spin.setRange(0.0, 1.0)
-        self.flat_q_threshold_spin.setSingleStep(0.05)
-        flat_layout.addRow("Quality Threshold:", self.flat_q_threshold_spin)
-
-        self.flat_mosaic_maxcount_spin = QDoubleSpinBox()
-        self.flat_mosaic_maxcount_spin.setRange(0.0, 100000.0)
-        flat_layout.addRow("Mosaic Max Count:", self.flat_mosaic_maxcount_spin)
-
-        flat_group.setLayout(flat_layout)
-        layout.addRow(flat_group)
-
-        # Background subtraction
-        bg_group = QGroupBox("Background Subtraction")
-        bg_layout = QFormLayout()
-
-        self.bg_method_combo = QComboBox()
-        self.bg_method_combo.addItems(['2d_poly', 'median'])
-        bg_layout.addRow("Background Method:", self.bg_method_combo)
-
-        self.bg_poly_order_spin = QSpinBox()
-        self.bg_poly_order_spin.setRange(1, 10)
-        bg_layout.addRow("Polynomial Order:", self.bg_poly_order_spin)
-
-        bg_group.setLayout(bg_layout)
-        layout.addRow(bg_group)
-
-        widget.setLayout(layout)
-        scroll.setWidget(widget)
-        return scroll
-
-    def _create_wlcalib_tab(self) -> QWidget:
-        """Create wavelength calibration settings tab."""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        widget = QWidget()
-        layout = QFormLayout()
-
-        # Main calibration parameters (merged lamp type with Data & Calibration tab)
+        # Main calibration parameters
         self.wlcalib_search_database_check = QCheckBox("Search calibration database")
         layout.addRow(self.wlcalib_search_database_check)
 
@@ -339,6 +462,58 @@ class SettingsDialog(QDialog):
         self.trace_separation_spin.setRange(0.0, 100.0)
         trace_layout.addRow("Order Separation (pixels):", self.trace_separation_spin)
 
+        self.trace_seed_threshold_spin = QDoubleSpinBox()
+        self.trace_seed_threshold_spin.setRange(0.01, 1.0)
+        self.trace_seed_threshold_spin.setSingleStep(0.01)
+        trace_layout.addRow("Seed Threshold (0-1):", self.trace_seed_threshold_spin)
+
+        self.trace_prominence_scale_spin = QDoubleSpinBox()
+        self.trace_prominence_scale_spin.setRange(0.01, 5.0)
+        self.trace_prominence_scale_spin.setSingleStep(0.05)
+        trace_layout.addRow("Prominence Scale:", self.trace_prominence_scale_spin)
+
+        self.trace_search_half_scale_spin = QDoubleSpinBox()
+        self.trace_search_half_scale_spin.setRange(0.1, 2.0)
+        self.trace_search_half_scale_spin.setSingleStep(0.05)
+        trace_layout.addRow("Search Half Scale:", self.trace_search_half_scale_spin)
+
+        self.trace_step_denominator_spin = QSpinBox()
+        self.trace_step_denominator_spin.setRange(40, 2000)
+        trace_layout.addRow("Trace Step Denominator:", self.trace_step_denominator_spin)
+
+        self.trace_fill_missing_check = QCheckBox("Fill missing weak orders")
+        trace_layout.addRow(self.trace_fill_missing_check)
+
+        self.trace_gap_fill_factor_spin = QDoubleSpinBox()
+        self.trace_gap_fill_factor_spin.setRange(1.0, 4.0)
+        self.trace_gap_fill_factor_spin.setSingleStep(0.1)
+        trace_layout.addRow("Gap Fill Factor:", self.trace_gap_fill_factor_spin)
+
+        self.trace_fit_method_combo = QComboBox()
+        self.trace_fit_method_combo.addItems(['polynomial', 'chebyshev', 'bspline'])
+        trace_layout.addRow("Trace Fit Method (Center+Edges):", self.trace_fit_method_combo)
+
+        self.trace_bspline_smooth_spin = QDoubleSpinBox()
+        self.trace_bspline_smooth_spin.setRange(0.0, 5.0)
+        self.trace_bspline_smooth_spin.setSingleStep(0.05)
+        trace_layout.addRow("B-spline Smooth:", self.trace_bspline_smooth_spin)
+
+        self.trace_edge_degree_spin = QSpinBox()
+        self.trace_edge_degree_spin.setRange(1, 8)
+        trace_layout.addRow("Edge Fit Degree:", self.trace_edge_degree_spin)
+
+        self.trace_aperture_root_fraction_spin = QDoubleSpinBox()
+        self.trace_aperture_root_fraction_spin.setRange(0.0, 0.5)
+        self.trace_aperture_root_fraction_spin.setSingleStep(0.005)
+        self.trace_aperture_root_fraction_spin.setDecimals(3)
+        trace_layout.addRow("Aperture Root Fraction:", self.trace_aperture_root_fraction_spin)
+
+        self.trace_aperture_noise_floor_sigma_spin = QDoubleSpinBox()
+        self.trace_aperture_noise_floor_sigma_spin.setRange(0.0, 20.0)
+        self.trace_aperture_noise_floor_sigma_spin.setSingleStep(0.1)
+        self.trace_aperture_noise_floor_sigma_spin.setDecimals(2)
+        trace_layout.addRow("Aperture Noise Floor Sigma:", self.trace_aperture_noise_floor_sigma_spin)
+
         self.trace_filling_spin = QDoubleSpinBox()
         self.trace_filling_spin.setRange(0.0, 1.0)
         self.trace_filling_spin.setSingleStep(0.05)
@@ -388,10 +563,6 @@ class SettingsDialog(QDialog):
         self.mode_combo.addItems(['normal', 'debug'])
         layout.addRow("Processing Mode:", self.mode_combo)
 
-        # Output path
-        self.output_path_edit = QLineEdit()
-        layout.addRow("Output Path:", self.output_path_edit)
-
         # Figure format
         self.fig_format_combo = QComboBox()
         self.fig_format_combo.addItems(['png', 'pdf', 'jpg'])
@@ -401,32 +572,9 @@ class SettingsDialog(QDialog):
         self.oned_suffix_edit = QLineEdit()
         layout.addRow("Output Suffix:", self.oned_suffix_edit)
 
-        # Processing cores
-        self.ncores_edit = QLineEdit()
-        layout.addRow("Number of Cores:", self.ncores_edit)
-
         # Auto process
         self.auto_process_check = QCheckBox("Auto process all science images without confirmation")
         layout.addRow(self.auto_process_check)
-
-        # Cosmic ray correction
-        cosmic_group = QGroupBox("Cosmic Ray Correction")
-        cosmic_layout = QFormLayout()
-
-        self.cosmic_enabled_check = QCheckBox("Enable cosmic ray correction")
-        cosmic_layout.addRow(self.cosmic_enabled_check)
-
-        self.cosmic_sigma_spin = QDoubleSpinBox()
-        self.cosmic_sigma_spin.setRange(0.1, 20.0)
-        self.cosmic_sigma_spin.setSingleStep(0.1)
-        cosmic_layout.addRow("Sigma Threshold:", self.cosmic_sigma_spin)
-
-        self.cosmic_window_spin = QSpinBox()
-        self.cosmic_window_spin.setRange(1, 50)
-        cosmic_layout.addRow("Window Size:", self.cosmic_window_spin)
-
-        cosmic_group.setLayout(cosmic_layout)
-        layout.addRow(cosmic_group)
 
         # Output options
         output_group = QGroupBox("Output Options")
@@ -468,38 +616,59 @@ class SettingsDialog(QDialog):
 
     def load_current_values(self):
         """Load current configuration values into UI."""
-        # Data & Calibration tab
-        self.rawdata_path_edit.setText(self.config.get('data', 'rawdata_path', ''))
+        # Data & Instruments tab
+        self.rawdata_path_edit.setText(self.config.get('data', 'rawdata_path', './rawdata'))
         self.statime_key_edit.setText(self.config.get('data', 'statime_key', 'DATE-OBS'))
         self.exptime_key_edit.setText(self.config.get('data', 'exptime_key', 'EXPTIME'))
         self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xr-'))
-        self.overscan_start_column_spin.setValue(self.config.get_int('data', 'overscan_start_column', 4097))
-        self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'median'))
+        self.output_path_edit.setText(self.config.get('reduce', 'output_path', 'output'))
         self.telescope_name_edit.setText(self.config.get('telescope', 'name', 'xinglong216hrs'))
         self.instrument_edit.setText(self.config.get('telescope', 'instrument', 'hrs'))
+        self.detector_gain_spin.setValue(self.config.get_float('telescope.detector', 'gain', 1.0))
+        self.detector_readnoise_spin.setValue(self.config.get_float('telescope.detector', 'readnoise', 5.0))
+
+        # Data Reduction tab
+        overscan_val = self.config.get_int('data', 'overscan_start_column', -1)
+        self.overscan_start_column_spin.setValue(overscan_val)
+        self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'mean_only'))
+        self.overscan_smooth_window_spin.setValue(self.config.get_int('data', 'overscan_smooth_window', -1))
+        self.overscan_poly_type_combo.setCurrentText(self.config.get('data', 'overscan_poly_type', 'legendre'))
+        self.overscan_poly_order_spin.setValue(self.config.get_int('data', 'overscan_poly_order', 3))
+        # Update enabled state of overscan params based on selected method
+        self._update_overscan_params_enabled()
+        self.bias_combine_method_combo.setCurrentText(self.config.get('reduce.bias', 'combine_method', 'median'))
+        self.bias_combine_sigma_spin.setValue(self.config.get_float('reduce.bias', 'combine_sigma', 3.0))
+        self.flat_combine_method_combo.setCurrentText(self.config.get('reduce.flat', 'combine_method', 'median'))
+        self.flat_q_threshold_spin.setValue(self.config.get_float('reduce.flat', 'q_threshold', 0.5))
+        self.flat_mosaic_maxcount_spin.setValue(self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535.0))
+        self.flat_blaze_smooth_method_combo.setCurrentText(self.config.get('reduce.flat', 'blaze_smooth_method', 'savgol'))
+        self.flat_blaze_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'blaze_smooth_window', 21))
+        self.flat_blaze_bspline_smooth_spin.setValue(self.config.get_float('reduce.flat', 'blaze_bspline_smooth', 0.5))
+        self.flat_width_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'width_smooth_window', 41))
+        self.flat_profile_bin_step_spin.setValue(self.config.get_float('reduce.flat', 'profile_bin_step', 0.01))
+        self.flat_pixel_min_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5))
+        self.flat_pixel_max_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5))
+        bg_method = self.config.get('reduce.background', 'method', 'chebyshev')
+        if bg_method == '2d_poly':
+            bg_method = 'chebyshev'
+        self.bg_method_combo.setCurrentText(bg_method)
+        self.bg_poly_order_spin.setValue(self.config.get_int('reduce.background', 'poly_order', 3))
+        self.bg_smooth_sigma_spin.setValue(self.config.get_float('reduce.background', 'smooth_sigma', 20.0))
+        self.bg_sigma_clip_spin.setValue(self.config.get_float('reduce.background', 'sigma_clip', 3.0))
+        self.bg_sigma_clip_iter_spin.setValue(self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4))
+        self.bg_mask_margin_spin.setValue(self.config.get_int('reduce.background', 'mask_margin_pixels', 3))
+        self.bg_bspline_smooth_spin.setValue(self.config.get_float('reduce.background', 'bspline_smooth', 1.0))
+        self.cosmic_enabled_check.setChecked(self.config.get_bool('reduce', 'cosmic_enabled', True))
+        self.cosmic_sigma_spin.setValue(self.config.get_float('reduce', 'cosmic_sigma', 5.0))
+        self.cosmic_window_spin.setValue(self.config.get_int('reduce', 'cosmic_window', 5))
+
+        # Wavelength Calibration tab
         self.linelist_combo.setCurrentText(self.config.get('telescope.linelist', 'linelist_type', 'ThAr'))
         self.linelist_path_edit.setText(self.config.get('telescope.linelist', 'linelist_path', 'calib_data/linelists/'))
         self.linelist_file_edit.setText(self.config.get('telescope.linelist', 'linelist_file', 'thar-noao.dat'))
         self.use_precomputed_calib_check.setChecked(self.config.get_bool('telescope.linelist', 'use_precomputed_calibration', False))
         self.calibration_path_edit.setText(self.config.get('telescope.linelist', 'calibration_path', 'calib_data/telescopes/xinglong216hrs/'))
         self.calibration_file_edit.setText(self.config.get('telescope.linelist', 'calibration_file', 'wlcalib_20211123011_A.fits'))
-        self.detector_nrows_spin.setValue(self.config.get_int('telescope.detector', 'nrows', 2048))
-        self.detector_ncols_spin.setValue(self.config.get_int('telescope.detector', 'ncols', 4096))
-        self.detector_gain_spin.setValue(self.config.get_float('telescope.detector', 'gain', 1.0))
-        self.detector_readnoise_spin.setValue(self.config.get_float('telescope.detector', 'readnoise', 5.0))
-
-        # Bias & Flat & Background tab
-        self.bias_method_combo.setCurrentText(self.config.get('reduce.bias', 'method', 'combine'))
-        self.bias_combine_method_combo.setCurrentText(self.config.get('reduce.bias', 'combine_method', 'median'))
-        self.bias_combine_sigma_spin.setValue(self.config.get_float('reduce.bias', 'combine_sigma', 3.0))
-        self.flat_method_combo.setCurrentText(self.config.get('reduce.flat', 'method', 'combine'))
-        self.flat_combine_method_combo.setCurrentText(self.config.get('reduce.flat', 'combine_method', 'median'))
-        self.flat_q_threshold_spin.setValue(self.config.get_float('reduce.flat', 'q_threshold', 0.5))
-        self.flat_mosaic_maxcount_spin.setValue(self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535.0))
-        self.bg_method_combo.setCurrentText(self.config.get('reduce.background', 'method', '2d_poly'))
-        self.bg_poly_order_spin.setValue(self.config.get_int('reduce.background', 'poly_order', 2))
-
-        # Wavelength Calibration tab
         self.wlcalib_search_database_check.setChecked(self.config.get_bool('reduce.wlcalib', 'search_database', True))
         self.wlcalib_use_prev_fitpar_check.setChecked(self.config.get_bool('reduce.wlcalib', 'use_prev_fitpar', True))
         self.wlcalib_xorder_spin.setValue(self.config.get_int('reduce.wlcalib', 'xorder', 4))
@@ -515,6 +684,17 @@ class SettingsDialog(QDialog):
         self.trace_scan_step_spin.setValue(self.config.get_int('reduce.trace', 'scan_step', 10))
         self.trace_minimum_spin.setValue(self.config.get_float('reduce.trace', 'minimum', 50.0))
         self.trace_separation_spin.setValue(self.config.get_float('reduce.trace', 'separation', 30.0))
+        self.trace_seed_threshold_spin.setValue(self.config.get_float('reduce.trace', 'seed_threshold', 0.30))
+        self.trace_prominence_scale_spin.setValue(self.config.get_float('reduce.trace', 'prominence_scale', 0.50))
+        self.trace_search_half_scale_spin.setValue(self.config.get_float('reduce.trace', 'search_half_scale', 0.45))
+        self.trace_step_denominator_spin.setValue(self.config.get_int('reduce.trace', 'step_denominator', 220))
+        self.trace_fill_missing_check.setChecked(self.config.get_bool('reduce.trace', 'fill_missing_orders', True))
+        self.trace_gap_fill_factor_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6))
+        self.trace_fit_method_combo.setCurrentText(self.config.get('reduce.trace', 'fit_method', 'polynomial'))
+        self.trace_bspline_smooth_spin.setValue(self.config.get_float('reduce.trace', 'bspline_smooth', 0.2))
+        self.trace_edge_degree_spin.setValue(self.config.get_int('reduce.trace', 'edge_degree', 3))
+        self.trace_aperture_root_fraction_spin.setValue(self.config.get_float('reduce.trace', 'aperture_root_fraction', 0.03))
+        self.trace_aperture_noise_floor_sigma_spin.setValue(self.config.get_float('reduce.trace', 'aperture_noise_floor_sigma', 3.0))
         self.trace_filling_spin.setValue(self.config.get_float('reduce.trace', 'filling', 0.3))
         self.trace_degree_spin.setValue(self.config.get_int('reduce.trace', 'degree', 3))
         self.extract_method_combo.setCurrentText(self.config.get('reduce.extract', 'method', 'sum'))
@@ -523,14 +703,9 @@ class SettingsDialog(QDialog):
 
         # Processing & Output tab
         self.mode_combo.setCurrentText(self.config.get('reduce', 'mode', 'normal'))
-        self.output_path_edit.setText(self.config.get('reduce', 'output_path', 'output'))
         self.fig_format_combo.setCurrentText(self.config.get('reduce', 'fig_format', 'png'))
         self.oned_suffix_edit.setText(self.config.get('reduce', 'oned_suffix', '_ods'))
-        self.ncores_edit.setText(self.config.get('reduce', 'ncores', 'max'))
         self.auto_process_check.setChecked(self.config.get_bool('reduce', 'auto_process_all_images', False))
-        self.cosmic_enabled_check.setChecked(self.config.get_bool('reduce', 'cosmic_enabled', True))
-        self.cosmic_sigma_spin.setValue(self.config.get_float('reduce', 'cosmic_sigma', 5.0))
-        self.cosmic_window_spin.setValue(self.config.get_int('reduce', 'cosmic_window', 7))
         self.save_plots_check.setChecked(self.config.get_bool('reduce', 'save_plots', True))
         self.save_overscan_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_overscan', True))
         self.save_bias_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_bias', True))
@@ -544,15 +719,65 @@ class SettingsDialog(QDialog):
     def _save_settings(self):
         """Save settings to configuration."""
         try:
-            # Data & Calibration tab
+            # Data & Instruments tab
             self.config.set('data', 'rawdata_path', self.rawdata_path_edit.text())
             self.config.set('data', 'statime_key', self.statime_key_edit.text())
             self.config.set('data', 'exptime_key', self.exptime_key_edit.text())
             self.config.set('data', 'direction', self.direction_combo.currentText())
-            self.config.set('data', 'overscan_start_column', str(self.overscan_start_column_spin.value()))
-            self.config.set('data', 'overscan_method', self.overscan_method_combo.currentText())
+            self.config.set('reduce', 'output_path', self.output_path_edit.text())
             self.config.set('telescope', 'name', self.telescope_name_edit.text())
             self.config.set('telescope', 'instrument', self.instrument_edit.text())
+            self.config.set('telescope.detector', 'gain', str(self.detector_gain_spin.value()))
+            self.config.set('telescope.detector', 'readnoise', str(self.detector_readnoise_spin.value()))
+
+            # Data Reduction tab
+            self.config.set('data', 'overscan_start_column', str(self.overscan_start_column_spin.value()))
+            self.config.set('data', 'overscan_method', self.overscan_method_combo.currentText())
+            self.config.set('data', 'overscan_smooth_window', str(self.overscan_smooth_window_spin.value()))
+            self.config.set('data', 'overscan_poly_type', self.overscan_poly_type_combo.currentText())
+            self.config.set('data', 'overscan_poly_order', str(self.overscan_poly_order_spin.value()))
+            self.config.set('reduce.bias', 'combine_method', self.bias_combine_method_combo.currentText())
+            self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
+            self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
+            self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
+            self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
+            self.config.set('reduce.flat', 'blaze_smooth_method', self.flat_blaze_smooth_method_combo.currentText())
+            self.config.set('reduce.flat', 'blaze_smooth_window', str(self.flat_blaze_smooth_window_spin.value()))
+            self.config.set('reduce.flat', 'blaze_bspline_smooth', str(self.flat_blaze_bspline_smooth_spin.value()))
+            self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
+            self.config.set('reduce.flat', 'profile_bin_step', str(self.flat_profile_bin_step_spin.value()))
+            self.config.set('reduce.flat', 'pixel_flat_min', str(self.flat_pixel_min_spin.value()))
+            self.config.set('reduce.flat', 'pixel_flat_max', str(self.flat_pixel_max_spin.value()))
+            self.config.set('reduce.background', 'method', self.bg_method_combo.currentText())
+            self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
+            self.config.set('reduce.background', 'smooth_sigma', str(self.bg_smooth_sigma_spin.value()))
+            self.config.set('reduce.background', 'sigma_clip', str(self.bg_sigma_clip_spin.value()))
+            self.config.set('reduce.background', 'sigma_clip_maxiters', str(self.bg_sigma_clip_iter_spin.value()))
+            self.config.set('reduce.background', 'mask_margin_pixels', str(self.bg_mask_margin_spin.value()))
+            self.config.set('reduce.background', 'bspline_smooth', str(self.bg_bspline_smooth_spin.value()))
+            self.config.set('reduce', 'cosmic_enabled', 'yes' if self.cosmic_enabled_check.isChecked() else 'no')
+            self.config.set('reduce', 'cosmic_sigma', str(self.cosmic_sigma_spin.value()))
+            self.config.set('reduce', 'cosmic_window', str(self.cosmic_window_spin.value()))
+            self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
+            self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
+            self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
+            self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
+            self.config.set('reduce.flat', 'blaze_smooth_method', self.flat_blaze_smooth_method_combo.currentText())
+            self.config.set('reduce.flat', 'blaze_smooth_window', str(self.flat_blaze_smooth_window_spin.value()))
+            self.config.set('reduce.flat', 'blaze_bspline_smooth', str(self.flat_blaze_bspline_smooth_spin.value()))
+            self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
+            self.config.set('reduce.flat', 'profile_bin_step', str(self.flat_profile_bin_step_spin.value()))
+            self.config.set('reduce.flat', 'pixel_flat_min', str(self.flat_pixel_min_spin.value()))
+            self.config.set('reduce.flat', 'pixel_flat_max', str(self.flat_pixel_max_spin.value()))
+            self.config.set('reduce.background', 'method', self.bg_method_combo.currentText())
+            self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
+            self.config.set('reduce.background', 'smooth_sigma', str(self.bg_smooth_sigma_spin.value()))
+            self.config.set('reduce.background', 'sigma_clip', str(self.bg_sigma_clip_spin.value()))
+            self.config.set('reduce.background', 'sigma_clip_maxiters', str(self.bg_sigma_clip_iter_spin.value()))
+            self.config.set('reduce.background', 'mask_margin_pixels', str(self.bg_mask_margin_spin.value()))
+            self.config.set('reduce.background', 'bspline_smooth', str(self.bg_bspline_smooth_spin.value()))
+
+            # Wavelength Calibration tab
             self.config.set('telescope.linelist', 'linelist_type', self.linelist_combo.currentText())
             self.config.set('telescope.linelist', 'linelist_path', self.linelist_path_edit.text())
             self.config.set('telescope.linelist', 'linelist_file', self.linelist_file_edit.text())
@@ -560,23 +785,6 @@ class SettingsDialog(QDialog):
                            'yes' if self.use_precomputed_calib_check.isChecked() else 'no')
             self.config.set('telescope.linelist', 'calibration_path', self.calibration_path_edit.text())
             self.config.set('telescope.linelist', 'calibration_file', self.calibration_file_edit.text())
-            self.config.set('telescope.detector', 'nrows', str(self.detector_nrows_spin.value()))
-            self.config.set('telescope.detector', 'ncols', str(self.detector_ncols_spin.value()))
-            self.config.set('telescope.detector', 'gain', str(self.detector_gain_spin.value()))
-            self.config.set('telescope.detector', 'readnoise', str(self.detector_readnoise_spin.value()))
-
-            # Bias & Flat & Background tab
-            self.config.set('reduce.bias', 'method', self.bias_method_combo.currentText())
-            self.config.set('reduce.bias', 'combine_method', self.bias_combine_method_combo.currentText())
-            self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
-            self.config.set('reduce.flat', 'method', self.flat_method_combo.currentText())
-            self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
-            self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
-            self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
-            self.config.set('reduce.background', 'method', self.bg_method_combo.currentText())
-            self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
-
-            # Wavelength Calibration tab
             self.config.set('reduce.wlcalib', 'search_database',
                            'yes' if self.wlcalib_search_database_check.isChecked() else 'no')
             self.config.set('reduce.wlcalib', 'use_prev_fitpar',
@@ -595,6 +803,18 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.trace', 'scan_step', str(self.trace_scan_step_spin.value()))
             self.config.set('reduce.trace', 'minimum', str(self.trace_minimum_spin.value()))
             self.config.set('reduce.trace', 'separation', str(self.trace_separation_spin.value()))
+            self.config.set('reduce.trace', 'seed_threshold', str(self.trace_seed_threshold_spin.value()))
+            self.config.set('reduce.trace', 'prominence_scale', str(self.trace_prominence_scale_spin.value()))
+            self.config.set('reduce.trace', 'search_half_scale', str(self.trace_search_half_scale_spin.value()))
+            self.config.set('reduce.trace', 'step_denominator', str(self.trace_step_denominator_spin.value()))
+            self.config.set('reduce.trace', 'fill_missing_orders',
+                           'yes' if self.trace_fill_missing_check.isChecked() else 'no')
+            self.config.set('reduce.trace', 'gap_fill_factor', str(self.trace_gap_fill_factor_spin.value()))
+            self.config.set('reduce.trace', 'fit_method', self.trace_fit_method_combo.currentText())
+            self.config.set('reduce.trace', 'bspline_smooth', str(self.trace_bspline_smooth_spin.value()))
+            self.config.set('reduce.trace', 'edge_degree', str(self.trace_edge_degree_spin.value()))
+            self.config.set('reduce.trace', 'aperture_root_fraction', str(self.trace_aperture_root_fraction_spin.value()))
+            self.config.set('reduce.trace', 'aperture_noise_floor_sigma', str(self.trace_aperture_noise_floor_sigma_spin.value()))
             self.config.set('reduce.trace', 'filling', str(self.trace_filling_spin.value()))
             self.config.set('reduce.trace', 'degree', str(self.trace_degree_spin.value()))
             self.config.set('reduce.extract', 'method', self.extract_method_combo.currentText())
@@ -603,14 +823,9 @@ class SettingsDialog(QDialog):
 
             # Processing & Output tab
             self.config.set('reduce', 'mode', self.mode_combo.currentText())
-            self.config.set('reduce', 'output_path', self.output_path_edit.text())
             self.config.set('reduce', 'fig_format', self.fig_format_combo.currentText())
             self.config.set('reduce', 'oned_suffix', self.oned_suffix_edit.text())
-            self.config.set('reduce', 'ncores', self.ncores_edit.text())
             self.config.set('reduce', 'auto_process_all_images', 'yes' if self.auto_process_check.isChecked() else 'no')
-            self.config.set('reduce', 'cosmic_enabled', 'yes' if self.cosmic_enabled_check.isChecked() else 'no')
-            self.config.set('reduce', 'cosmic_sigma', str(self.cosmic_sigma_spin.value()))
-            self.config.set('reduce', 'cosmic_window', str(self.cosmic_window_spin.value()))
             self.config.set('reduce', 'save_plots', 'yes' if self.save_plots_check.isChecked() else 'no')
             self.config.set('reduce.save_intermediate', 'save_overscan',
                            'yes' if self.save_overscan_check.isChecked() else 'no')

@@ -74,7 +74,7 @@ def read_fits_table(filepath: str, hdu: int = 1) -> Tuple[np.ndarray, dict]:
 
 
 def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = None,
-                     overwrite: bool = True):
+                     overwrite: bool = True, dtype: Optional[str] = None):
     """
     Write image to FITS file.
 
@@ -83,8 +83,15 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
         data: Image array
         header: Optional FITS header dictionary
         overwrite: Overwrite existing file
+        dtype: Optional data type for output (e.g., 'float32', 'float64')
     """
     try:
+        # Convert data to specified dtype if provided
+        if dtype is not None:
+            original_dtype = str(data.dtype)
+            data = data.astype(dtype)
+            logger.debug(f"Converted data from {original_dtype} to {dtype}")
+        
         # Create primary HDU
         hdu = fits.PrimaryHDU(data=data)
 
@@ -92,7 +99,21 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
         if header:
             for key, value in header.items():
                 try:
-                    hdu.header[key] = value
+                    # Skip COMMENT and HISTORY - they often contain special formatting
+                    # that causes issues with astropy, and are not critical for processing
+                    if key.upper() in ('COMMENT', 'HISTORY'):
+                        continue
+                    
+                    # Clean up non-ASCII characters for FITS header values
+                    if isinstance(value, str):
+                        # Remove or replace non-ASCII characters
+                        cleaned_value = value.encode('ascii', 'ignore').decode('ascii')
+                        # Truncate if too long (FITS headers have max 80 chars per record)
+                        if len(cleaned_value) > 70:
+                            cleaned_value = cleaned_value[:67] + '...'
+                        hdu.header[key] = cleaned_value
+                    else:
+                        hdu.header[key] = value
                 except Exception as e:
                     logger.warning(f"Could not add header keyword {key}: {e}")
 

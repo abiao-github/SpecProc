@@ -111,9 +111,10 @@ class BiasCorrector:
         header = {
             'EXTNAME': 'MASTER BIAS',
             'ORIGIN': 'SpecProc',
+            'BIASCR': (True, 'Master bias created'),
         }
 
-        write_fits_image(output_path, self.master_bias, header=header)
+        write_fits_image(output_path, self.master_bias, header=header, dtype='float32')
         logger.info(f"Saved master bias to {output_path}")
 
         # Save diagnostic plot if enabled
@@ -131,13 +132,15 @@ class BiasCorrector:
 
 
 def process_bias_stage(config: ConfigManager, bias_filenames: List[str],
+                      science_file: str = None,
                       midpath: str = './midpath') -> Tuple[np.ndarray, str]:
     """
     Execute bias correction stage.
 
     Args:
         config: Configuration manager
-        bias_filenames: List of bias frame paths
+        bias_filenames: List of bias frame paths (should be overscan-corrected if stage 0 was done)
+        science_file: Optional science file to apply bias correction to
         midpath: Intermediate output directory
 
     Returns:
@@ -150,8 +153,33 @@ def process_bias_stage(config: ConfigManager, bias_filenames: List[str],
 
     # Save master bias
     base_output_path = config.get_output_path()
-    output_path = Path(base_output_path) / 'step1_bias' / 'master_bias.fits'
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    corrector.save_master_bias(str(output_path))
+    output_path = Path(base_output_path) / 'step1_basic' / 'bias_subtracted'
+    output_path.mkdir(parents=True, exist_ok=True)
+    master_bias_path = output_path / 'master_bias.fits'
+    corrector.save_master_bias(str(master_bias_path))
+    
+    # Apply bias correction to science image if provided
+    if science_file is not None:
+        from src.core.overscan_correction import OverscanCorrectionStage
+        
+        # Read science image (may be overscan-corrected if stage 0 was done)
+        science_image, science_header = read_fits_image(science_file)
+        logger.info(f"Applying bias correction to science image: {science_file}")
+        
+        # Apply bias correction
+        bias_corrected = corrector.apply_bias_correction(science_image, master_bias)
+        
+        # Save bias-corrected science image
+        output_science_path = output_path / Path(science_file).name
+        science_header['BIASCOR'] = (True, 'Bias correction applied')
+        write_fits_image(str(output_science_path), bias_corrected, header=science_header, dtype='float32')
+        logger.info(f"Saved bias-corrected science image to {output_science_path}")
+        
+        # Save diagnostic plot if enabled
+        save_plots = config.get_bool('reduce', 'save_plots', True)
+        if save_plots:
+            fig_format = config.get('reduce', 'fig_format', 'png')
+            plot_file = output_path / f'{Path(science_file).stem}_bias_corrected.{fig_format}'
+            plot_2d_image_to_file(bias_corrected, str(plot_file), "Bias Corrected Science Image")
 
-    return master_bias, str(output_path)
+    return master_bias, str(master_bias_path)

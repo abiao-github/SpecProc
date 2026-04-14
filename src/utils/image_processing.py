@@ -6,8 +6,10 @@ and detecting bad pixels.
 """
 
 import numpy as np
+from typing import Optional, Tuple
+from scipy.ndimage import gaussian_filter
 from scipy import signal, ndimage
-from typing import Tuple, Optional
+from scipy.interpolate import SmoothBivariateSpline
 import logging
 
 logger = logging.getLogger(__name__)
@@ -116,56 +118,235 @@ def find_bad_pixels(image: np.ndarray, threshold: float = 3.0,
         raise ValueError(f"Unknown method: {method}")
 
 
-def estimate_background_2d(image: np.ndarray, order: int = 2) -> np.ndarray:
+def _build_design_matrix(x: np.ndarray, y: np.ndarray, order: int,
+                         method: str) -> np.ndarray:
+    """Build 2D basis matrix for polynomial or Chebyshev fitting."""
+    if method == 'chebyshev':
+        vander = np.polynomial.chebyshev.chebvander2d(x, y, [order, order])
+        return vander.reshape(x.size, -1)
+
+    # Fallback: regular polynomial basis.
+    ncoeff = (order + 1) * (order + 1)
+    A = np.zeros((x.size, ncoeff), dtype=np.float64)
+    idx = 0
+    for i in range(order + 1):
+        for j in range(order + 1):
+            A[:, idx] = (x ** i) * (y ** j)
+            idx += 1
+    return A
+
+
+def _robust_sigma(values: np.ndarray) -> float:
+    """Robust sigma estimate via MAD; returns 0 for empty arrays."""
+    if values.size == 0:
+        return 0.0
+    med = np.median(values)
+    mad = np.median(np.abs(values - med))
+    if mad <= 0:
+        std = np.std(values)
+        return float(std) if np.isfinite(std) else 0.0
+    return float(1.4826 * mad)
+
+
+def _estimate_single_background(image: np.ndarray, order: int = 2,
+                                valid_mask: Optional[np.ndarray] = None,
+                                method: str = 'chebyshev',
+                                smooth_sigma: float = 20.0,
+                                sigma_clip: float = 3.0,
+                                maxiters: int = 4,
+                                bspline_smooth: float = 1.0) -> np.ndarray:
+    """Estimate smooth 2D background for a single (non-split) image."""
+    rows, cols = image.shape
+    yy, xx = np.meshgrid(np.arange(rows), np.arange(cols), indexing='ij')
+
+    fit_mask = np.isfinite(image)
+    if valid_mask is not None:
+        fit_mask &= valid_mask.astype(bool)
+
+    if np.sum(fit_mask) < max(100, (order + 1) ** 2):
+        logger.warning("Too few valid samples for background fit; returning zeros")
+        return np.zeros_like(image, dtype=np.float64)
+
+    work_data = image.astype(np.float64)
+
+    if method == 'smooth':
+        current = fit_mask.copy()
+        s = max(1.0, float(smooth_sigma))
+
+        for _ in range(max(1, int(maxiters))):
+            use = np.zeros_like(work_data, dtype=np.float64)
+            wgt = np.zeros_like(work_data, dtype=np.float64)
+            use[current] = work_data[current]
+            wgt[current] = 1.0
+
+            num = gaussian_filter(use, sigma=s, mode='nearest')
+            den = gaussian_filter(wgt, sigma=s, mode='nearest')
+            model = num / np.clip(den, 1e-8, None)
+
+            if sigma_clip <= 0:
+                return model
+
+            resid = work_data[current] - model[current]
+            sig = _robust_sigma(resid)
+            if sig <= 0:
+                break
+
+            keep = np.abs(work_data - model) <= sigma_clip * sig
+            new_current = current & keep
+            if np.array_equal(new_current, current):
+                break
+            if np.sum(new_current) < max(100, (order + 1) ** 2):
+                break
+            current = new_current
+
+        return model
+
+    x_norm = (xx.astype(np.float64) / max(cols - 1, 1)) * 2.0 - 1.0
+    y_norm = (yy.astype(np.float64) / max(rows - 1, 1)) * 2.0 - 1.0
+
+    xp = x_norm[fit_mask]
+    yp = y_norm[fit_mask]
+    zp = work_data[fit_mask]
+    keep = np.ones_like(zp, dtype=bool)
+
+    for _ in range(max(1, int(maxiters))):
+        if np.sum(keep) < max(100, (order + 1) ** 2):
+            break
+
+        try:
+            if method == 'bspline':
+                kxy = max(1, min(3, int(order)))
+                s = max(0.0, float(bspline_smooth)) * float(np.sum(keep))
+                spline = SmoothBivariateSpline(
+                    xp[keep], yp[keep], zp[keep], kx=kxy, ky=kxy, s=s
+                )
+                fit_all = spline.ev(xp, yp)
+                model = spline.ev(x_norm.ravel(), y_norm.ravel()).reshape(rows, cols)
+            else:
+                fit_kind = 'chebyshev' if method not in ('poly', 'polynomial') else 'poly'
+                A = _build_design_matrix(xp[keep], yp[keep], order, fit_kind)
+                coeffs, _, _, _ = np.linalg.lstsq(A, zp[keep], rcond=None)
+                A_all = _build_design_matrix(xp, yp, order, fit_kind)
+                fit_all = A_all @ coeffs
+                A_img = _build_design_matrix(x_norm.ravel(), y_norm.ravel(), order, fit_kind)
+                model = (A_img @ coeffs).reshape(rows, cols)
+        except Exception as e:
+            logger.warning(f"Background {method} fit failed, fallback to smooth: {e}")
+            return _estimate_single_background(
+                image,
+                order=order,
+                valid_mask=valid_mask,
+                method='smooth',
+                smooth_sigma=smooth_sigma,
+                sigma_clip=sigma_clip,
+                maxiters=maxiters,
+                bspline_smooth=bspline_smooth,
+            )
+
+        if sigma_clip <= 0:
+            return model
+
+        resid = zp - fit_all
+        sig = _robust_sigma(resid[keep])
+        if sig <= 0:
+            break
+
+        center = np.median(resid[keep])
+        new_keep = np.abs(resid - center) <= sigma_clip * sig
+        if np.array_equal(new_keep, keep):
+            break
+        keep = new_keep
+
+    return model
+
+
+def estimate_background_2d(image: np.ndarray, order: int = 2,
+                           split_vertically: bool = True,
+                           valid_mask: Optional[np.ndarray] = None,
+                           method: str = 'chebyshev',
+                           smooth_sigma: float = 20.0,
+                           sigma_clip: float = 3.0,
+                           maxiters: int = 4,
+                           bspline_smooth: float = 1.0) -> np.ndarray:
     """
     Estimate smooth 2D background using polynomial fitting.
+    
+    By default, splits the image into upper and lower halves for independent
+    processing (e.g., for CCDs with two readout amplifiers).
 
     Args:
         image: 2D image array
         order: Polynomial order
+        split_vertically: Split image into upper/lower halves for independent 
+                         background fitting (default: True)
+        valid_mask: Optional boolean mask of valid sampling pixels (True = use)
+        method: 'chebyshev', 'bspline', 'smooth', or 'poly'
+        smooth_sigma: Gaussian sigma for smooth method
+        sigma_clip: Sigma-clipping threshold for robust rejection
+        maxiters: Maximum sigma-clipping iterations
+        bspline_smooth: Smoothing factor scale for bspline method
 
     Returns:
         Background model
     """
     rows, cols = image.shape
-    x = np.arange(cols)
-    y = np.arange(rows)
-
-    # Sample grid
-    yy, xx = np.meshgrid(y, x, indexing='ij')
-
-    # Flatten
-    xx_flat = xx.flatten()
-    yy_flat = yy.flatten()
-    z_flat = image.flatten()
-
-    # Build polynomial matrix
-    ncoeff = (order + 1) * (order + 1)
-    A = np.zeros((len(z_flat), ncoeff))
-    idx = 0
-    for i in range(order + 1):
-        for j in range(order + 1):
-            A[:, idx] = (xx_flat ** i) * (yy_flat ** j)
-            idx += 1
-
-    # Solve
-    try:
-        coeffs, _, _, _ = np.linalg.lstsq(A, z_flat, rcond=None)
+    
+    if split_vertically and rows > 1:
+        # Split into top and bottom halves for independent processing
+        # Note: numpy image[0,:] = ds9 row 1 (bottom), image[rows-1,:] = ds9 row rows (top)
+        # image[:mid_row,:] = image_bottom = ds9 bottom half (small row numbers)
+        # image[mid_row:,:] = image_top = ds9 top half (large row numbers)
+        mid_row = rows // 2
+        logger.info(f"Estimating background with vertical split at row {mid_row}")
+        
+        image_bottom = image[:mid_row, :]
+        image_top = image[mid_row:, :]
+        mask_bottom = valid_mask[:mid_row, :] if valid_mask is not None else None
+        mask_top = valid_mask[mid_row:, :] if valid_mask is not None else None
+        
+        background_bottom = _estimate_single_background(
+            image_bottom,
+            order,
+            valid_mask=mask_bottom,
+            method=method,
+            smooth_sigma=smooth_sigma,
+            sigma_clip=sigma_clip,
+            maxiters=maxiters,
+            bspline_smooth=bspline_smooth,
+        )
+        background_top = _estimate_single_background(
+            image_top,
+            order,
+            valid_mask=mask_top,
+            method=method,
+            smooth_sigma=smooth_sigma,
+            sigma_clip=sigma_clip,
+            maxiters=maxiters,
+            bspline_smooth=bspline_smooth,
+        )
+        
+        # Combine backgrounds
         background = np.zeros_like(image)
-        idx = 0
-        for i in range(order + 1):
-            for j in range(order + 1):
-                background += coeffs[idx] * (xx ** i) * (yy ** j)
-                idx += 1
+        background[:mid_row, :] = background_bottom
+        background[mid_row:, :] = background_top
+        
         return background
-    except Exception as e:
-        logger.error(f"Error estimating background: {e}")
-        return np.zeros_like(image)
+    else:
+        return _estimate_single_background(
+            image,
+            order,
+            valid_mask=valid_mask,
+            method=method,
+            smooth_sigma=smooth_sigma,
+            sigma_clip=sigma_clip,
+            maxiters=maxiters,
+            bspline_smooth=bspline_smooth,
+        )
 
 
 def normalize_flat(flat_image: np.ndarray, mask: Optional[np.ndarray] = None) -> np.ndarray:
     """
-    Normalize flat field to unity.
+    Normalize flat field to unity using sigma clipping.
 
     Args:
         flat_image: Flat field image
@@ -174,12 +355,17 @@ def normalize_flat(flat_image: np.ndarray, mask: Optional[np.ndarray] = None) ->
     Returns:
         Normalized flat (clipped to valid range)
     """
+    from astropy.stats import sigma_clipped_stats
+
+    # Apply mask if provided
     if mask is not None:
         flat_array = flat_image.copy()
         flat_array[mask > 0] = np.nan
-        mean_val = np.nanmean(flat_array)
+        # Use sigma clipping with masked values
+        mean_val, _, _ = sigma_clipped_stats(flat_array, mask=np.isnan(flat_array), sigma=3.0, maxiters=5)
     else:
-        mean_val = np.mean(flat_image)
+        # Use sigma clipping without mask
+        mean_val, _, _ = sigma_clipped_stats(flat_image, sigma=3.0, maxiters=5)
 
     normalized = flat_image / mean_val
 

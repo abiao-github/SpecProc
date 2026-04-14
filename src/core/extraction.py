@@ -128,7 +128,9 @@ class SpectrumExtractor:
         return spectrum, error
 
     def extract_aperture_set(self, image: np.ndarray, apertures: ApertureSet,
-                           wavelength_calib: Optional[WaveCalib] = None) -> SpectraSet:
+                           wavelength_calib: Optional[WaveCalib] = None,
+                           flat_field: Optional[FlatField] = None,
+                           method_override: Optional[str] = None) -> SpectraSet:
         """
         Extract all apertures from 2D image.
 
@@ -144,7 +146,7 @@ class SpectrumExtractor:
 
         spectra_set = SpectraSet()
 
-        method = self.config.get('reduce.extract', 'method', 'sum')
+        method = method_override if method_override is not None else self.config.get('reduce.extract', 'method', 'sum')
         lower_limit = self.config.get_float('reduce.extract', 'lower_limit', -5.0)
         upper_limit = self.config.get_float('reduce.extract', 'upper_limit', 5.0)
 
@@ -159,11 +161,14 @@ class SpectrumExtractor:
             center_pos = aperture.get_position(x_pix)
 
             profile = None
-            if flat_field is not None and flat_field.flat_norm is not None:
-                y_mid = int(np.median(center_pos))
-                profile_window = flat_field.flat_norm[max(y_mid-30,0):min(y_mid+30, flat_field.flat_norm.shape[0]), :]
-                profile = np.mean(profile_window, axis=1)
-                profile = profile / (np.sum(profile) if np.sum(profile) > 0 else 1.0)
+            if flat_field is not None:
+                if flat_field.cross_profiles is not None and aperture_id in flat_field.cross_profiles:
+                    profile = flat_field.cross_profiles[aperture_id]
+                elif flat_field.flat_norm is not None:
+                    y_mid = int(np.median(center_pos))
+                    profile_window = flat_field.flat_norm[max(y_mid-30,0):min(y_mid+30, flat_field.flat_norm.shape[0]), :]
+                    profile = np.mean(profile_window, axis=1)
+                    profile = profile / (np.sum(profile) if np.sum(profile) > 0 else 1.0)
 
             if method == 'optimal':
                 flux, error = self.optimal_extraction(image, center_pos,
@@ -247,7 +252,10 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
                             apertures: ApertureSet,
                             wavelength_calib: Optional[WaveCalib] = None,
                             flat_field: Optional[FlatField] = None,
-                            midpath: str = None) -> SpectraSet:
+                            midpath: str = None,
+                            method_override: Optional[str] = None,
+                            output_filename: str = 'extracted_spectra.fits',
+                            plot_prefix: str = 'extracted') -> SpectraSet:
     """
     Execute spectrum extraction stage.
 
@@ -270,11 +278,12 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
 
     # Extract spectra
     spectra_set = extractor.extract_aperture_set(science_image, apertures,
-                                                wavelength_calib)
+                                                wavelength_calib, flat_field,
+                                                method_override=method_override)
 
     # Save spectra
     base_output_path = config.get_output_path()
-    spectra_file = Path(base_output_path) / 'step5_extraction' / 'extracted_spectra.fits'
+    spectra_file = Path(base_output_path) / 'step4_extraction' / output_filename
     spectra_file.parent.mkdir(parents=True, exist_ok=True)
     extractor.save_spectra(str(spectra_file), spectra_set)
 
@@ -286,7 +295,7 @@ def process_extraction_stage(config: ConfigManager, science_image: np.ndarray,
         for spectrum in spectra_set.spectra.values():
             order = spectrum.aperture
             if wavelength_calib is not None and len(spectrum.wavelength) > 0:
-                plot_file = out_dir / f'extracted_order_{order:02d}.{fig_format}'
+                plot_file = out_dir / f'{plot_prefix}_order_{order:02d}.{fig_format}'
                 plot_spectrum_to_file(
                     spectrum.wavelength,
                     spectrum.flux,

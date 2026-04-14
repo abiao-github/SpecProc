@@ -19,13 +19,25 @@ from src.gui.main_window import MainWindow
 def setup_logging(log_file: str = 'specproc.log'):
     """Setup application logging."""
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)  # Set to INFO to reduce debug noise
+
+    # Reduce matplotlib logging - set more specific loggers
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
+    logging.getLogger('matplotlib.font_manager').setLevel(logging.WARNING)
+    logging.getLogger('matplotlib.pyplot').setLevel(logging.WARNING)
+    logging.getLogger('PIL').setLevel(logging.WARNING)
+    
+    # Also disable font manager's verbose output
+    import matplotlib
+    matplotlib.rcParams['font.family'] = 'sans-serif'
+    matplotlib.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    matplotlib.rcParams['axes.unicode_minus'] = False
 
     # File handler
     file_handler = RotatingFileHandler(
         log_file, maxBytes=10*1024*1024, backupCount=5
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)  # File also at INFO level
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)

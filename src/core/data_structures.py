@@ -87,27 +87,6 @@ class ApertureLocation:
         return np.full_like(x, np.nan)
 
     def get_position(self, y: np.ndarray) -> np.ndarray:
-<<<<<<< HEAD
-        """Get aperture center position at spatial coordinate y.
-
-        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
-        """
-        return np.polyval(self.center_coef, y)
-
-    def get_lower(self, y: np.ndarray) -> np.ndarray:
-        """Get lower boundary at spatial coordinate y.
-
-        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
-        """
-        return np.polyval(self.lower_coef, y)
-
-    def get_upper(self, y: np.ndarray) -> np.ndarray:
-        """Get upper boundary at spatial coordinate y.
-
-        Coefficients are in descending order: c0*y^n + c1*y^(n-1) + ... + cn
-        """
-        return np.polyval(self.upper_coef, y)
-=======
         """Get aperture center position at column coordinates *y*."""
         return self._eval(self.center_coef, self.center_arr, y)
 
@@ -130,7 +109,6 @@ class ApertureLocation:
             w_up = np.maximum(chebval(x, self.w_up_cheb_coef), 0.0)
             return center + w_up
         return self._eval(self.upper_coef, self.upper_arr, y)
->>>>>>> cef6f04 (	modified:   README.md)
 
 
 @dataclass
@@ -158,8 +136,6 @@ class ApertureSet:
         """Return number of apertures (orders) in the set."""
         return len(self.apertures)
 
-<<<<<<< HEAD
-=======
     def shift_orders(self, delta_m: int):
         """Shift all aperture IDs and order numbers by a constant offset."""
         if delta_m == 0:
@@ -243,7 +219,6 @@ class ApertureSet:
             if 'w_low_cheb' in entry:
                 ap.w_low_cheb_coef = np.array(entry['w_low_cheb'], dtype=np.float64)
 
->>>>>>> cef6f04 (	modified:   README.md)
 
 @dataclass
 class Spectrum:

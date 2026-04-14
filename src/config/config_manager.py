@@ -118,14 +118,8 @@ class ConfigManager:
             'combine_method': 'median',
             'q_threshold': '0.5',
             'mosaic_maxcount': '65535',
-<<<<<<< HEAD
-            'blaze_smooth_method': 'savgol',
-            'blaze_smooth_window': '21',
-            'blaze_bspline_smooth': '0.5',
-=======
             'blaze_knot_spacing': '500',
             'blaze_edge_nknots': '6',
->>>>>>> cef6f04 (	modified:   README.md)
             'width_smooth_window': '41',
             'profile_bin_step': '0.01',
             'pixel_flat_min': '0.5',
@@ -135,25 +129,12 @@ class ConfigManager:
         # Trace section
         self.config['reduce.trace'] = {
             'separation': '30.0',
-<<<<<<< HEAD
-            'seed_threshold': '0.30',
-=======
             'snr_threshold': '5.0',
->>>>>>> cef6f04 (	modified:   README.md)
             'prominence_scale': '0.50',
             'search_half_scale': '0.45',
             'step_denominator': '220',
             'fill_missing_orders': 'yes',
             'gap_fill_factor': '1.6',
-<<<<<<< HEAD
-            'fit_method': 'polynomial',
-            'bspline_smooth': '0.2',
-            'edge_degree': '3',
-            'aperture_root_fraction': '0.03',
-            'aperture_noise_floor_sigma': '3.0',
-            'filling': '0.3',
-            'degree': '3',
-=======
             'bspline_smooth': '0.2',
             'edge_degree': '3',
             'aperture_boundary_snr': '3.0',
@@ -161,7 +142,11 @@ class ConfigManager:
             'n_extend_above': '0',
             'n_mask_below': '2',
             'n_mask_above': '1',
->>>>>>> cef6f04 (	modified:   README.md)
+            'degree': '4',
+            'width_cheb_degree': '3',
+            'fwhm_scale': '1.5',
+            'boundary_frac': '0.02',
+            'gap_fill_factor_interp': '1.35',
         }
 
         # Extract section
@@ -190,11 +175,7 @@ class ConfigManager:
             'smooth_sigma': '20.0',
             'sigma_clip': '3.0',
             'sigma_clip_maxiters': '4',
-<<<<<<< HEAD
-            'mask_margin_pixels': '3',
-=======
             'mask_margin_pixels': '1',
->>>>>>> cef6f04 (	modified:   README.md)
             'bspline_smooth': '1.0',
             'thar_pollution': 'no',
         }

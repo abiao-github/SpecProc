@@ -231,6 +231,7 @@ class WavelengthCalibrator:
             xorder: Polynomial order in X
             yorder: Polynomial order in Y
             poly_type: Polynomial basis ('chebyshev', 'legendre' or 'polynomial')
+            poly_type: Polynomial basis ('chebyshev', 'legendre' or 'polynomial')
 
         Returns:
             WaveCalib object with polynomial solution
@@ -346,14 +347,11 @@ class WavelengthCalibrator:
         hdr['RMS']       = self.wave_calib.rms
         hdr['NLINES']    = self.wave_calib.nlines
         hdr['CALIB_TYP'] = self.wave_calib.calib_type
-<<<<<<< HEAD
-=======
         hdr['DELTAM']    = getattr(self.wave_calib, 'delta_m', 0)
         hdr['POLY_TYP']  = getattr(self.wave_calib, 'poly_type', 'chebyshev')
         if hasattr(self.wave_calib, 'domain_x'):
             hdr['X_MIN'], hdr['X_MAX'] = self.wave_calib.domain_x
             hdr['Y_MIN'], hdr['Y_MAX'] = self.wave_calib.domain_y
->>>>>>> cef6f04 (	modified:   README.md)
 
         hdul = fits.HDUList([
             fits.PrimaryHDU(data=self.wave_calib.poly_coef, header=hdr),
@@ -363,6 +361,141 @@ class WavelengthCalibrator:
         logger.info(f"Saved wavelength calibration to {output_path}")
 
 
+def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str):
+    """生成波长定标诊断图（散点图及拟合残差）。"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    
+    x_pix = wave_calib.line_pixels
+    m_orders = wave_calib.line_orders
+    wave_ref = wave_calib.line_catalog
+    wave_pred = wave_calib.apply_to_pixel(x_pix, m_orders)
+    residuals = wave_pred - wave_ref
+    
+    unique_orders = np.unique(m_orders)
+    cmap = cm.get_cmap('turbo')
+    
+    for i, m in enumerate(unique_orders):
+        mask = (m_orders == m)
+        color = cmap(i / max(1, len(unique_orders) - 1))
+        
+        # 上图：拟合曲线与参考点
+        label_str = f'Order {int(m)}' if len(unique_orders) <= 15 else None
+        ax1.scatter(x_pix[mask], wave_ref[mask], color=color, s=15, alpha=0.8, label=label_str)
+        x_smooth = np.linspace(x_pix[mask].min(), x_pix[mask].max(), 100)
+        wave_smooth = wave_calib.apply_to_pixel(x_smooth, np.full_like(x_smooth, m))
+        ax1.plot(x_smooth, wave_smooth, color=color, alpha=0.5)
+        
+        # 下图：残差
+        ax2.scatter(x_pix[mask], residuals[mask], color=color, s=15, alpha=0.8)
+        
+    ax1.set_ylabel(r'Wavelength ($\AA$)')
+    ax1.set_title(f'Wavelength Calibration (RMS = {wave_calib.rms:.4f} $\AA$, N = {wave_calib.nlines})')
+    if len(unique_orders) <= 15:
+        ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
+    ax1.grid(True, alpha=0.3)
+    
+    ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('Pixel (X)')
+    ax2.set_ylabel(r'Residual ($\AA$)')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(plot_file, dpi=150)
+    plt.close(fig)
+
+def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str):
+    """生成二维波长定标拟合曲面和残差诊断图。"""
+    fig = plt.figure(figsize=(14, 6))
+    
+    # 1. 3D 拟合曲面 (Wavelength Surface)
+    ax1 = fig.add_subplot(121, projection='3d')
+    x_pix = wave_calib.line_pixels
+    m_orders = wave_calib.line_orders
+    wave_ref = wave_calib.line_catalog
+    
+    # 生成用于绘制平滑曲面的网格
+    x_grid = np.linspace(x_pix.min(), x_pix.max(), 50)
+    m_grid = np.linspace(m_orders.min(), m_orders.max(), 50)
+    X, M = np.meshgrid(x_grid, m_grid)
+    WAVE = wave_calib.apply_to_pixel(X, M)
+    
+    # 绘制预测曲面和实际匹配散点
+    ax1.plot_surface(X, M, WAVE, cmap='viridis', alpha=0.6, edgecolor='none')
+    ax1.scatter(x_pix, m_orders, wave_ref, color='r', s=10, alpha=0.8, label='Matched Lines')
+    ax1.set_xlabel('Pixel (X)')
+    ax1.set_ylabel('Order (m)')
+    ax1.set_zlabel(r'Wavelength ($\AA$)')
+    ax1.set_title(f'2D Wavelength Solution Surface\n({wave_calib.poly_type.capitalize()} Poly, {wave_calib.xorder}x{wave_calib.yorder})')
+    
+    # 2. 拟合残差图 (二维散点，颜色区分级次)
+    ax2 = fig.add_subplot(122)
+    residuals = wave_calib.apply_to_pixel(x_pix, m_orders) - wave_ref
+    scatter = ax2.scatter(x_pix, residuals, c=m_orders, cmap='turbo', s=15, alpha=0.8)
+    ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('Pixel (X)')
+    ax2.set_ylabel(r'Residual ($\AA$)')
+    ax2.set_title(f'Fitting Residuals (RMS = {wave_calib.rms:.4f} $\AA$)')
+    ax2.grid(True, alpha=0.3)
+    fig.colorbar(scatter, ax=ax2, label='Order (m)')
+    
+    plt.tight_layout()
+    plt.savefig(plot_file, dpi=150)
+    plt.close(fig)
+
+def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray], 
+                              matched_anchors: List[Tuple[float, int, float]], delta_m: int, 
+                              pdf_path: str):
+    """将每个级次的光谱及匹配到的锚点画入一个多页 PDF 文件。"""
+    with PdfPages(pdf_path) as pdf:
+        matched_dict = {}
+        for x_obs, m_true, wave in matched_anchors:
+            if m_true not in matched_dict:
+                matched_dict[m_true] = []
+            matched_dict[m_true].append((x_obs, wave))
+            
+        spectra_dict = getattr(lamp_spectra, 'spectra', lamp_spectra) if not isinstance(lamp_spectra, dict) else lamp_spectra
+        
+        for m_obs in sorted(spectra_dict.keys()):
+            m_true = m_obs + delta_m
+            spec = spectra_dict[m_obs]
+            flux = getattr(spec, 'flux', spec)
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(flux, label='Lamp Flux', color='k', linewidth=0.7)
+            
+            if m_obs in detected_peaks and len(detected_peaks[m_obs]) > 0:
+                p_x = detected_peaks[m_obs].astype(int)
+                ax.plot(p_x, flux[p_x], 'r+', markersize=6, label='Detected Peaks')
+                
+            if m_true in matched_dict:
+                max_flux = np.nanmax(flux) if len(flux) > 0 and np.nanmax(flux) > 0 else 1.0
+                for x_obs, wave in matched_dict[m_true]:
+                    ax.axvline(x=x_obs, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
+                    ax.text(x_obs, max_flux * 1.05, f"{wave:.3f}", color='b', 
+                            rotation=90, va='bottom', ha='center', fontsize=8)
+                            
+            ax.set_title(f"Order {m_true} (Original: {m_obs}, Offset: {delta_m})")
+            ax.set_xlabel("Pixel (X)")
+            ax.set_ylabel("Flux")
+            
+            # 留出顶部 30% 空间写波长文本
+            max_val = np.nanmax(flux) if len(flux) > 0 and np.nanmax(flux) > 0 else 1.0
+            ax.set_ylim(bottom=0, top=max_val * 1.3)
+            ax.legend(loc='upper right')
+            
+            plt.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+def process_wavelength_stage(lamp_spectra: SpectraSet,
+                             config: ConfigManager,
+                             output_dir_base: str,
+                             anchor_file: Optional[str] = None,
+                             lamp_type: str = 'ThAr',
+                             save_plots: bool = True,
+                             fig_format: str = 'png') -> WaveCalib:
+    """
+    执行波长定标 (Step 7).
 def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str):
     """生成波长定标诊断图（散点图及拟合残差）。"""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
@@ -580,37 +713,23 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
     wave_calib = calibrator.fit_wavelength_polynomial(pix_pos, matched_wave, xorder=x_order, yorder=y_order, poly_type=poly_type)
     wave_calib.delta_m = delta_m
 
-<<<<<<< HEAD
-    # Create demo calibration (linear)
-    coeffs = np.zeros(((x_order + 1) * (y_order + 1),))
-    coeffs[0] = 3000.0  # Wavelength offset
-    coeffs[1] = 0.5     # Wavelength scale
-
-    poly_coef = coeffs.reshape((x_order + 1, y_order + 1))
-
-    wave_calib = WaveCalib(
-        poly_coef=poly_coef,
-        xorder=x_order,
-        yorder=y_order,
-        rms=0.1,
-        nlines=15,
-        calib_type=lamp_type
-    )
-
-    # Save calibration
-    base_output_path = config.get_output_path()
-    calib_file = Path(base_output_path) / 'step5_wavelength' / 'wavelength_calibration.fits'
-=======
     # 保存校准结果
     calib_file = Path(output_dir_base) / 'step7_wavelength' / 'wavelength_calibration.fits'
->>>>>>> cef6f04 (	modified:   README.md)
     calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.save_calibration(str(calib_file))
 
     # 绘制验证图并保存
     if save_plots and getattr(wave_calib, 'line_pixels', None) is not None:
+    # 绘制验证图并保存
+    if save_plots and getattr(wave_calib, 'line_pixels', None) is not None:
         out_dir = calib_file.parent
         plot_file = out_dir / f'wavelength_calibration.{fig_format}'
+        surf_plot_file = out_dir / f'wavelength_calibration_surface.{fig_format}'
+        try:
+            _plot_calib_diagnostic(wave_calib, str(plot_file))
+            _plot_calib_surface_diagnostic(wave_calib, str(surf_plot_file))
+        except Exception as e:
+            logger.warning(f"Could not generate wavelength calibration plot: {e}")
         surf_plot_file = out_dir / f'wavelength_calibration_surface.{fig_format}'
         try:
             _plot_calib_diagnostic(wave_calib, str(plot_file))

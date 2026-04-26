@@ -267,10 +267,6 @@ class MainWindow(QMainWindow):
         science_layout.addWidget(self.raw_list, 1)
 
         science_group.setLayout(science_layout)
-        layout.addWidget(science_group)
-        layout.addWidget(self.raw_list, 1)
-
-        science_group.setLayout(science_layout)
         layout.addWidget(science_group, 2)
 
         return panel

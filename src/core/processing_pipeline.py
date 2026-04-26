@@ -361,34 +361,6 @@ class ProcessingPipeline:
                     save_plots=self.config.get_bool('reduce', 'save_plots', True),
                     fig_format=self.config.get('reduce', 'fig_format', 'png'),
                 )
-                logger.info(f"Extracting ThAr lamp spectrum from {calib_filename} ...")
-                lamp_img, _ = read_fits_image(calib_filename)
-                
-                extract_kwargs = {
-                    'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
-                    'extraction_method': 'sum',
-                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
-                }
-                lamp_spectra = process_extraction_stage(
-                    lamp_img, self.state.apertures,
-                    output_dir_base=self.config.get_output_path(),
-                    wavelength_calib=None,
-                    flat_field=self.state.flat_field,
-                    method_override='sum',
-                    output_filename='thar_1D_sum.fits',
-                    plot_prefix='thar_1D_sum',
-                    **extract_kwargs
-                )
-                
-                wave_calib = process_wavelength_stage(
-                    lamp_spectra=lamp_spectra,
-                    config=self.config,
-                    output_dir_base=self.config.get_output_path(),
-                    lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
-                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
-                )
                 self.state.wavelength_calib = wave_calib
             else:
                 wave_calib = self.state.wavelength_calib
@@ -541,7 +513,6 @@ class ProcessingPipeline:
         Args:
             science_image: Background-corrected 2D science image
             science_name: Base name of the science image
-            science_name: Base name of the science image
 
         Returns:
             SpectraSet with extracted 1D spectra (without wavelength calibration)
@@ -609,7 +580,6 @@ class ProcessingPipeline:
 
         Args:
             spectra_set: Extracted spectra
-            science_name: Base name of the science image
             science_name: Base name of the science image
 
         Returns:

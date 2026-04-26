@@ -53,11 +53,7 @@ class SettingsDialog(QDialog):
         # Create tabs following data reduction pipeline order
         self.tab_widget.addTab(self._create_data_tab(), "Data & Instruments")
         self.tab_widget.addTab(self._create_reduction_tab(), "Data Reduction")
-<<<<<<< HEAD
-        self.tab_widget.addTab(self._create_extraction_tab(), "Trace & Extraction")
-=======
         self.tab_widget.addTab(self._create_extraction_tab(), "Orders Tracing")
->>>>>>> cef6f04 (	modified:   README.md)
         self.tab_widget.addTab(self._create_wlcalib_tab(), "Wavelength Calibration")
         self.tab_widget.addTab(self._create_processing_tab(), "Processing & Output")
 
@@ -137,10 +133,7 @@ class SettingsDialog(QDialog):
         layout.addRow(detector_group)
 
         widget.setLayout(layout)
-<<<<<<< HEAD
-=======
         widget.setMinimumWidth(400)
->>>>>>> cef6f04 (	modified:   README.md)
         scroll.setWidget(widget)
         return scroll
 
@@ -191,8 +184,6 @@ class SettingsDialog(QDialog):
         self.overscan_poly_order_spin.setToolTip("Polynomial order (degree) for mean_polynomial method")
         overscan_layout.addRow("Poly Order:", self.overscan_poly_order_spin)
 
-<<<<<<< HEAD
-=======
         self.detector_split_row_spin = QSpinBox()
         self.detector_split_row_spin.setRange(-1, 20000)
         self.detector_split_row_spin.setSpecialValueText("Auto (rows/2)")
@@ -204,7 +195,6 @@ class SettingsDialog(QDialog):
         )
         overscan_layout.addRow("Amplifier Split Row:", self.detector_split_row_spin)
 
->>>>>>> cef6f04 (	modified:   README.md)
         overscan_group.setLayout(overscan_layout)
         layout.addRow(overscan_group)
 
@@ -227,64 +217,6 @@ class SettingsDialog(QDialog):
         bias_group.setLayout(bias_layout)
         layout.addRow(bias_group)
 
-<<<<<<< HEAD
-        # Flat fielding
-        flat_group = QGroupBox("Flat Fielding")
-        flat_layout = QFormLayout()
-
-        self.flat_combine_method_combo = QComboBox()
-        self.flat_combine_method_combo.addItems(['mean', 'median'])
-        flat_layout.addRow("Combine Method:", self.flat_combine_method_combo)
-
-        self.flat_q_threshold_spin = QDoubleSpinBox()
-        self.flat_q_threshold_spin.setRange(0.0, 1.0)
-        self.flat_q_threshold_spin.setSingleStep(0.05)
-        flat_layout.addRow("Quality Threshold:", self.flat_q_threshold_spin)
-
-        self.flat_mosaic_maxcount_spin = QDoubleSpinBox()
-        self.flat_mosaic_maxcount_spin.setRange(0.0, 100000.0)
-        flat_layout.addRow("Mosaic Max Count:", self.flat_mosaic_maxcount_spin)
-
-        self.flat_blaze_smooth_method_combo = QComboBox()
-        self.flat_blaze_smooth_method_combo.addItems(['median', 'savgol', 'bspline'])
-        flat_layout.addRow("Blaze Smooth Method:", self.flat_blaze_smooth_method_combo)
-
-        self.flat_blaze_smooth_window_spin = QSpinBox()
-        self.flat_blaze_smooth_window_spin.setRange(5, 401)
-        self.flat_blaze_smooth_window_spin.setSingleStep(2)
-        flat_layout.addRow("Blaze Smooth Window:", self.flat_blaze_smooth_window_spin)
-
-        self.flat_blaze_bspline_smooth_spin = QDoubleSpinBox()
-        self.flat_blaze_bspline_smooth_spin.setRange(0.0, 20.0)
-        self.flat_blaze_bspline_smooth_spin.setSingleStep(0.1)
-        flat_layout.addRow("Blaze B-spline Smooth:", self.flat_blaze_bspline_smooth_spin)
-
-        self.flat_width_smooth_window_spin = QSpinBox()
-        self.flat_width_smooth_window_spin.setRange(5, 401)
-        self.flat_width_smooth_window_spin.setSingleStep(2)
-        flat_layout.addRow("Width Smooth Window:", self.flat_width_smooth_window_spin)
-
-        self.flat_profile_bin_step_spin = QDoubleSpinBox()
-        self.flat_profile_bin_step_spin.setRange(0.002, 0.2)
-        self.flat_profile_bin_step_spin.setDecimals(3)
-        self.flat_profile_bin_step_spin.setSingleStep(0.001)
-        flat_layout.addRow("y_norm Bin Step:", self.flat_profile_bin_step_spin)
-
-        self.flat_pixel_min_spin = QDoubleSpinBox()
-        self.flat_pixel_min_spin.setRange(0.01, 2.0)
-        self.flat_pixel_min_spin.setSingleStep(0.01)
-        flat_layout.addRow("Pixel Flat Min:", self.flat_pixel_min_spin)
-
-        self.flat_pixel_max_spin = QDoubleSpinBox()
-        self.flat_pixel_max_spin.setRange(0.1, 5.0)
-        self.flat_pixel_max_spin.setSingleStep(0.01)
-        flat_layout.addRow("Pixel Flat Max:", self.flat_pixel_max_spin)
-
-        flat_group.setLayout(flat_layout)
-        layout.addRow(flat_group)
-
-        # Background subtraction
-=======
         # Cosmic ray correction (Step 1)
         cosmic_group = QGroupBox("Cosmic Ray Correction")
         cosmic_layout = QFormLayout()
@@ -305,15 +237,10 @@ class SettingsDialog(QDialog):
         layout.addRow(cosmic_group)
 
         # Background subtraction (Step 3)
->>>>>>> cef6f04 (	modified:   README.md)
         bg_group = QGroupBox("Background Subtraction")
         bg_layout = QFormLayout()
 
         self.bg_method_combo = QComboBox()
-<<<<<<< HEAD
-        self.bg_method_combo.addItems(['chebyshev', 'bspline', 'smooth'])
-        bg_layout.addRow("Background Method:", self.bg_method_combo)
-=======
         self.bg_method_combo.addItems(['convolution', 'column_spline', 'chebyshev', 'bspline', 'gaussian_smooth'])
         self.bg_method_combo.setToolTip(
             "'convolution': astropy NaN-aware 2D Gaussian convolution (recommended,\n"
@@ -364,7 +291,6 @@ class SettingsDialog(QDialog):
             "spline assembly.  Removes column-to-column discontinuities.\n"
             "Set to 0 to disable.  Typical 3–10 px.")
         bg_layout.addRow("Spline Post-smooth σ_x:", self.bg_spline_post_smooth_x_spin)
->>>>>>> cef6f04 (	modified:   README.md)
 
         self.bg_poly_order_spin = QSpinBox()
         self.bg_poly_order_spin.setRange(1, 10)
@@ -384,8 +310,6 @@ class SettingsDialog(QDialog):
         self.bg_sigma_clip_iter_spin.setRange(1, 20)
         bg_layout.addRow("Clip Iterations:", self.bg_sigma_clip_iter_spin)
 
-<<<<<<< HEAD
-=======
         self.bg_clip_mode_combo = QComboBox()
         self.bg_clip_mode_combo.addItems(['upper', 'both', 'lower'])
         self.bg_clip_mode_combo.setToolTip(
@@ -395,7 +319,6 @@ class SettingsDialog(QDialog):
             "'lower': reject only faint outliers.")
         bg_layout.addRow("Clip Mode:", self.bg_clip_mode_combo)
 
->>>>>>> cef6f04 (	modified:   README.md)
         self.bg_mask_margin_spin = QSpinBox()
         self.bg_mask_margin_spin.setRange(0, 20)
         bg_layout.addRow("Mask Margin (px):", self.bg_mask_margin_spin)
@@ -408,26 +331,6 @@ class SettingsDialog(QDialog):
         bg_group.setLayout(bg_layout)
         layout.addRow(bg_group)
 
-<<<<<<< HEAD
-        # Cosmic ray correction
-        cosmic_group = QGroupBox("Cosmic Ray Correction")
-        cosmic_layout = QFormLayout()
-
-        self.cosmic_enabled_check = QCheckBox("Enable cosmic ray correction")
-        cosmic_layout.addRow(self.cosmic_enabled_check)
-
-        self.cosmic_sigma_spin = QDoubleSpinBox()
-        self.cosmic_sigma_spin.setRange(0.1, 20.0)
-        self.cosmic_sigma_spin.setSingleStep(0.1)
-        cosmic_layout.addRow("Sigma Threshold:", self.cosmic_sigma_spin)
-
-        self.cosmic_window_spin = QSpinBox()
-        self.cosmic_window_spin.setRange(1, 50)
-        cosmic_layout.addRow("Window Size:", self.cosmic_window_spin)
-
-        cosmic_group.setLayout(cosmic_layout)
-        layout.addRow(cosmic_group)
-=======
         # Flat fielding (Step 4)
         flat_group = QGroupBox("Flat Fielding")
         flat_layout = QFormLayout()
@@ -507,7 +410,6 @@ class SettingsDialog(QDialog):
 
         flat_group.setLayout(flat_layout)
         layout.addRow(flat_group)
->>>>>>> cef6f04 (	modified:   README.md)
 
         widget.setLayout(layout)
         scroll.setWidget(widget)
@@ -533,8 +435,6 @@ class SettingsDialog(QDialog):
             self.overscan_poly_type_combo.setEnabled(True)
             self.overscan_poly_order_spin.setEnabled(True)
 
-<<<<<<< HEAD
-=======
     def _update_bg_params_enabled(self):
         """Enable/disable background parameters based on selected method."""
         method = self.bg_method_combo.currentText()
@@ -556,7 +456,6 @@ class SettingsDialog(QDialog):
 
         # Common params always enabled: sigma_clip, clip_iterations, clip_mode, mask_margin
 
->>>>>>> cef6f04 (	modified:   README.md)
     def _create_wlcalib_tab(self) -> QWidget:
         """Create wavelength calibration settings tab."""
         scroll = QScrollArea()
@@ -691,64 +590,6 @@ class SettingsDialog(QDialog):
             "Typical: 3.0–10.0. Lower to detect very faint orders.")
         trace_layout.addRow("Detection SNR Threshold:", self.trace_snr_threshold_spin)
 
-<<<<<<< HEAD
-        self.trace_seed_threshold_spin = QDoubleSpinBox()
-        self.trace_seed_threshold_spin.setRange(0.01, 1.0)
-        self.trace_seed_threshold_spin.setSingleStep(0.01)
-        trace_layout.addRow("Seed Threshold (0-1):", self.trace_seed_threshold_spin)
-
-        self.trace_prominence_scale_spin = QDoubleSpinBox()
-        self.trace_prominence_scale_spin.setRange(0.01, 5.0)
-        self.trace_prominence_scale_spin.setSingleStep(0.05)
-        trace_layout.addRow("Prominence Scale:", self.trace_prominence_scale_spin)
-
-        self.trace_search_half_scale_spin = QDoubleSpinBox()
-        self.trace_search_half_scale_spin.setRange(0.1, 2.0)
-        self.trace_search_half_scale_spin.setSingleStep(0.05)
-        trace_layout.addRow("Search Half Scale:", self.trace_search_half_scale_spin)
-
-        self.trace_step_denominator_spin = QSpinBox()
-        self.trace_step_denominator_spin.setRange(40, 2000)
-        trace_layout.addRow("Trace Step Denominator:", self.trace_step_denominator_spin)
-
-        self.trace_fill_missing_check = QCheckBox("Fill missing weak orders")
-        trace_layout.addRow(self.trace_fill_missing_check)
-
-        self.trace_gap_fill_factor_spin = QDoubleSpinBox()
-        self.trace_gap_fill_factor_spin.setRange(1.0, 4.0)
-        self.trace_gap_fill_factor_spin.setSingleStep(0.1)
-        trace_layout.addRow("Gap Fill Factor:", self.trace_gap_fill_factor_spin)
-
-        self.trace_fit_method_combo = QComboBox()
-        self.trace_fit_method_combo.addItems(['polynomial', 'chebyshev', 'bspline'])
-        trace_layout.addRow("Trace Fit Method (Center+Edges):", self.trace_fit_method_combo)
-
-        self.trace_bspline_smooth_spin = QDoubleSpinBox()
-        self.trace_bspline_smooth_spin.setRange(0.0, 5.0)
-        self.trace_bspline_smooth_spin.setSingleStep(0.05)
-        trace_layout.addRow("B-spline Smooth:", self.trace_bspline_smooth_spin)
-
-        self.trace_edge_degree_spin = QSpinBox()
-        self.trace_edge_degree_spin.setRange(1, 8)
-        trace_layout.addRow("Edge Fit Degree:", self.trace_edge_degree_spin)
-
-        self.trace_aperture_root_fraction_spin = QDoubleSpinBox()
-        self.trace_aperture_root_fraction_spin.setRange(0.0, 0.5)
-        self.trace_aperture_root_fraction_spin.setSingleStep(0.005)
-        self.trace_aperture_root_fraction_spin.setDecimals(3)
-        trace_layout.addRow("Aperture Root Fraction:", self.trace_aperture_root_fraction_spin)
-
-        self.trace_aperture_noise_floor_sigma_spin = QDoubleSpinBox()
-        self.trace_aperture_noise_floor_sigma_spin.setRange(0.0, 20.0)
-        self.trace_aperture_noise_floor_sigma_spin.setSingleStep(0.1)
-        self.trace_aperture_noise_floor_sigma_spin.setDecimals(2)
-        trace_layout.addRow("Aperture Noise Floor Sigma:", self.trace_aperture_noise_floor_sigma_spin)
-
-        self.trace_filling_spin = QDoubleSpinBox()
-        self.trace_filling_spin.setRange(0.0, 1.0)
-        self.trace_filling_spin.setSingleStep(0.05)
-        trace_layout.addRow("Filling Factor Threshold:", self.trace_filling_spin)
-=======
         self.trace_min_coverage_spin = QDoubleSpinBox()
         self.trace_min_coverage_spin.setRange(0.05, 0.80)
         self.trace_min_coverage_spin.setSingleStep(0.05)
@@ -757,7 +598,6 @@ class SettingsDialog(QDialog):
             "Minimum fraction of detector width an order must span.\n"
             "Lower to accept faint partial orders; raise to reject short false traces.")
         trace_layout.addRow("Min Trace Coverage:", self.trace_min_coverage_spin)
->>>>>>> cef6f04 (	modified:   README.md)
 
         self.trace_degree_spin = QSpinBox()
         self.trace_degree_spin.setRange(1, 10)
@@ -932,10 +772,7 @@ class SettingsDialog(QDialog):
         self.overscan_smooth_window_spin.setValue(self.config.get_int('data', 'overscan_smooth_window', -1))
         self.overscan_poly_type_combo.setCurrentText(self.config.get('data', 'overscan_poly_type', 'legendre'))
         self.overscan_poly_order_spin.setValue(self.config.get_int('data', 'overscan_poly_order', 3))
-<<<<<<< HEAD
-=======
         self.detector_split_row_spin.setValue(self.config.get_int('data', 'detector_split_row', 2068))
->>>>>>> cef6f04 (	modified:   README.md)
         # Update enabled state of overscan params based on selected method
         self._update_overscan_params_enabled()
         self.bias_combine_method_combo.setCurrentText(self.config.get('reduce.bias', 'combine_method', 'median'))
@@ -943,19 +780,6 @@ class SettingsDialog(QDialog):
         self.flat_combine_method_combo.setCurrentText(self.config.get('reduce.flat', 'combine_method', 'median'))
         self.flat_q_threshold_spin.setValue(self.config.get_float('reduce.flat', 'q_threshold', 0.5))
         self.flat_mosaic_maxcount_spin.setValue(self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535.0))
-<<<<<<< HEAD
-        self.flat_blaze_smooth_method_combo.setCurrentText(self.config.get('reduce.flat', 'blaze_smooth_method', 'savgol'))
-        self.flat_blaze_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'blaze_smooth_window', 21))
-        self.flat_blaze_bspline_smooth_spin.setValue(self.config.get_float('reduce.flat', 'blaze_bspline_smooth', 0.5))
-        self.flat_width_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'width_smooth_window', 41))
-        self.flat_profile_bin_step_spin.setValue(self.config.get_float('reduce.flat', 'profile_bin_step', 0.01))
-        self.flat_pixel_min_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5))
-        self.flat_pixel_max_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5))
-        bg_method = self.config.get('reduce.background', 'method', 'chebyshev')
-        if bg_method == '2d_poly':
-            bg_method = 'chebyshev'
-        self.bg_method_combo.setCurrentText(bg_method)
-=======
         self.flat_blaze_knot_spacing_spin.setValue(self.config.get_int('reduce.flat', 'blaze_knot_spacing', 500))
         self.flat_blaze_edge_nknots_spin.setValue(self.config.get_int('reduce.flat', 'blaze_edge_nknots', 6))
         self.flat_width_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'width_smooth_window', 41))
@@ -974,21 +798,15 @@ class SettingsDialog(QDialog):
         self.bg_kernel_sigma_y_spin.setValue(self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0))
         self.bg_spline_smooth_factor_spin.setValue(self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0))
         self.bg_spline_post_smooth_x_spin.setValue(self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0))
->>>>>>> cef6f04 (	modified:   README.md)
         self.bg_poly_order_spin.setValue(self.config.get_int('reduce.background', 'poly_order', 3))
         self.bg_smooth_sigma_spin.setValue(self.config.get_float('reduce.background', 'smooth_sigma', 20.0))
         self.bg_sigma_clip_spin.setValue(self.config.get_float('reduce.background', 'sigma_clip', 3.0))
         self.bg_sigma_clip_iter_spin.setValue(self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4))
-<<<<<<< HEAD
-        self.bg_mask_margin_spin.setValue(self.config.get_int('reduce.background', 'mask_margin_pixels', 3))
-        self.bg_bspline_smooth_spin.setValue(self.config.get_float('reduce.background', 'bspline_smooth', 1.0))
-=======
         clip_mode = self.config.get('reduce.background', 'sigma_clip_mode', 'upper')
         self.bg_clip_mode_combo.setCurrentText(clip_mode)
         self.bg_mask_margin_spin.setValue(self.config.get_int('reduce.background', 'mask_margin_pixels', 1))
         self.bg_bspline_smooth_spin.setValue(self.config.get_float('reduce.background', 'bspline_smooth', 1.0))
         self._update_bg_params_enabled()
->>>>>>> cef6f04 (	modified:   README.md)
         self.cosmic_enabled_check.setChecked(self.config.get_bool('reduce', 'cosmic_enabled', True))
         self.cosmic_sigma_spin.setValue(self.config.get_float('reduce', 'cosmic_sigma', 5.0))
         self.cosmic_window_spin.setValue(self.config.get_int('reduce', 'cosmic_window', 5))
@@ -1011,28 +829,6 @@ class SettingsDialog(QDialog):
         self.wlcalib_clipping_spin.setValue(self.config.get_float('reduce.wlcalib', 'clipping', 3.0))
         self.wlcalib_q_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'q_threshold', 0.5))
 
-<<<<<<< HEAD
-        # Trace & Extraction tab
-        self.trace_scan_step_spin.setValue(self.config.get_int('reduce.trace', 'scan_step', 10))
-        self.trace_minimum_spin.setValue(self.config.get_float('reduce.trace', 'minimum', 50.0))
-        self.trace_separation_spin.setValue(self.config.get_float('reduce.trace', 'separation', 30.0))
-        self.trace_seed_threshold_spin.setValue(self.config.get_float('reduce.trace', 'seed_threshold', 0.30))
-        self.trace_prominence_scale_spin.setValue(self.config.get_float('reduce.trace', 'prominence_scale', 0.50))
-        self.trace_search_half_scale_spin.setValue(self.config.get_float('reduce.trace', 'search_half_scale', 0.45))
-        self.trace_step_denominator_spin.setValue(self.config.get_int('reduce.trace', 'step_denominator', 220))
-        self.trace_fill_missing_check.setChecked(self.config.get_bool('reduce.trace', 'fill_missing_orders', True))
-        self.trace_gap_fill_factor_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6))
-        self.trace_fit_method_combo.setCurrentText(self.config.get('reduce.trace', 'fit_method', 'polynomial'))
-        self.trace_bspline_smooth_spin.setValue(self.config.get_float('reduce.trace', 'bspline_smooth', 0.2))
-        self.trace_edge_degree_spin.setValue(self.config.get_int('reduce.trace', 'edge_degree', 3))
-        self.trace_aperture_root_fraction_spin.setValue(self.config.get_float('reduce.trace', 'aperture_root_fraction', 0.03))
-        self.trace_aperture_noise_floor_sigma_spin.setValue(self.config.get_float('reduce.trace', 'aperture_noise_floor_sigma', 3.0))
-        self.trace_filling_spin.setValue(self.config.get_float('reduce.trace', 'filling', 0.3))
-        self.trace_degree_spin.setValue(self.config.get_int('reduce.trace', 'degree', 3))
-        self.extract_method_combo.setCurrentText(self.config.get('reduce.extract', 'method', 'sum'))
-        self.extract_lower_limit_spin.setValue(self.config.get_float('reduce.extract', 'lower_limit', -5.0))
-        self.extract_upper_limit_spin.setValue(self.config.get_float('reduce.extract', 'upper_limit', 5.0))
-=======
         # Orders Tracing tab
         self.trace_spacing_tol_spin.setValue(self.config.get_float('reduce.trace', 'spacing_tol', 0.3))
         self.trace_step_denominator_spin.setValue(self.config.get_int('reduce.trace', 'step_denominator', 20))
@@ -1050,7 +846,6 @@ class SettingsDialog(QDialog):
         self.trace_boundary_frac_spin.setValue(self.config.get_float('reduce.trace', 'boundary_frac', 0.02))
         self.trace_fwhm_scale_spin.setValue(self.config.get_float('reduce.trace', 'fwhm_scale', 1.5))
         self.extract_method_combo.setCurrentText(self.config.get('reduce.extract', 'method', 'optimal'))
->>>>>>> cef6f04 (	modified:   README.md)
 
         # Processing & Output tab
         self.mode_combo.setCurrentText(self.config.get('reduce', 'mode', 'normal'))
@@ -1087,72 +882,35 @@ class SettingsDialog(QDialog):
             self.config.set('data', 'overscan_smooth_window', str(self.overscan_smooth_window_spin.value()))
             self.config.set('data', 'overscan_poly_type', self.overscan_poly_type_combo.currentText())
             self.config.set('data', 'overscan_poly_order', str(self.overscan_poly_order_spin.value()))
-<<<<<<< HEAD
-=======
             self.config.set('data', 'detector_split_row', str(self.detector_split_row_spin.value()))
->>>>>>> cef6f04 (	modified:   README.md)
             self.config.set('reduce.bias', 'combine_method', self.bias_combine_method_combo.currentText())
             self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
             self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
             self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
             self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
-<<<<<<< HEAD
-            self.config.set('reduce.flat', 'blaze_smooth_method', self.flat_blaze_smooth_method_combo.currentText())
-            self.config.set('reduce.flat', 'blaze_smooth_window', str(self.flat_blaze_smooth_window_spin.value()))
-            self.config.set('reduce.flat', 'blaze_bspline_smooth', str(self.flat_blaze_bspline_smooth_spin.value()))
-            self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
-=======
             self.config.set('reduce.flat', 'blaze_knot_spacing', str(self.flat_blaze_knot_spacing_spin.value()))
             self.config.set('reduce.flat', 'blaze_edge_nknots', str(self.flat_blaze_edge_nknots_spin.value()))
             self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
             self.config.set('reduce.flat', 'n_profile_segments', str(self.flat_n_profile_segments_spin.value()))
             self.config.set('reduce.flat', 'profile_smooth_sigma', str(self.flat_profile_smooth_sigma_spin.value()))
->>>>>>> cef6f04 (	modified:   README.md)
             self.config.set('reduce.flat', 'profile_bin_step', str(self.flat_profile_bin_step_spin.value()))
             self.config.set('reduce.flat', 'pixel_flat_min', str(self.flat_pixel_min_spin.value()))
             self.config.set('reduce.flat', 'pixel_flat_max', str(self.flat_pixel_max_spin.value()))
             self.config.set('reduce.background', 'method', self.bg_method_combo.currentText())
-<<<<<<< HEAD
-=======
             self.config.set('reduce.background', 'kernel_sigma_x', str(self.bg_kernel_sigma_x_spin.value()))
             self.config.set('reduce.background', 'kernel_sigma_y', str(self.bg_kernel_sigma_y_spin.value()))
             self.config.set('reduce.background', 'spline_smooth_factor', str(self.bg_spline_smooth_factor_spin.value()))
             self.config.set('reduce.background', 'spline_post_smooth_x', str(self.bg_spline_post_smooth_x_spin.value()))
->>>>>>> cef6f04 (	modified:   README.md)
             self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
             self.config.set('reduce.background', 'smooth_sigma', str(self.bg_smooth_sigma_spin.value()))
             self.config.set('reduce.background', 'sigma_clip', str(self.bg_sigma_clip_spin.value()))
             self.config.set('reduce.background', 'sigma_clip_maxiters', str(self.bg_sigma_clip_iter_spin.value()))
-<<<<<<< HEAD
-=======
             self.config.set('reduce.background', 'sigma_clip_mode', self.bg_clip_mode_combo.currentText())
->>>>>>> cef6f04 (	modified:   README.md)
             self.config.set('reduce.background', 'mask_margin_pixels', str(self.bg_mask_margin_spin.value()))
             self.config.set('reduce.background', 'bspline_smooth', str(self.bg_bspline_smooth_spin.value()))
             self.config.set('reduce', 'cosmic_enabled', 'yes' if self.cosmic_enabled_check.isChecked() else 'no')
             self.config.set('reduce', 'cosmic_sigma', str(self.cosmic_sigma_spin.value()))
             self.config.set('reduce', 'cosmic_window', str(self.cosmic_window_spin.value()))
-<<<<<<< HEAD
-            self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
-            self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
-            self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
-            self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
-            self.config.set('reduce.flat', 'blaze_smooth_method', self.flat_blaze_smooth_method_combo.currentText())
-            self.config.set('reduce.flat', 'blaze_smooth_window', str(self.flat_blaze_smooth_window_spin.value()))
-            self.config.set('reduce.flat', 'blaze_bspline_smooth', str(self.flat_blaze_bspline_smooth_spin.value()))
-            self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
-            self.config.set('reduce.flat', 'profile_bin_step', str(self.flat_profile_bin_step_spin.value()))
-            self.config.set('reduce.flat', 'pixel_flat_min', str(self.flat_pixel_min_spin.value()))
-            self.config.set('reduce.flat', 'pixel_flat_max', str(self.flat_pixel_max_spin.value()))
-            self.config.set('reduce.background', 'method', self.bg_method_combo.currentText())
-            self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
-            self.config.set('reduce.background', 'smooth_sigma', str(self.bg_smooth_sigma_spin.value()))
-            self.config.set('reduce.background', 'sigma_clip', str(self.bg_sigma_clip_spin.value()))
-            self.config.set('reduce.background', 'sigma_clip_maxiters', str(self.bg_sigma_clip_iter_spin.value()))
-            self.config.set('reduce.background', 'mask_margin_pixels', str(self.bg_mask_margin_spin.value()))
-            self.config.set('reduce.background', 'bspline_smooth', str(self.bg_bspline_smooth_spin.value()))
-=======
->>>>>>> cef6f04 (	modified:   README.md)
 
             # Wavelength Calibration tab
             self.config.set('telescope.linelist', 'linelist_type', self.linelist_combo.currentText())
@@ -1176,25 +934,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.wlcalib', 'clipping', str(self.wlcalib_clipping_spin.value()))
             self.config.set('reduce.wlcalib', 'q_threshold', str(self.wlcalib_q_threshold_spin.value()))
 
-<<<<<<< HEAD
-            # Trace & Extraction tab
-            self.config.set('reduce.trace', 'scan_step', str(self.trace_scan_step_spin.value()))
-            self.config.set('reduce.trace', 'minimum', str(self.trace_minimum_spin.value()))
-            self.config.set('reduce.trace', 'separation', str(self.trace_separation_spin.value()))
-            self.config.set('reduce.trace', 'seed_threshold', str(self.trace_seed_threshold_spin.value()))
-            self.config.set('reduce.trace', 'prominence_scale', str(self.trace_prominence_scale_spin.value()))
-            self.config.set('reduce.trace', 'search_half_scale', str(self.trace_search_half_scale_spin.value()))
-            self.config.set('reduce.trace', 'step_denominator', str(self.trace_step_denominator_spin.value()))
-            self.config.set('reduce.trace', 'fill_missing_orders',
-                           'yes' if self.trace_fill_missing_check.isChecked() else 'no')
-            self.config.set('reduce.trace', 'gap_fill_factor', str(self.trace_gap_fill_factor_spin.value()))
-            self.config.set('reduce.trace', 'fit_method', self.trace_fit_method_combo.currentText())
-            self.config.set('reduce.trace', 'bspline_smooth', str(self.trace_bspline_smooth_spin.value()))
-            self.config.set('reduce.trace', 'edge_degree', str(self.trace_edge_degree_spin.value()))
-            self.config.set('reduce.trace', 'aperture_root_fraction', str(self.trace_aperture_root_fraction_spin.value()))
-            self.config.set('reduce.trace', 'aperture_noise_floor_sigma', str(self.trace_aperture_noise_floor_sigma_spin.value()))
-            self.config.set('reduce.trace', 'filling', str(self.trace_filling_spin.value()))
-=======
             # Orders Tracing tab
             self.config.set('reduce.trace', 'step_denominator', str(self.trace_step_denominator_spin.value()))
             self.config.set('reduce.trace', 'snr_threshold', str(self.trace_snr_threshold_spin.value()))
@@ -1202,7 +941,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.trace', 'gap_fill_factor_interp', str(self.trace_gap_fill_factor_interp_spin.value()))
             self.config.set('reduce.trace', 'gap_fill_snr', str(self.trace_gap_fill_snr_spin.value()))
             self.config.set('reduce.trace', 'min_trace_coverage', str(self.trace_min_coverage_spin.value()))
->>>>>>> cef6f04 (	modified:   README.md)
             self.config.set('reduce.trace', 'degree', str(self.trace_degree_spin.value()))
             self.config.set('reduce.trace', 'width_cheb_degree', str(self.trace_width_cheb_degree_spin.value()))
             self.config.set('reduce.trace', 'n_extend_below', str(self.trace_n_extend_below_spin.value()))

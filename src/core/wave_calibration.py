@@ -388,7 +388,7 @@ def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str):
         ax2.scatter(x_pix[mask], residuals[mask], color=color, s=15, alpha=0.8)
         
     ax1.set_ylabel(r'Wavelength ($\AA$)')
-    ax1.set_title(f'Wavelength Calibration (RMS = {wave_calib.rms:.4f} $\AA$, N = {wave_calib.nlines})')
+    ax1.set_title(fr'Wavelength Calibration (RMS = {wave_calib.rms:.4f} $\AA$, N = {wave_calib.nlines})')
     if len(unique_orders) <= 15:
         ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small')
     ax1.grid(True, alpha=0.3)
@@ -433,7 +433,7 @@ def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str):
     ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
     ax2.set_xlabel('Pixel (X)')
     ax2.set_ylabel(r'Residual ($\AA$)')
-    ax2.set_title(f'Fitting Residuals (RMS = {wave_calib.rms:.4f} $\AA$)')
+    ax2.set_title(fr'Fitting Residuals (RMS = {wave_calib.rms:.4f} $\AA$)')
     ax2.grid(True, alpha=0.3)
     fig.colorbar(scatter, ax=ax2, label='Order (m)')
     

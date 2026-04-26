@@ -30,11 +30,7 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
         De-blazed spectra set
     """
     logger.info("=" * 60)
-<<<<<<< HEAD
-    logger.info("STEP 7: DE-BLAZING CORRECTION")
-=======
     logger.info("STEP 6: DE-BLAZING (Blaze Function Correction)")
->>>>>>> cef6f04 (	modified:   README.md)
     logger.info("=" * 60)
 
     if flat_field.blaze_profiles is None or len(flat_field.blaze_profiles) == 0:
@@ -154,14 +150,8 @@ def process_de_blazing_stage(spectra_set: SpectraSet,
     deblazed_spectra = apply_de_blazing(spectra_set, flat_field)
 
     # Save de-blazed spectra if enabled
-<<<<<<< HEAD
-    if save_output and config.get_bool('reduce.save_intermediate', 'save_deblaze', True):
-        base_output_path = config.get_output_path()
-        deblazed_file = Path(base_output_path) / 'step6_deblazing' / 'deblazed_spectra.fits'
-=======
     if save_output and save_deblaze:
         deblazed_file = Path(output_dir_base) / 'step6_deblazing' / output_filename
->>>>>>> cef6f04 (	modified:   README.md)
         deblazed_file.parent.mkdir(parents=True, exist_ok=True)
         save_deblazed_spectra(str(deblazed_file), deblazed_spectra)
 

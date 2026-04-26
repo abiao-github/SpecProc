@@ -156,13 +156,7 @@ class SpectrumExtractor:
 
         spectra_set = SpectraSet()
 
-<<<<<<< HEAD
-        method = method_override if method_override is not None else self.config.get('reduce.extract', 'method', 'sum')
-        lower_limit = self.config.get_float('reduce.extract', 'lower_limit', -5.0)
-        upper_limit = self.config.get_float('reduce.extract', 'upper_limit', 5.0)
-=======
         method = method_override if method_override is not None else self.method
->>>>>>> cef6f04 (	modified:   README.md)
 
         _, cols = image.shape
 
@@ -270,12 +264,6 @@ def process_extraction_stage(science_image: np.ndarray,
                             output_dir_base: str,
                             wavelength_calib: Optional[WaveCalib] = None,
                             flat_field: Optional[FlatField] = None,
-<<<<<<< HEAD
-                            midpath: str = None,
-                            method_override: Optional[str] = None,
-                            output_filename: str = 'extracted_spectra.fits',
-                            plot_prefix: str = 'extracted') -> SpectraSet:
-=======
                             method_override: Optional[str] = None,
                             output_filename: str = 'extracted_spectra.fits',
                             plot_prefix: str = 'extracted',
@@ -283,7 +271,6 @@ def process_extraction_stage(science_image: np.ndarray,
                             extraction_method: str = 'optimal',
                             save_plots: bool = True,
                             fig_format: str = 'png') -> SpectraSet:
->>>>>>> cef6f04 (	modified:   README.md)
     """
     Execute spectrum extraction stage.
 
@@ -312,32 +299,13 @@ def process_extraction_stage(science_image: np.ndarray,
                                                 method_override=method_override)
 
     # Save spectra
-<<<<<<< HEAD
-    base_output_path = config.get_output_path()
-    spectra_file = Path(base_output_path) / 'step4_extraction' / output_filename
-=======
     spectra_file = Path(output_dir_base) / 'step5_extraction' / output_filename
->>>>>>> cef6f04 (	modified:   README.md)
     spectra_file.parent.mkdir(parents=True, exist_ok=True)
     extractor.save_spectra(str(spectra_file), spectra_set)
 
     # Save diagnostic plots if enabled
     if save_plots:
         out_dir = spectra_file.parent
-<<<<<<< HEAD
-        fig_format = config.get('reduce', 'fig_format', 'png')
-        for spectrum in spectra_set.spectra.values():
-            order = spectrum.aperture
-            if wavelength_calib is not None and len(spectrum.wavelength) > 0:
-                plot_file = out_dir / f'{plot_prefix}_order_{order:02d}.{fig_format}'
-                plot_spectrum_to_file(
-                    spectrum.wavelength,
-                    spectrum.flux,
-                    str(plot_file),
-                    spectrum.error if spectrum.error is not None else None,
-                    f"Extracted Spectrum - Order {order}"
-                )
-=======
         if wavelength_calib is not None:
             pdf_path = out_dir / f"{plot_prefix}_all_orders.pdf"
             plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum")
@@ -348,7 +316,6 @@ def process_extraction_stage(science_image: np.ndarray,
                 pdf_name = f"{plot_prefix}_pixel.pdf"
             pdf_path = out_dir / pdf_name
             plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum (pixels)", xlabel="Pixel")
->>>>>>> cef6f04 (	modified:   README.md)
 
     return spectra_set
 

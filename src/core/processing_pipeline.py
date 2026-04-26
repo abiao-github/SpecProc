@@ -767,19 +767,6 @@ class ProcessingPipeline:
         self._report_progress(1.00, "Pipeline Complete")
         return stitched
 
-=======
-        stitched = process_order_stitching_stage(
-            spectra_set,
-            output_dir_base=self.config.get_output_path(),
-            output_subdir='step8_stitching',
-            save_plots=self.config.get_bool('reduce', 'save_plots', True),
-            fig_format=self.config.get('reduce', 'fig_format', 'png'),
-        )
-        self._report_progress(1.00, "Pipeline Complete")
-        return stitched
-
-
->>>>>>> cef6f04 (	modified:   README.md)
     def run_full_pipeline(self, raw_image_path: str,
                          bias_filenames: List[str],
                          flat_filenames: List[str],
@@ -862,7 +849,6 @@ class ProcessingPipeline:
                 science_corrected,
                 science_name=science_name,
             )
-<<<<<<< HEAD
 
             # Step 4: 2D flat-field correction
             science_flat2d = self.stage_flat_fielding_science_2d(

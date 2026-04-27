@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
 
         self.bias_list = QListWidget()
         self.bias_list.setMinimumHeight(40)
+        self.bias_list.setMaximumHeight(120)
         self.bias_list.setSelectionMode(QListWidget.ExtendedSelection)
         bias_layout.addWidget(self.bias_list, 1)
 
@@ -203,6 +204,7 @@ class MainWindow(QMainWindow):
 
         self.flat_list = QListWidget()
         self.flat_list.setMinimumHeight(40)
+        self.flat_list.setMaximumHeight(120)
         self.flat_list.setSelectionMode(QListWidget.ExtendedSelection)
         flat_layout.addWidget(self.flat_list, 1)
 
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
 
         self.calib_list = QListWidget()
         self.calib_list.setMinimumHeight(40)
+        self.calib_list.setMaximumHeight(80)
         self.calib_list.setSelectionMode(QListWidget.ExtendedSelection)
         calib_layout.addWidget(self.calib_list, 1)
 

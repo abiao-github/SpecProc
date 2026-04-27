@@ -20,9 +20,9 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 
 **8-stage automated spectral reduction**:
 
-1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
+1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray rejection
 2. **Orders Tracing** - Master flat generation and echelle order tracing
-3. **Scattered Light Subtraction** - Inter-order background modeling and removal
+3. **Scattered Light Subtraction** - Inter-order background modeling and removal (astropy convolution or spline)
 4. **2D Flat-Field Correction** - 2D pixel flat correction
 5. **1D Spectrum Extraction** - 1D spectrum extraction (sum or optimal)
 6. **De-blazing** - Blaze function correction
@@ -540,8 +540,7 @@ flowchart TD
   - Combine multiple bias frames (mean/median)
   - Generate master bias
   - Subtract master bias from science/flat/ThAr images
-  - Detect cosmic rays using sigma-threshold (science images only)
-  - Interpolate cosmic rays with median filter
+  - Detect and reject cosmic rays using L.A.Cosmic algorithm (science images only)
 - **Output**: Pre-processed images (overscan, bias, cosmic-ray corrected)
 - **Note**: Fundamental corrections applied to prepare data for tracing and extraction.
 

@@ -19,7 +19,6 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import UnivariateSpline
 from src.utils.fits_io import read_fits_image, write_fits_image
 from src.utils.image_processing import combine_images, normalize_flat, find_bad_pixels, estimate_background_2d
-from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
 
 from src.plotting.spectra_plotter import plot_2d_image_to_file
 
@@ -272,7 +271,6 @@ class FlatFieldProcessor:
             data=self.flat_data,
             mask=self.flat_mask,
             snr_threshold=snr_threshold,
-            step_denominator=step_denominator,
             gap_fill_factor=gap_fill_factor,
             gap_fill_snr=gap_fill_snr,
             min_trace_coverage=min_trace_coverage,
@@ -2710,7 +2708,6 @@ from numpy.polynomial import Chebyshev
 
 def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = None,
                              snr_threshold: float = 5.0,
-                             step_denominator: int = 20,
                              gap_fill_factor: float = 1.35,
                              gap_fill_snr: float = 2.5,
                              min_trace_coverage: float = 0.20,
@@ -2718,6 +2715,7 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
                              boundary_frac: float = 0.02,
                              fwhm_scale: float = 1.5,
                              width_cheb_degree: int = 3,
+                             boundary_fit_samples: int = 128,
                              output_dir_base: str = '') -> ApertureSet:
     """
     Find the positions of grating orders on a CCD image.

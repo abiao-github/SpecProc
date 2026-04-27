@@ -585,11 +585,11 @@ class SettingsDialog(QDialog):
             "Default 0.30 = ±30%. Orders with spacing deviating more than this from prediction are rejected.")
         trace_layout.addRow("Order Spacing Tolerance:", self.trace_spacing_tol_spin)
 
-        self.trace_step_denominator_spin = QSpinBox()
-        self.trace_step_denominator_spin.setRange(5, 2000)
-        self.trace_step_denominator_spin.setToolTip(
-            "Column step size for trace refinement (e.g., 20 means 1 sample every 20 columns).")
-        trace_layout.addRow("Trace Step (columns):", self.trace_step_denominator_spin)
+        self.trace_boundary_fit_samples_spin = QSpinBox()
+        self.trace_boundary_fit_samples_spin.setRange(16, 1024)
+        self.trace_boundary_fit_samples_spin.setToolTip(
+            "Number of columns to sample for precise boundary fitting (Moffat method).")
+        trace_layout.addRow("Boundary Fit Samples:", self.trace_boundary_fit_samples_spin)
 
         self.trace_snr_threshold_spin = QDoubleSpinBox()
         self.trace_snr_threshold_spin.setRange(1.0, 100000.0)
@@ -841,7 +841,7 @@ class SettingsDialog(QDialog):
 
         # Orders Tracing tab
         self.trace_spacing_tol_spin.setValue(self.config.get_float('reduce.trace', 'spacing_tol', 0.3))
-        self.trace_step_denominator_spin.setValue(self.config.get_int('reduce.trace', 'step_denominator', 20))
+        self.trace_boundary_fit_samples_spin.setValue(self.config.get_int('reduce.trace', 'boundary_fit_samples', 128))
         self.trace_snr_threshold_spin.setValue(self.config.get_float('reduce.trace', 'snr_threshold', 5.0))
         self.trace_gap_fill_factor_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6))
         self.trace_gap_fill_factor_interp_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor_interp', 1.35))
@@ -946,7 +946,7 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.wlcalib', 'q_threshold', str(self.wlcalib_q_threshold_spin.value()))
 
             # Orders Tracing tab
-            self.config.set('reduce.trace', 'step_denominator', str(self.trace_step_denominator_spin.value()))
+            self.config.set('reduce.trace', 'boundary_fit_samples', str(self.trace_boundary_fit_samples_spin.value()))
             self.config.set('reduce.trace', 'snr_threshold', str(self.trace_snr_threshold_spin.value()))
             self.config.set('reduce.trace', 'gap_fill_factor', str(self.trace_gap_fill_factor_spin.value()))
             self.config.set('reduce.trace', 'gap_fill_factor_interp', str(self.trace_gap_fill_factor_interp_spin.value()))

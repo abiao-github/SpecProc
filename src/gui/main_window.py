@@ -1162,7 +1162,6 @@ class MainWindow(QMainWindow):
                 'combine_sigma': self.config.get_float('reduce.bias', 'combine_sigma', 3.0),
                 'mosaic_maxcount': self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535),
                 'snr_threshold': self.config.get_float('reduce.trace', 'snr_threshold', 5.0),
-                'step_denominator': self.config.get_int('reduce.trace', 'step_denominator', 20),
                 'gap_fill_factor': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6),
                 'gap_fill_snr': self.config.get_float('reduce.trace', 'gap_fill_snr', 2.5),
                 'min_trace_coverage': self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20),
@@ -1170,6 +1169,7 @@ class MainWindow(QMainWindow):
                 'boundary_frac': self.config.get_float('reduce.trace', 'boundary_frac', 0.02),
                 'fwhm_scale': self.config.get_float('reduce.trace', 'fwhm_scale', 1.5),
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
+                'boundary_fit_samples': self.config.get_int('reduce.trace', 'boundary_fit_samples', 128),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'png'),
             }

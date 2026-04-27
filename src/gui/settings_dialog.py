@@ -218,20 +218,29 @@ class SettingsDialog(QDialog):
         layout.addRow(bias_group)
 
         # Cosmic ray correction (Step 1)
-        cosmic_group = QGroupBox("Cosmic Ray Correction")
+        cosmic_group = QGroupBox("Cosmic Ray Correction (L.A.Cosmic)")
         cosmic_layout = QFormLayout()
 
         self.cosmic_enabled_check = QCheckBox("Enable cosmic ray correction")
         cosmic_layout.addRow(self.cosmic_enabled_check)
 
-        self.cosmic_sigma_spin = QDoubleSpinBox()
-        self.cosmic_sigma_spin.setRange(0.1, 20.0)
-        self.cosmic_sigma_spin.setSingleStep(0.1)
-        cosmic_layout.addRow("Sigma Threshold:", self.cosmic_sigma_spin)
+        self.cosmic_sigclip_spin = QDoubleSpinBox()
+        self.cosmic_sigclip_spin.setRange(1.0, 20.0)
+        self.cosmic_sigclip_spin.setSingleStep(0.1)
+        self.cosmic_sigclip_spin.setToolTip("Detection threshold (sigma). Higher values are more conservative.")
+        cosmic_layout.addRow("Sigma Clip:", self.cosmic_sigclip_spin)
 
-        self.cosmic_window_spin = QSpinBox()
-        self.cosmic_window_spin.setRange(1, 50)
-        cosmic_layout.addRow("Window Size:", self.cosmic_window_spin)
+        self.cosmic_objlim_spin = QDoubleSpinBox()
+        self.cosmic_objlim_spin.setRange(1.0, 20.0)
+        self.cosmic_objlim_spin.setSingleStep(0.1)
+        self.cosmic_objlim_spin.setToolTip("Contrast limit between cosmic ray and underlying object.")
+        cosmic_layout.addRow("Object Limit:", self.cosmic_objlim_spin)
+
+        self.cosmic_gain_spin = QDoubleSpinBox()
+        self.cosmic_gain_spin.setRange(0.0, 10.0)
+        self.cosmic_gain_spin.setSingleStep(0.1)
+        self.cosmic_gain_spin.setToolTip("Detector gain. Set to 0.0 to auto-detect from config.")
+        cosmic_layout.addRow("Gain:", self.cosmic_gain_spin)
 
         cosmic_group.setLayout(cosmic_layout)
         layout.addRow(cosmic_group)
@@ -807,9 +816,10 @@ class SettingsDialog(QDialog):
         self.bg_mask_margin_spin.setValue(self.config.get_int('reduce.background', 'mask_margin_pixels', 1))
         self.bg_bspline_smooth_spin.setValue(self.config.get_float('reduce.background', 'bspline_smooth', 1.0))
         self._update_bg_params_enabled()
-        self.cosmic_enabled_check.setChecked(self.config.get_bool('reduce', 'cosmic_enabled', True))
-        self.cosmic_sigma_spin.setValue(self.config.get_float('reduce', 'cosmic_sigma', 5.0))
-        self.cosmic_window_spin.setValue(self.config.get_int('reduce', 'cosmic_window', 5))
+        self.cosmic_enabled_check.setChecked(self.config.get_bool('reduce', 'cosmic_enabled', 'yes'))
+        self.cosmic_sigclip_spin.setValue(self.config.get_float('reduce', 'cosmic_sigclip', 5.0))
+        self.cosmic_objlim_spin.setValue(self.config.get_float('reduce', 'cosmic_objlim', 5.0))
+        self.cosmic_gain_spin.setValue(self.config.get_float('reduce', 'cosmic_gain', 1.0))
 
         # Wavelength Calibration tab
         self.linelist_combo.setCurrentText(self.config.get('telescope.linelist', 'linelist_type', 'ThAr'))
@@ -909,8 +919,9 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.background', 'mask_margin_pixels', str(self.bg_mask_margin_spin.value()))
             self.config.set('reduce.background', 'bspline_smooth', str(self.bg_bspline_smooth_spin.value()))
             self.config.set('reduce', 'cosmic_enabled', 'yes' if self.cosmic_enabled_check.isChecked() else 'no')
-            self.config.set('reduce', 'cosmic_sigma', str(self.cosmic_sigma_spin.value()))
-            self.config.set('reduce', 'cosmic_window', str(self.cosmic_window_spin.value()))
+            self.config.set('reduce', 'cosmic_sigclip', str(self.cosmic_sigclip_spin.value()))
+            self.config.set('reduce', 'cosmic_objlim', str(self.cosmic_objlim_spin.value()))
+            self.config.set('reduce', 'cosmic_gain', str(self.cosmic_gain_spin.value()))
 
             # Wavelength Calibration tab
             self.config.set('telescope.linelist', 'linelist_type', self.linelist_combo.currentText())

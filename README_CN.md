@@ -20,14 +20,14 @@
 
 **8 阶段自动化光谱处理**：
 
-1. **过扫描校正** - 过扫描改正（所有图像）
-2. **偏置减除** - 本底减除（使用均值/中值合并）
-3. **平场改正与阶序追踪** - 平场改正与阶序追踪
-4. **背景扣除** - 扣除级间散射光
-5. **宇宙线去除** - 使用 L.A.Cosmic 算法去除宇宙线（仅科学图像）
-6. **一维谱提取** - 提取一维光谱
-7. **波长定标** - 波长定标（对提取的 1D 光谱应用）
-8. **Blaze 函数改正** - Blaze 函数改正
+1. **基础预处理 (Basic Pre-processing)** - 过扫描、本底扣除和宇宙线校正
+2. **阶序追踪 (Orders Tracing)** - 生成主平场和阶梯光栅阶序追踪
+3. **散射光扣除 (Scattered Light Subtraction)** - 阶序间背景建膜与扣除
+4. **二维平场校正 (2D Flat-Field Correction)** - 像素到像素的平场校正
+5. **一维光谱提取 (1D Spectrum Extraction)** - 提取一维光谱（求和或最优提取）
+6. **闪耀函数改正 (De-blazing)** - Blaze 函数校正
+7. **波长定标 (Wavelength Calibration)** - 波长定标（应用于去 Blaze 后的光谱）
+8. **阶序拼接 (Order Stitching)** - 合并重叠的阶序为连续的一维光谱
 
 ### 图形界面
 
@@ -542,7 +542,7 @@ flowchart TD
   - 从图像减去 overscan 偏置
   - 合并多个 bias 帧（均值/中值）
   - 生成 master bias
-  - 从 science/flat/ThAr 图像减去 master bias
+  - 从 science/flat/ThAr 减去 master bias
   - 使用 L.A.Cosmic 算法检测并去除宇宙线（仅限科学图像）
 - **输出**：完成预处理的图像
 - **说明**：在追踪和提取之前的基本物理校正。
@@ -587,7 +587,7 @@ flowchart TD
 #### 第6步：闪耀函数改正 (De-blazing)
 - **输入**：像素空间的一维光谱
 - **处理**：
-  - 从平场读取 blaze 函数（第2步）
+  - 从平场读取 blaze 函数（在像素空间）
   - 匹配阶序
   - 除以 blaze 函数：F_corrected(λ) = F_observed(λ) / B(λ)
   - 归一化到单位连续谱
@@ -595,7 +595,7 @@ flowchart TD
 - **说明**：消除光谱仪光栅衍射效率分布的影响。
 
 #### 第7步：波长定标 (Wavelength Calibration)
-- **输入**：闪耀函数校正后的一维光谱
+- **输入**：经闪耀函数校正的一维光谱（像素空间）
 - **处理**：
   - 第一步：定标 ThAr 灯谱
     - 提取 1D 光谱
@@ -603,8 +603,8 @@ flowchart TD
     - 拟合 2D 波长多项式 λ(x,y) = Σ p_ij·x^i·y^j
   - 第二步：应用到科学光谱
     - 将像素坐标转换为波长单位
-- **输出**：带波长信息的一维光谱
-- **说明**：建立物理波长刻度。
+- **输出**：带波长信息的一维光谱 (wavelength space)
+- **说明**：为去 Blaze 后的光谱建立物理波长刻度。
 
 #### 第8步：阶序拼接 (Order Stitching)
 - **输入**：带波长信息的一维光谱
@@ -799,7 +799,7 @@ SpecProc/
 │   ├── gui/                     # GUI 模块
 │   ├── core/                    # 核心处理
 │   ├── config/                  # 配置管理
-│   ├── utils/                   # 工具函数
+│   ├── utils/                   # 工具函数 
 │   └── plotting/                # 绘图功能
 ├── install.sh                   # 安装脚本
 ├── requirements.txt              # Python 依赖

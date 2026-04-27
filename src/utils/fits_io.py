@@ -95,6 +95,12 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
         # Create primary HDU
         hdu = fits.PrimaryHDU(data=data)
 
+        # If writing to a float format, remove BZERO and BSCALE to prevent incorrect scaling
+        # by FITS readers. These keywords are for scaling integers.
+        if data.dtype.kind == 'f' and header:
+            if 'BZERO' in header: del header['BZERO']
+            if 'BSCALE' in header: del header['BSCALE']
+
         # Add header keywords
         if header:
             for key, value in header.items():
@@ -103,6 +109,11 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
                     # that causes issues with astropy, and are not critical for processing
                     if key.upper() in ('COMMENT', 'HISTORY'):
                         continue
+
+                    # astropy.io.fits considers a single dot as an illegal value.
+                    # Replace it with an empty string, which is valid.
+                    if isinstance(value, str) and value.strip() == '.':
+                        value = ''
                     
                     # Clean up non-ASCII characters for FITS header values
                     if isinstance(value, str):

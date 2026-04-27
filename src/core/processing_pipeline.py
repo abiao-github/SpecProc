@@ -453,40 +453,30 @@ class ProcessingPipeline:
         try:
             # Reuse the shared Step 1 cosmic detector so selected-step execution
             # and full-pipeline execution behave consistently.
-            from src.core.basic_reduction import _detect_cosmics, _fix_cosmics
-
-            cosmic_sigma = self.config.get_float('reduce', 'cosmic_sigma', 5.0)
-            cosmic_window = self.config.get_int('reduce', 'cosmic_window', 5)
-            cosmic_fine_sigma = self.config.get_float('reduce', 'cosmic_fine_sigma', 2.0)
-            cosmic_line_sigma = self.config.get_float('reduce', 'cosmic_line_sigma', 1.5)
-            cosmic_grow_sigma = self.config.get_float('reduce', 'cosmic_grow_sigma', 2.5)
-            cosmic_maxsize = self.config.get_int('reduce', 'cosmic_maxsize', 8)
-
-            cosmic_mask = _detect_cosmics(
-                science_image,
-                sigma=cosmic_sigma,
-                window=cosmic_window,
-                fine_sigma=cosmic_fine_sigma,
-                line_sigma=cosmic_line_sigma,
-                grow_sigma=cosmic_grow_sigma,
-                maxsize=cosmic_maxsize,
-            )
-
-            logger.info(
-                f"Detected {np.sum(cosmic_mask)} cosmic ray affected pixels "
-                f"(sigma={cosmic_sigma}, window={cosmic_window}, fine_sigma={cosmic_fine_sigma}, "
-                f"line_sigma={cosmic_line_sigma})"
-            )
-
-            corrected_image = _fix_cosmics(science_image, cosmic_mask, window=cosmic_window)
+            cosmic_kwargs = {
+                'cosmic_sigclip': self.config.get_float('reduce', 'cosmic_sigclip', 5.0),
+                'cosmic_objlim': self.config.get_float('reduce', 'cosmic_objlim', 5.0),
+                'cosmic_gain': self.config.get_float('reduce', 'cosmic_gain', 1.0),
+                'cosmic_readnoise': self.config.get_float('reduce', 'cosmic_readnoise', 5.0),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
 
             out_dir = Path(self.config.get_output_path()) / 'step1_basic' / 'cosmic_corrected'
             out_dir.mkdir(parents=True, exist_ok=True)
-            write_fits_image(
-                str(out_dir / f'{science_name}_science_cosmic_corrected.fits'),
-                corrected_image.astype(np.float32),
-                dtype='float32'
+            
+            # Create a temporary file to pass to process_cosmic_stage
+            temp_input_path = out_dir / f"{science_name}_precosmic.fits"
+            write_fits_image(str(temp_input_path), science_image, dtype='float32')
+
+            corrected_files = process_cosmic_stage(
+                [str(temp_input_path)],
+                output_dir_base=self.config.get_output_path(),
+                **cosmic_kwargs
             )
+            
+            corrected_image, _ = read_fits_image(corrected_files[0])
+            temp_input_path.unlink() # Clean up temporary file
 
             if self.config.get_bool('reduce', 'save_plots', True):
                 fig_format = self.config.get('reduce', 'fig_format', 'png')
@@ -497,8 +487,7 @@ class ProcessingPipeline:
                 )
 
             self._report_progress(0.48, "Cosmic Ray Correction Complete")
-            logger.info(f"✓ Cosmic ray correction complete: "
-                       f"{np.sum(cosmic_mask)} pixels corrected")
+            logger.info("✓ Cosmic ray correction complete")
 
             return corrected_image
 

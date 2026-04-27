@@ -268,13 +268,13 @@ class FlatFieldProcessor:
         logger.info("Detecting grating orders (simple tracing)...")
 
         # Use the simplified grating order tracing method
-        apertures = find_grating_orders_simple(
+        apertures = _find_grating_orders_impl(
             data=self.flat_data,
             mask=self.flat_mask,
             snr_threshold=snr_threshold,
             step_denominator=step_denominator,
             gap_fill_factor=gap_fill_factor,
-            gap_fill_snr=gap_fill_snr,
+            gap_fill_snr=gap_fill_snr, 
             min_trace_coverage=min_trace_coverage,
             trace_degree=trace_degree,
             output_dir_base=output_dir_base
@@ -2688,6 +2688,921 @@ def fill_missing_orders_by_interpolation(
 
     logger.info(f"Interpolation gap-fill: {n_filled} order(s) added, total {filled.norders} orders")
     return filled
+
+
+# ======================================================================
+# MERGED ALGORITHM KERNEL FROM grating_trace_simple.py
+# ======================================================================
+
+
+"""
+Simple grating order tracing for spectral reduction pipeline.
+
+Handles order detection and tracing for grating spectrographs,
+where orders run horizontally (left to right) across the detector.
+"""
+
+from scipy.signal import find_peaks, peak_widths
+
+
+def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = None,
+                             snr_threshold: float = 5.0,
+                             step_denominator: int = 20,
+                             gap_fill_factor: float = 1.35,
+                             gap_fill_snr: float = 2.5,
+                             min_trace_coverage: float = 0.20,
+                             trace_degree: int = 4,
+                             output_dir_base: str = '') -> ApertureSet:
+    """
+    Find the positions of grating orders on a CCD image.
+
+    This is a simplified algorithm for grating spectrographs where orders
+    run horizontally (left to right) across the detector.
+
+    Args:
+        data: Image data (2D array)
+        mask: Optional bad pixel mask (same shape as data)
+        snr_threshold: Detection threshold (multiples of sigma above profile baseline)
+        gap_fill_factor: Factor for gap detection (gap > factor * predicted → missing).
+        gap_fill_snr: SNR threshold for faint-order gap filling.
+        min_trace_coverage: Minimum fraction of detector width a traced
+            order must cover to be accepted.
+        trace_degree: Polynomial degree for center tracing.
+        output_dir_base: Output directory for diagnostic plots.
+
+    Returns:
+        ApertureSet with detected orders
+    """
+    if mask is None:
+        mask = np.zeros_like(data, dtype=np.int32)
+
+    h, w = data.shape
+
+    logger.info(f"Finding grating orders in image of shape {data.shape}")
+
+    img = np.asarray(data, dtype=np.float64)
+
+    x_center = w // 2
+    half_band = max(5, w // 20)
+    x1 = max(0, x_center - half_band)
+    x2 = min(w, x_center + half_band + 1)
+    # Use LINEAR profile for seeding so the SNR threshold perfectly matches
+    # the physical ADU SNR definition.
+    center_profile = np.median(img[:, x1:x2], axis=1)
+    center_profile = gaussian_filter1d(center_profile, sigma=1.5)
+
+    # -------------------------------------------------------------------------
+    # Auto-estimate dynamic order separation (Blind Peak Finding & Curve Fit)
+    # -------------------------------------------------------------------------
+    smooth_prof = gaussian_filter1d(center_profile, sigma=2.0)
+    p99 = np.nanpercentile(smooth_prof, 99)
+    rough_peaks, _ = find_peaks(smooth_prof, distance=5, prominence=max(5.0, p99 * 0.02))
+    
+    med_sep = 30.0
+    def _fallback_sep(y): return med_sep
+    local_sep_func = _fallback_sep
+
+    if len(rough_peaks) >= 5:
+        diffs = np.diff(rough_peaks)
+        mids = 0.5 * (rough_peaks[:-1] + rough_peaks[1:])
+        med_sep = float(np.median(diffs))
+
+        # --- UnivariateSpline整体平滑 ---
+        from scipy.interpolate import UnivariateSpline
+
+        # 对间距做整体平滑
+        s_factor = 0.5 * len(diffs)  # 平滑度参数，可根据实际调整
+        try:
+            spline = UnivariateSpline(mids, diffs, s=s_factor)
+            def _dynamic_sep(y):
+                return float(spline(y))
+            local_sep_func = _dynamic_sep
+            _inlier_min = float(np.min(diffs))
+            _inlier_max = float(np.max(diffs))
+            logger.info(f"Auto-estimated dynamic separation (UnivariateSpline): median={med_sep:.1f} px, s={s_factor}")
+        except Exception as e:
+            logger.warning(f"Spline fit failed: {e}, fallback to median separation.")
+            local_sep_func = lambda y: med_sep
+            _inlier_min = med_sep * 0.5
+            _inlier_max = med_sep * 2.0
+    else:
+        logger.warning(f"Auto-estimation of separation failed, using fallback: {med_sep:.1f} px")
+
+    # 1. Tracing controls (all explicit parameters now)
+    fill_missing_orders = True
+
+    # 2. Background Envelope Estimation
+    # Use a large-scale rolling minimum to capture the background base.
+    from scipy.ndimage import minimum_filter1d
+    bg_size = int(2.5 * med_sep)
+    envelope = minimum_filter1d(center_profile, size=bg_size)
+    envelope = gaussian_filter1d(envelope, sigma=bg_size/4.0) # Smooth it
+    
+    # 3. Background-subtracted profile for seeding
+    seed_pure = center_profile - envelope
+    
+    # Robust noise estimation on the residual
+    def _estimate_prof_noise(prof):
+        valid_prof = prof[np.isfinite(prof)]
+        if len(valid_prof) < 10:
+            return 1.0, 0.0
+            
+        # 1. Baseline estimation: bottom 25%
+        sorted_prof = np.sort(valid_prof)
+        bg_pixels = sorted_prof[:max(10, len(sorted_prof) // 4)]
+        s_med = float(np.nanmedian(bg_pixels))
+        
+        # 2. Intrinsic noise estimation via MAD of differences
+        diffs = np.diff(valid_prof)
+        s_sig = float(np.nanmedian(np.abs(diffs)) / 0.9539) # sqrt(2)*0.6745
+        
+        return max(s_sig, 0.1), s_med
+
+    noise, baseline = _estimate_prof_noise(seed_pure)
+    seed_profile = seed_pure # Use the pure signal for peak finding
+    
+    prof_max = float(np.max(seed_profile))
+
+    # Seeding threshold: single robust SNR-based gate
+    det_threshold = baseline + snr_threshold * noise
+    min_dist = max(3, int(med_sep * 0.20)) 
+
+    peaks, _ = find_peaks(
+        seed_profile,
+        height=det_threshold,
+        distance=min_dist,
+        prominence=max(0.8 * noise, 0.15 * snr_threshold * noise),
+    )
+
+    logger.info(
+        f"Found {len(peaks)} seed peaks (SNR > {snr_threshold:.1f}, "
+        f"baseline={baseline:.4f}, noise={noise:.4f})"
+    )
+    
+    if len(peaks) > 0:
+        # Diagnostic: check the faintest detected peak and first peak region
+        pk_vals = seed_profile[peaks]
+        min_pk_idx = np.argmin(pk_vals)
+        first_pk = int(peaks[0])
+        
+        logger.info(
+            f"Faintest seed: y={peaks[min_pk_idx]}, val={pk_vals[min_pk_idx]:.4f}, "
+            f"SNR={(pk_vals[min_pk_idx]-baseline)/(noise+1e-6):.2f}"
+        )
+        # Show what's below the first peak.
+        check_y = max(0, first_pk - int(med_sep))
+        for yy in range(check_y, first_pk):
+            if seed_profile[yy] > baseline + 0.3 * noise:
+                logger.info(
+                    f"  Below-first: y={yy}, val={seed_profile[yy]:.4f}, "
+                    f"SNR={(seed_profile[yy]-baseline)/(noise+1e-6):.2f}"
+                )
+
+    peaks = np.asarray(sorted(peaks), dtype=int)
+
+    # -------------------------------------------------------------------------
+    # 4. Fill missed weak orders in 1D cross-section
+    # -------------------------------------------------------------------------
+    if fill_missing_orders and len(peaks) >= 2:
+        # User requirement: use 2.5 sigma for faint blind guessing.
+        gap_fill_snr = max(2.5, gap_fill_snr)
+
+        logger.info(
+            f"Gap-fill analysis: {len(peaks)} seeds, global median_sep={med_sep:.1f}px, "
+            f"gap_fill_factor=1.30, gap_fill_snr={gap_fill_snr:.2f}"
+        )
+
+        # Internal gap filling using curve
+        if np.isfinite(med_sep) and med_sep > 2:
+            inserted = []
+            for i in range(len(peaks) - 1):
+                left, right = peaks[i], peaks[i + 1]
+                gap = right - left
+                expected_sep = local_sep_func(0.5 * (left + right))
+                ratio = gap / expected_sep
+                
+                # Gap > 1.3 curve prediction -> Missing orders
+                if gap > 1.30 * expected_sep:
+                    n_missing = int(round(gap / expected_sep)) - 1
+                    if n_missing < 1: 
+                        n_missing = 1
+                    logger.info(
+                        f"Gap-fill: gap between y={left} and y={right} "
+                        f"is {gap}px ({ratio:.2f}x expected {expected_sep:.1f}), inserting {n_missing} candidate(s)"
+                    )
+                    for k in range(1, n_missing + 1):
+                        guess = int(round(left + k * gap / (n_missing + 1)))
+                        win = max(5, int(0.55 * expected_sep))
+                        y1 = max(0, guess - win)
+                        y2 = min(h, guess + win + 1)
+                        if y2 - y1 < 3:
+                            continue
+                        seg = seed_profile[y1:y2]
+                        seg_med = float(np.median(seg))
+                        seg_mad = float(np.median(np.abs(seg - seg_med)))
+                        seg_noise = 1.4826 * seg_mad if seg_mad > 0 else float(np.std(seg - seg_med))
+                        
+                        loc = int(np.argmax(seg))
+                        cand = y1 + loc
+                        cand_val = seg[loc]
+                        
+                        if seg_noise > 0 and cand_val < (seg_med + gap_fill_snr * seg_noise):
+                            logger.debug(
+                                f"  Gap-fill candidate y={cand}: rejected "
+                                f"(SNR={(cand_val-seg_med)/(seg_noise+1e-6):.1f} < {gap_fill_snr})"
+                            )
+                            continue
+                            
+                        # Avoid duplicates
+                        if np.all(np.abs(peaks - cand) > max(3, int(0.30 * expected_sep))):
+                            inserted.append(cand)
+                            logger.info(f"  Gap-fill candidate y={cand}: ACCEPTED (SNR={(cand_val-seg_med)/(seg_noise+1e-6):.1f})")
+
+            # Edge extrapolation
+            min_sep = max(3, int(0.30 * med_sep))
+
+            left_ref = int(peaks[0])
+            local_sep_bottom = local_sep_func(left_ref)
+            edge_win_bottom = max(5, int(0.80 * local_sep_bottom))
+            logger.info(
+                f"Edge-fill (bottom) starting: left_ref=y{left_ref}, "
+                f"local_sep={local_sep_bottom:.1f}, edge_win={edge_win_bottom}"
+            )
+            while left_ref - local_sep_func(left_ref) * 0.5 > 0:
+                step_sep = local_sep_func(left_ref)
+                edge_win = max(5, int(0.80 * step_sep))
+                guess = int(round(left_ref - step_sep))
+                if guess < 0:
+                    guess = max(0, left_ref // 2)
+                y1 = max(0, guess - edge_win)
+                y2 = min(h, guess + edge_win + 1)
+                if y2 - y1 < 3:
+                    break
+                seg = seed_profile[y1:y2]
+                cand = y1 + int(np.argmax(seg))
+                seg_med = float(np.median(seg))
+                seg_mad = float(np.median(np.abs(seg - seg_med)))
+                seg_noise = 1.4826 * seg_mad if seg_mad > 0 else float(np.std(seg - seg_med))
+                cand_val = float(seed_profile[cand])
+                threshold = seg_med + snr_threshold * seg_noise
+                logger.info(
+                    f"  Edge-fill (bottom): guess=y{guess}, window=[{y1},{y2}], "
+                    f"argmax→y{cand}, val={cand_val:.4f}, "
+                    f"seg_med={seg_med:.4f}, seg_noise={seg_noise:.4f}, "
+                    f"threshold={threshold:.4f} ({snr_threshold:.1f}σ), left_ref=y{left_ref}"
+                )
+                if seg_noise > 0 and cand_val >= threshold:
+                    if np.all(np.abs(peaks - cand) > min_sep):
+                        inserted.append(cand)
+                        logger.info(
+                            f"Edge-fill (bottom): y={cand} ACCEPTED "
+                            f"(val={cand_val:.3f} >= {threshold:.3f})"
+                        )
+                        left_ref = cand
+                        continue
+                logger.debug(
+                    f"Edge-fill (bottom): y={cand} rejected "
+                    f"(val={cand_val:.3f} < {threshold:.3f})"
+                )
+                break
+
+            right_ref = int(peaks[-1])
+            local_sep_top = local_sep_func(right_ref)
+            edge_win_top = max(5, int(0.80 * local_sep_top))
+            logger.info(
+                f"Edge-fill (top) starting: right_ref=y{right_ref}, "
+                f"local_sep={local_sep_top:.1f}, edge_win={edge_win_top}"
+            )
+            while right_ref + local_sep_func(right_ref) * 0.5 < h:
+                step_sep = local_sep_func(right_ref)
+                edge_win = max(5, int(0.80 * step_sep))
+                guess = int(round(right_ref + step_sep))
+                if guess >= h:
+                    break
+                y1 = max(0, guess - edge_win)
+                y2 = min(h, guess + edge_win + 1)
+                if y2 - y1 < 3:
+                    break
+                seg = seed_profile[y1:y2]
+                cand = y1 + int(np.argmax(seg))
+                seg_med = float(np.median(seg))
+                seg_mad = float(np.median(np.abs(seg - seg_med)))
+                seg_noise = 1.4826 * seg_mad if seg_mad > 0 else float(np.std(seg - seg_med))
+                cand_val = float(seed_profile[cand])
+                threshold = seg_med + snr_threshold * seg_noise
+                if seg_noise > 0 and cand_val >= threshold:
+                    if np.all(np.abs(peaks - cand) > min_sep):
+                        inserted.append(cand)
+                        logger.info(
+                            f"Edge-fill (top): y={cand} ACCEPTED "
+                            f"(val={cand_val:.3f} >= {threshold:.3f}, {snr_threshold:.1f}σ)"
+                        )
+                        right_ref = cand
+                        continue
+                logger.debug(
+                    f"Edge-fill (top): y={cand} rejected "
+                    f"(val={cand_val:.3f} < {threshold:.3f})"
+                )
+                break
+
+            if inserted:
+                peaks = np.asarray(sorted(np.concatenate([peaks, np.array(inserted, dtype=int)])), dtype=int)
+                logger.info(f"Inserted {len(inserted)} missing-order seed(s) by gap filling")
+
+    if len(peaks) == 0:
+        logger.warning("No order peaks detected; lower threshold or check flat exposures")
+        return ApertureSet()
+
+    def refine_peak_y(col: np.ndarray, y_guess: float, search_half: int) -> Optional[float]:
+        y0 = int(round(y_guess))
+        y1 = max(0, y0 - search_half)
+        y2 = min(h, y0 + search_half + 1)
+        if y2 - y1 < 5:
+            return None
+
+        segment = col[y1:y2]
+        loc = int(np.argmax(segment))
+        peak_val = float(segment[loc])
+        if not np.isfinite(peak_val) or peak_val <= 0:
+            return None
+
+        # Linear space intensity-weighted centroid
+        bg = 0.5 * (float(segment[0]) + float(segment[-1]))
+        sub_flux = segment.astype(float) - bg
+        core_mask = sub_flux > 0.2 * (peak_val - bg)
+        
+        if np.sum(core_mask) >= 3:
+            yy = np.arange(y1, y2, dtype=float)[core_mask]
+            weights = sub_flux[core_mask]
+            sum_w = np.sum(weights)
+            if sum_w > 0:
+                return float(np.sum(yy * weights) / sum_w)
+
+        # Fallback
+        return float(y1 + loc)
+
+    def trace_order(seed_y: float) -> tuple:
+        # Trace every column so the downstream sigma-clipping and Chebyshev fit
+        # have dense coverage; faint-order wings use prediction + rejection to
+        # avoid locking onto neighbouring orders.
+        local_sep = local_sep_func(seed_y)
+        search_half = max(4, int(local_sep * 0.45))
+
+        # Refine the starting seed position to sub-pixel accuracy before tracing
+        refined_y = refine_peak_y(img[:, x_center], seed_y, search_half)
+        start_y = refined_y if refined_y is not None else float(seed_y)
+
+        xs = [float(x_center)]
+        ys = [start_y]
+
+        # right
+        y_prev = start_y
+        miss_count = 0
+        right_x = [float(x_center)]
+        right_y = [start_y]
+        for x in range(x_center + 1, w):
+            if len(right_x) >= 4:
+                recent_x = np.asarray(right_x[-4:], dtype=float)
+                recent_y = np.asarray(right_y[-4:], dtype=float)
+                coef1 = np.polyfit(recent_x, recent_y, deg=1)
+                y_guess = float(np.polyval(coef1, x))
+            else:
+                y_guess = y_prev
+
+            y_new = refine_peak_y(img[:, x], y_guess, search_half)
+            if y_new is None:
+                miss_count += 1
+                if miss_count > 10:
+                    break
+                continue
+
+            if abs(y_new - y_guess) > search_half:
+                miss_count += 1
+                if miss_count > 10:
+                    break
+                continue
+
+            xs.append(x)
+            ys.append(y_new)
+            right_x.append(float(x))
+            right_y.append(float(y_new))
+            y_prev = y_new
+            miss_count = 0
+
+        # left
+        y_prev = start_y
+        miss_count = 0
+        left_x = [float(x_center)]
+        left_y = [start_y]
+        for x in range(x_center - 1, -1, -1):
+            if len(left_x) >= 4:
+                recent_x = np.asarray(left_x[-4:], dtype=float)
+                recent_y = np.asarray(left_y[-4:], dtype=float)
+                coef1 = np.polyfit(recent_x, recent_y, deg=1)
+                y_guess = float(np.polyval(coef1, x))
+            else:
+                y_guess = y_prev
+
+            y_new = refine_peak_y(img[:, x], y_guess, search_half)
+            if y_new is None:
+                miss_count += 1
+                if miss_count > 10:
+                    break
+                continue
+
+            if abs(y_new - y_guess) > search_half:
+                miss_count += 1
+                if miss_count > 10:
+                    break
+                continue
+
+            xs.append(x)
+            ys.append(y_new)
+            left_x.append(float(x))
+            left_y.append(float(y_new))
+            y_prev = y_new
+            miss_count = 0
+
+        xs = np.asarray(xs, dtype=float)
+        ys = np.asarray(ys, dtype=float)
+        idx = np.argsort(xs)
+        return xs[idx], ys[idx]
+
+    def estimate_order_width(xs: np.ndarray, ys: np.ndarray, local_sep: float) -> float:
+        """Estimate aperture width from local FWHM samples along the traced order."""
+        if xs.size == 0:
+            return float(local_sep)
+
+        sample_idx = np.linspace(0, xs.size - 1, num=min(24, xs.size), dtype=int)
+        widths = []
+        search_half = max(8, int(0.8 * local_sep))
+
+        for i in sample_idx:
+            x = int(round(xs[i]))
+            yc = float(ys[i])
+            y1 = max(0, int(np.floor(yc - search_half)))
+            y2 = min(h, int(np.ceil(yc + search_half + 1)))
+            if y2 - y1 < 7:
+                continue
+
+            prof = img[y1:y2, x]
+            pmax = np.max(prof)
+            if not np.isfinite(pmax) or pmax <= 0:
+                continue
+            half = 0.5 * pmax
+
+            iy = int(np.argmax(prof))
+            l = iy
+            while l > 0 and prof[l] > half:
+                l -= 1
+            r = iy
+            while r < prof.size - 1 and prof[r] > half:
+                r += 1
+
+            fwhm = float(r - l)
+            if 2.0 <= fwhm <= 2.5 * local_sep:
+                widths.append(fwhm)
+
+        if not widths:
+            return float(local_sep)
+
+        # Use aperture full width ~ 1.8*FWHM, clipped to sensible range.
+        width = 1.8 * float(np.median(widths))
+        width = float(np.clip(width, 6.0, 2.2 * local_sep))
+        return width
+
+    def _fit_center_to_coefs(x_vals: np.ndarray, y_vals: np.ndarray, 
+                             degree: int, domain: tuple) -> np.ndarray:
+        """Fit center using Chebyshev and return coefficients (ascending)."""
+        x = np.asarray(x_vals, dtype=float)
+        y = np.asarray(y_vals, dtype=float)
+        
+        if x.size < 4:
+            return None
+
+        deg = max(1, int(min(degree, max(1, x.size - 2))))
+        cheb = Chebyshev.fit(x, y, deg=deg, domain=domain)
+        return np.array(cheb.coef, dtype=float)
+    def _fit_boundary_coeff(x_vals: np.ndarray, y_vals: np.ndarray,
+                            degree: int, domain: tuple) -> np.ndarray:
+        """Fit a smooth boundary using Chebyshev polynomials with robust outlier rejection."""
+        x = np.asarray(x_vals, dtype=float)
+        y = np.asarray(y_vals, dtype=float)
+        if x.size < 4:
+            return None
+        
+        deg = max(1, int(min(degree, max(1, x.size - 2))))
+        try:
+            # Iterative fit to handle outliers near detector edges
+            cheb_obj = Chebyshev.fit(x, y, deg=deg, domain=domain)
+            for _ in range(4):
+                res = y - cheb_obj(x)
+                s = np.std(res)
+                if s <= 0.02: break
+                good = np.abs(res) < 3.0 * s
+                if np.sum(good) < deg + 2: break
+                cheb_obj = Chebyshev.fit(x[good], y[good], deg=deg, domain=domain)
+            return np.array(cheb_obj.coef, dtype=float)
+        except:
+            return None
+
+    # 3. Tracing controls (all explicit parameters now)
+    fill_missing_orders = True
+
+    def _build_moffat_boundaries(cands: list,
+                                   flux_fraction: float = 0.02,
+                                   fwhm_scale: float = 1.5) -> None:
+        """Determine order boundaries via two-step Moffat fitting.
+
+        Step 1: For each sample column, use the traced center position as the
+                peak.  Walk outward from that center in the log-compressed
+                cross-section until the signal drops to *flux_fraction* × peak.
+                This gives an initial lower/upper bracket.
+        Step 2: Background = average of profile values at the two bracket
+                positions.  Fit a Moffat profile to the background-subtracted
+                cross-section within the bracket.
+                Final boundary = fitted_center ± fwhm_scale × FWHM.
+                Falls back to the Step-1 bracket when fitting fails.
+        """
+        from scipy.optimize import curve_fit
+
+        def _moffat1d(y, y_c, I0, gamma, beta):
+            return I0 * (1.0 + ((y - y_c) / gamma) ** 2) ** (-beta)
+
+        if not cands:
+            return
+
+        x_samples = np.linspace(0, w - 1, num=min(128, w), dtype=int)
+
+        for cand in cands:
+            c_coef = cand['center_coef']
+            c_model = Chebyshev(c_coef, domain=(0, w - 1))
+            local_sep = local_sep_func(cand['y_center'])
+            is_reg = cand.get('is_regularized', False)
+
+            xl, yl, xu, yu = [], [], [], []
+            xc, yc = [], []
+            half_win = max(8, int(0.6 * local_sep))
+
+            for x in x_samples:
+                yc_float = float(c_model(x))          # traced center = peak
+                y0 = int(round(yc_float))
+                y1 = max(0, y0 - half_win)
+                y2 = min(h, y0 + half_win + 1)
+                if y2 - y1 < 5:
+                    continue
+
+                prof = img[y1:y2, x].astype(float)
+                n = len(prof)
+                mid_idx = max(0, min(n - 1, y0 - y1))  # center in local coords
+                peak_val = float(prof[mid_idx])
+
+                # ── Step 1: bracket at flux_fraction × peak ───────────────────
+                threshold = flux_fraction * peak_val
+
+                low_idx = 0
+                for j in range(mid_idx, -1, -1):
+                    if prof[j] <= threshold:
+                        low_idx = j
+                        break
+
+                up_idx = n - 1
+                for j in range(mid_idx, n):
+                    if prof[j] <= threshold:
+                        up_idx = j
+                        break
+
+                # ── Step 2: Moffat fit within bracket ─────────────────────────
+                bg = 0.5 * (float(prof[low_idx]) + float(prof[up_idx]))
+                seg_y = np.arange(low_idx, up_idx + 1, dtype=float)
+                seg_f = np.maximum(prof[low_idx:up_idx + 1] - bg, 0.0)
+
+                fwhm_final = None
+                yc_fit = float(mid_idx)
+
+                try:
+                    if len(seg_y) >= 5 and (peak_val - bg) > 0:
+                        I0_guess = max(float(peak_val - bg), 1e-6)
+                        gamma_guess = max(1.0, (up_idx - low_idx) / 4.0)
+                        p0 = [float(mid_idx), I0_guess, gamma_guess, 2.5]
+                        b_lo = [float(low_idx), 0.0, 0.3, 0.5]
+                        b_hi = [float(up_idx), I0_guess * 5.0,
+                                float(up_idx - low_idx), 10.0]
+                        popt, _ = curve_fit(
+                            _moffat1d, seg_y, seg_f,
+                            p0=p0, bounds=(b_lo, b_hi),
+                            maxfev=3000
+                        )
+                        yc_fit, _I0f, gamma_fit, beta_fit = popt
+                        if beta_fit > 0.5 and gamma_fit > 0.3:
+                            fwhm_final = 2.0 * gamma_fit * np.sqrt(
+                                2.0 ** (1.0 / beta_fit) - 1.0)
+                except Exception:
+                    pass
+
+                if fwhm_final is not None and 1.0 <= fwhm_final <= local_sep:
+                    # Moffat fit is good, trust its center even for faint orders
+                    y_center_actual = float(y1 + yc_fit)
+                    half_bnd = fwhm_scale * fwhm_final
+                    y_lo = y_center_actual - half_bnd
+                    y_hi = y_center_actual + half_bnd
+                else:
+                    # Moffat fit failed or is unreliable, stick to the polynomial trace
+                    y_center_actual = yc_float
+                    # Fallback to Step-1 bracket, forced symmetric for faint orders
+                    if is_reg:
+                        half_bnd = (up_idx - low_idx) / 2.0
+                        y_lo = y_center_actual - half_bnd
+                        y_hi = y_center_actual + half_bnd
+                    else:
+                        y_lo = float(y1 + low_idx)
+                        y_hi = float(y1 + up_idx)
+
+                xl.append(float(x))
+                yl.append(y_lo)
+                xu.append(float(x))
+                yu.append(y_hi)
+                # Always collect the best available center
+                xc.append(float(x))
+                yc.append(y_center_actual)
+
+            # Upgrade the center trace using the new, more accurate centers
+            if len(xc) >= 5:
+                new_c_coef = _fit_boundary_coeff(np.array(xc), np.array(yc), trace_degree, (0, w - 1))
+                if new_c_coef is not None:
+                    cand['center_coef'] = new_c_coef
+
+            cand['lower_coef'] = _fit_boundary_coeff(
+                np.array(xl), np.array(yl), trace_degree, (0, w - 1))
+            cand['upper_coef'] = _fit_boundary_coeff(
+                np.array(xu), np.array(yu), trace_degree, (0, w - 1))
+
+    def _plot_seeding_diagnostics(out_path):
+        """Plot the seeding profile with envelope and thresholds restored to original state."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(12, 6))
+        y_idx = np.arange(len(center_profile))
+        
+        ax.plot(y_idx, center_profile, color='gray', alpha=0.5, label='Raw Profile (log)')
+        ax.plot(y_idx, envelope, color='blue', linestyle='--', alpha=0.8, label='BG Envelope')
+        
+        det_line = envelope + snr_threshold * noise
+        root_line = envelope + 3.0 * noise
+        
+        ax.plot(y_idx, det_line, color='orange', label=f'Detection ({snr_threshold}σ)')
+        ax.plot(y_idx, root_line, color='green', alpha=0.6, label='Aperture Boundary (3σ)')
+        
+        # Highlight detected peaks
+        if len(peaks) > 0:
+            ax.scatter(peaks, center_profile[peaks], color='red', s=15, zorder=5, label='Seeds')
+            
+        ax.set_title("Order Seeding & Threshold Diagnostics (Restored with Envelope)")
+        ax.set_xlabel("Detector Y (px)")
+        ax.set_ylabel("Intensity (log units)")
+        ax.legend(loc='upper right', fontsize='small')
+        ax.grid(True, alpha=0.2)
+        
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved seeding diagnostics plot to {out_path}")
+
+ # Helpers are defined, execution will happen at the end of the function.
+
+    aperture_set = ApertureSet()
+    candidates = []
+
+    # 读取谱级间距容差参数
+    import configparser
+    spacing_tol = 0.3
+    try:
+        from src.config.config_manager import ConfigManager
+        cfg = ConfigManager()
+        spacing_tol = cfg.get_float('reduce.trace', 'spacing_tol', 0.3)
+    except Exception:
+        pass
+
+    for order_idx, seed in enumerate(peaks):
+        local_sep = local_sep_func(float(seed))
+        x_positions, y_positions = trace_order(float(seed))
+
+        if len(x_positions) < 15:
+            logger.warning(f"Seed {order_idx + 1} (y~{seed:.1f}): Rejected - Not enough traced points ({len(x_positions)} < 15)")
+            continue
+
+        try:
+            # 1. Iterative outlier rejection using一个简单多项式
+            good = np.ones_like(x_positions, dtype=bool)
+            deg_rough = 3
+            for _ in range(3):
+                if np.sum(good) < deg_rough + 2: break
+                coef = np.polyfit(x_positions[good], y_positions[good], deg=deg_rough)
+                resid = y_positions - np.polyval(coef, x_positions)
+                std = np.std(resid[good])
+                if std <= 0.05: break
+                good = np.abs(resid) < 3.0 * std
+
+            if np.sum(good) < 15:
+                logger.warning(f"Seed {order_idx + 1} (y~{seed:.1f}): Rejected - Too few valid points after clipping ({np.sum(good)} < 15)")
+                continue
+
+            # 2. Final Center fitting (Always Chebyshev)
+            center_deg = trace_degree
+            center_coef = _fit_center_to_coefs(x_positions[good], y_positions[good], center_deg, (0, float(w - 1)))
+            if center_coef is None:
+                logger.warning(f"Seed {order_idx + 1} (y~{seed:.1f}): Rejected - Chebyshev center fit failed")
+                continue
+
+            center_model = Chebyshev(center_coef, domain=(0, w - 1))
+            yc_mid = center_model(x_center)
+
+            x_coverage = float(np.max(x_positions[good]) - np.min(x_positions[good]))
+            min_cov_px = float(min_trace_coverage) * w
+            if x_coverage < min_cov_px:
+                logger.warning(f"Seed {order_idx + 1} (y~{seed:.1f}): Rejected - Trace coverage too short ({x_coverage:.0f}px < min {min_cov_px:.0f}px)")
+                continue
+
+
+            width = estimate_order_width(x_positions[good], y_positions[good], local_sep)
+            half_width = width / 2.0
+            lower_coef = np.array([yc_mid - half_width], dtype=float)
+            upper_coef = np.array([yc_mid + half_width], dtype=float)
+
+            candidates.append({
+                'center_coef': center_coef,
+                'lower_coef': lower_coef,
+                'upper_coef': upper_coef,
+                'width': float(width),
+                'n_good': int(np.sum(good)),
+                'fit_rms': float(np.std(y_positions[good] - center_model(x_positions[good]))),
+                'x_coverage': float(x_coverage),
+                'y_center': float(yc_mid),
+                'seed_y': float(seed),
+            })
+
+            logger.info(
+                f"Candidate from seed {order_idx + 1}: points={np.sum(good)}, "
+                f"fit=chebyshev, width={width:.1f}px"
+            )
+
+        except Exception as e:
+            logger.warning(f"Order {order_idx + 1}: Failed polynomial tracing: {e}")
+            continue
+
+    # Merge duplicate candidates that represent the same physical order,
+    # then assign continuous order IDs.
+    # Ensure boundary_frac and fwhm_scale are available in this scope (from function arguments)
+    boundary_frac = boundary_frac if 'boundary_frac' in locals() else 0.02
+    fwhm_scale = fwhm_scale if 'fwhm_scale' in locals() else 1.5
+    if candidates:
+        candidates_sorted = sorted(candidates, key=lambda c: c['y_center'])
+        unique = []
+
+        # 恢复并增强谱级筛选判据
+        if candidates:
+            candidates_sorted = sorted(candidates, key=lambda c: c['y_center'])
+            unique = []
+
+            for idx, cand in enumerate(candidates_sorted):
+                if not unique:
+                    unique.append(cand)
+                    continue
+
+                prev = unique[-1]
+                pred_sep = local_sep_func(0.5 * (cand['y_center'] + prev['y_center']))
+                actual_sep = abs(cand['y_center'] - prev['y_center'])
+                # 输出调试信息
+                logger.info(f"Seed spacing debug: idx={idx}, y1={prev['y_center']:.2f}, y2={cand['y_center']:.2f}, actual={actual_sep:.2f}, predicted={pred_sep:.2f}, ratio={actual_sep/pred_sep:.2f}")
+                # 判据：实际间距小于0.3×预测间距则合并（保留分数高的），大于10.0×预测间距才排除
+                if actual_sep < 0.3 * pred_sep:
+                    prev_score = prev['n_good'] - 2.0 * prev['fit_rms'] + 0.002 * prev['x_coverage']
+                    cand_score = cand['n_good'] - 2.0 * cand['fit_rms'] + 0.002 * cand['x_coverage']
+                    if cand_score > prev_score:
+                        unique[-1] = cand
+                elif actual_sep > 10.0 * pred_sep:
+                    logger.warning(f"Seed at y={cand['y_center']:.1f} rejected: spacing {actual_sep:.2f} > 10.0×predicted {pred_sep:.2f}")
+                    continue
+                else:
+                    unique.append(cand)
+
+        # ---------------------------------------------------------------------
+        # Global Shape Regularization (Prevents faint orders from crossing)
+        # ---------------------------------------------------------------------
+        if len(unique) >= 3:
+            def is_robust_shape(c):
+                # Only use extremely well-traced orders across most of the CCD as global shape anchors.
+                # Loose RMS allows wiggly noise-chasing traces to corrupt the global shape.
+                return (c['x_coverage'] > 0.85 * w) and (c['fit_rms'] < max(1.5, 0.08 * local_sep_func(c['y_center'])))
+
+            robust = [c for c in unique if is_robust_shape(c)]
+            if len(robust) >= 3:
+                max_len = max(len(c['center_coef']) for c in robust)
+                # Ensure robust is strictly sorted by y_center so np.interp works correctly
+                robust_sorted = sorted(robust, key=lambda c: c['y_center'])
+                y_c_robust = np.array([c['y_center'] for c in robust_sorted])
+                coefs_robust = np.array([np.pad(c['center_coef'], (0, max_len - len(c['center_coef']))) for c in robust_sorted])
+                
+                for c in unique:
+                    # 如果该级次本身就很亮且轨迹稳健，则保留其自身真实的光学畸变轨迹
+                    if is_robust_shape(c):
+                        c['is_regularized'] = False
+                        continue
+
+                    c_model_old = Chebyshev(c['center_coef'], domain=(0, w - 1))
+                    # Anchor directly to the robust photometric seed peak found in the median profile
+                    y_anchor = c['y_center']
+                    
+                    new_coef = np.zeros(max_len)
+                    for d in range(1, max_len):
+                        # np.interp guarantees flat extrapolation at edges:
+                        # Faint edge orders will exactly inherit the shape of the outermost bright order.
+                        new_coef[d] = np.interp(y_anchor, y_c_robust, coefs_robust[:, d])
+                        
+                    c_model_new_temp = Chebyshev(new_coef, domain=(0, w - 1))
+                    y_mid_new_temp = c_model_new_temp(x_center)
+                    
+                    # T_0(x) is 1 everywhere, so adjusting c[0] shifts the whole curve exactly
+                    new_coef[0] = y_anchor - y_mid_new_temp
+                    c['center_coef'] = new_coef
+                    c['y_center'] = y_anchor
+                    c['is_regularized'] = True
+                    
+                logger.info(f"Applied global shape regularization to {len(unique) - len(robust)} faint orders based on {len(robust)} robust traces.")
+
+        # Apply Moffat boundary detection to the unique orders
+        _build_moffat_boundaries(unique, flux_fraction=boundary_frac, fwhm_scale=fwhm_scale)
+
+        # ---------------------------------------------------------------------
+        # 2D Coefficient Interpolation for Completely Missing Orders
+        # ---------------------------------------------------------------------
+        if len(unique) >= 2:
+            final_cands = []
+            final_cands.append(unique[0])
+            
+            for i in range(len(unique) - 1):
+                left_cand = unique[i]
+                right_cand = unique[i + 1]
+                gap = right_cand['y_center'] - left_cand['y_center']
+                
+                expected_sep = local_sep_func(0.5 * (left_cand['y_center'] + right_cand['y_center']))
+                
+                if gap > 1.30 * expected_sep:
+                    n_missing = int(round(gap / expected_sep)) - 1
+                    if n_missing > 0:
+                        logger.info(
+                            f"2D Interpolation: gap between y={left_cand['y_center']:.1f} "
+                            f"and y={right_cand['y_center']:.1f} is {gap:.1f}px "
+                            f"(expected {expected_sep:.1f}), synthesising {n_missing} completely blind order(s)."
+                        )
+                        for k in range(1, n_missing + 1):
+                            alpha = float(k) / (n_missing + 1.0)
+                            interp_cand = {}
+                            # Pad to same length if degrees somehow differ (though they should be standard center_deg)
+                            len_c = max(len(left_cand['center_coef']), len(right_cand['center_coef']))
+                            lc_pad = np.pad(left_cand['center_coef'], (0, len_c - len(left_cand['center_coef'])))
+                            rc_pad = np.pad(right_cand['center_coef'], (0, len_c - len(right_cand['center_coef'])))
+                            interp_cand['center_coef'] = (1.0 - alpha) * lc_pad + alpha * rc_pad
+                            
+                            len_l = max(len(left_cand['lower_coef']), len(right_cand['lower_coef']))
+                            ll_pad = np.pad(left_cand['lower_coef'], (0, len_l - len(left_cand['lower_coef'])))
+                            rl_pad = np.pad(right_cand['lower_coef'], (0, len_l - len(right_cand['lower_coef'])))
+                            interp_cand['lower_coef'] = (1.0 - alpha) * ll_pad + alpha * rl_pad
+                            
+                            len_u = max(len(left_cand['upper_coef']), len(right_cand['upper_coef']))
+                            lu_pad = np.pad(left_cand['upper_coef'], (0, len_u - len(left_cand['upper_coef'])))
+                            ru_pad = np.pad(right_cand['upper_coef'], (0, len_u - len(right_cand['upper_coef'])))
+                            interp_cand['upper_coef'] = (1.0 - alpha) * lu_pad + alpha * ru_pad
+                            
+                            interp_cand['width'] = (1.0 - alpha) * left_cand['width'] + alpha * right_cand['width']
+                            interp_cand['y_center'] = (1.0 - alpha) * left_cand['y_center'] + alpha * right_cand['y_center']
+                            interp_cand['n_good'] = 0
+                            interp_cand['fit_rms'] = 0.0
+                            interp_cand['x_coverage'] = float(w)
+                            interp_cand['is_interpolated'] = True
+                            final_cands.append(interp_cand)
+                            
+                final_cands.append(right_cand)
+            
+            unique = final_cands
+
+        # Save diagnostic plot (showing raw profile + envelope + thresholds)
+        # NOTE: seeding diagnostics are now merged into apertures_q*.png via
+        # _plot_apertures_cross_section(); do not regenerate a separate file here.
+
+        for new_id, cand in enumerate(unique, start=1):
+            aperture_loc = ApertureLocation(
+                aperture=new_id,
+                order=new_id,
+                center_coef=cand.get('center_coef'),
+                width=cand['width'],
+                is_chebyshev=True, # native chebyshev for both center and boundaries
+                domain=(0, float(w - 1)),
+                is_interpolated=cand.get('is_interpolated', False)
+            )
+            aperture_set.add_aperture(aperture_loc)
+
+    logger.info(f"Detected {aperture_set.norders} orders (3-sigma boundary mode)")
+    return aperture_set
 
 
 # ---------------------------------------------------------------------------

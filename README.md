@@ -20,7 +20,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 
 **8-stage automated spectral reduction**:
 
-1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray rejection
+1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
 2. **Orders Tracing** - Master flat generation and echelle order tracing
 3. **Scattered Light Subtraction** - Inter-order background modeling and removal (astropy convolution or spline)
 4. **2D Flat-Field Correction** - 2D pixel flat correction
@@ -540,7 +540,7 @@ flowchart TD
   - Combine multiple bias frames (mean/median)
   - Generate master bias
   - Subtract master bias from science/flat/ThAr images
-  - Detect and reject cosmic rays using L.A.Cosmic algorithm (science images only)
+  - Detect and remove cosmic rays using L.A.Cosmic (science images only)
 - **Output**: Pre-processed images (overscan, bias, cosmic-ray corrected)
 - **Note**: Fundamental corrections applied to prepare data for tracing and extraction.
 
@@ -583,12 +583,12 @@ flowchart TD
 #### STEP 6: De-blazing
 - **Input**: Extracted 1D spectra (pixel space)
 - **Processing**:
-  - Read flat spectrum blaze function
+  - Read flat spectrum blaze function (in pixel space)
   - Match orders
   - Divide by blaze function: F_corrected(λ) = F_observed(λ) / B(λ)
   - Normalize to unit continuum
 - **Output**: De-blazed spectra
-- **Note**: Corrects for the blaze function of the spectrograph grating.
+- **Note**: Corrects for the blaze function of the spectrograph grating. Must be performed after wavelength calibration.
 
 #### STEP 7: Wavelength Calibration
 - **Input**: De-blazed 1D spectra (pixel space)
@@ -599,8 +599,8 @@ flowchart TD
     - Fit 2D wavelength polynomial: λ(x,y) = Σ p_ij·x^i·y^j
   - Step 2: Apply to science spectra
     - Convert pixel coordinates to wavelength units
-- **Output**: Wavelength calibrated 1D spectra
-- **Note**: Must be after De-blazing
+- **Output**: Wavelength-calibrated 1D spectra
+- **Note**: Establishes the physical wavelength scale for each order.
 
 #### STEP 8: Order Stitching
 - **Input**: Wavelength calibrated 1D spectra

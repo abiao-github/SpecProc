@@ -398,65 +398,21 @@ def process_bias_stage(bias_filenames: List[str],
 # Sub-step 3: Cosmic-ray removal
 # ---------------------------------------------------------------------------
 
-
-def _detect_cosmics(image: np.ndarray) -> np.ndarray:
-    """Detect cosmic rays using astroscrappy (L.A.Cosmic)."""
-    if astroscrappy is None:
-        raise ImportError("astroscrappy is not installed. Please install it to use L.A.Cosmic cosmic ray removal.")
-    # Conservative parameters: high sigclip, sigfrac, objlim
-    # See: https://astroscrappy.readthedocs.io/en/latest/api/astroscrappy.detect_cosmics.html
-    crmask, _ = astroscrappy.detect_cosmics(
-        image,
-        sigclip=7.0,      # Higher threshold, less aggressive
-        sigfrac=0.5,      # Default
-        objlim=7.0,       # Higher, less aggressive
-        readnoise=10.0,   # Typical value, can be tuned
-        gain=1.0,         # Typical value, can be tuned
-        satlevel=65535.0, # Typical 16-bit
-        niter=1,          # Only one iteration for speed/conservativeness
-        sepmed=True,      # Median filter
-        cleantype='medmask', # Median interpolation for cosmic pixels
-        fsmode='median',
-        verbose=False
-    )
-    return crmask
-
-
-
-def _fix_cosmics(image: np.ndarray, cosmic_mask: np.ndarray) -> np.ndarray:
-    """Replace cosmic pixels with astroscrappy's median interpolation."""
-    if astroscrappy is None:
-        raise ImportError("astroscrappy is not installed. Please install it to use L.A.Cosmic cosmic ray removal.")
-    # Actually, astroscrappy returns the cleaned image, but for interface compatibility:
-    _, cleaned = astroscrappy.detect_cosmics(
-        image,
-        sigclip=7.0,
-        sigfrac=0.5,
-        objlim=7.0,
-        readnoise=10.0,
-        gain=1.0,
-        satlevel=65535.0,
-        niter=1,
-        sepmed=True,
-        cleantype='medmask',
-        fsmode='median',
-        verbose=False
-    )
-    return cleaned
-
-
 def process_cosmic_stage(image_filenames: List[str],
                          output_dir_base: str,
                          output_subdir: str = 'step1_basic/cosmic_corrected',
-                         cosmic_sigma: float = 5.0,
-                         cosmic_window: int = 5,
-                         cosmic_fine_sigma: float = 2.0,
-                         cosmic_line_sigma: float = 1.5,
-                         cosmic_grow_sigma: float = 2.5,
-                         cosmic_maxsize: int = 8,
+                         cosmic_sigclip: float = 5.0,
+                         cosmic_objlim: float = 5.0,
+                         cosmic_gain: float = 1.0,
+                         cosmic_readnoise: float = 5.0,
                          save_plots: bool = True,
                          fig_format: str = 'png') -> List[str]:
     """Execute cosmic ray correction stage for a list of images."""
+    if astroscrappy is None:
+        logger.error("`astroscrappy` package not found. Skipping cosmic ray removal.")
+        logger.error("Please install it via: pip install astroscrappy")
+        return image_filenames
+
     logger.info("=" * 60)
     logger.info("STEP 1: COSMIC RAY REMOVAL")
     logger.info("=" * 60)
@@ -473,11 +429,23 @@ def process_cosmic_stage(image_filenames: List[str],
 
             image, header = read_fits_image(str(filename))
 
-            # Legacy iterative MAD cosmic removal used these kwargs:
-            # We preserve the signature for API compatibility, though astroscrappy is used under the hood.
-            mask = _detect_cosmics(image)
-            corrected = _fix_cosmics(image, mask)
-            header['COSMICR'] = (True, 'Cosmic ray removal completed')
+            logger.info(f"Using L.A.Cosmic with sigclip={cosmic_sigclip}, objlim={cosmic_objlim}")
+
+            # Prepare arguments for astroscrappy. If gain/readnoise are 0,
+            # do not pass them, allowing astroscrappy to auto-detect from header.
+            lacosmic_kwargs = {
+                'sigclip': cosmic_sigclip,
+                'objlim': cosmic_objlim,
+                'cleantype': 'medmask'
+            }
+            if cosmic_gain > 0:
+                lacosmic_kwargs['gain'] = cosmic_gain
+            if cosmic_readnoise > 0:
+                lacosmic_kwargs['readnoise'] = cosmic_readnoise
+
+            mask, corrected = astroscrappy.detect_cosmics(image, **lacosmic_kwargs)
+
+            header['COSMICR'] = (True, 'Cosmic ray removal completed (L.A.Cosmic)')
             write_fits_image(str(output_file), corrected, header=header,
                              overwrite=True, dtype='float32')
 
@@ -530,7 +498,7 @@ def process_basic_reduction_stage(science_filenames: List[str],
                                   do_bias: bool = True,
                                   do_cosmic: bool = True,
                                   overscan_kwargs: dict = None,
-                                  bias_kwargs: dict = None,
+                                  bias_kwargs: dict = None, 
                                   cosmic_kwargs: dict = None) -> Tuple[List[str], Optional[str]]:
     """
     Run all enabled sub-steps of Step 1 (basic pre-processing) in order.

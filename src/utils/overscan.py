@@ -512,7 +512,11 @@ class OverscanCorrector:
         if image.shape != bias.shape:
             raise ValueError(f"Image shape {image.shape} != bias shape {bias.shape}")
 
-        corrected = image.astype(float) - bias
+        # Explicitly convert to a high-precision float to avoid integer overflow/wraparound issues.
+        # Raw FITS data is often uint16. Directly subtracting a float bias from it can lead to
+        # incorrect results if not handled carefully. Converting to float64 is the safest path.
+        corrected = image.astype(np.float64) - bias.astype(np.float64)
+
         logger.debug(f"Overscan correction applied: "
                     f"image range [{np.min(corrected):.1f}, {np.max(corrected):.1f}]")
 

@@ -2706,6 +2706,7 @@ where orders run horizontally (left to right) across the detector.
 
 from scipy.signal import find_peaks, peak_widths
 from numpy.polynomial import Chebyshev
+from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
 
 def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = None,
                              snr_threshold: float = 5.0,
@@ -2716,7 +2717,7 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
                              boundary_frac: float = 0.02,
                              fwhm_scale: float = 1.5,
                              width_cheb_degree: int = 3,
-                             boundary_fit_samples: int = 128,
+                             boundary_fit_step: int = 32,
                              output_dir_base: str = '') -> ApertureSet:
     """
     Find the positions of grating orders on a CCD image.
@@ -3039,7 +3040,6 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
                              boundary_frac: float = 0.02,
                              fwhm_scale: float = 1.5,
                              width_cheb_degree: int = 3,
-                             boundary_fit_step: int = 32,
                              output_dir_base: str = '') -> ApertureSet:
     """
     Find the positions of grating orders on a CCD image.
@@ -3859,7 +3859,7 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
 
     def _build_moffat_boundaries(cands: list,
                                    flux_fraction: float = 0.02,
-                                   fwhm_scale: float = 1.5, n_samples: int = 128) -> None:
+                                   fwhm_scale: float = 1.5) -> None:
         """Determine order boundaries via two-step Moffat fitting.
 
         Step 1: For each sample column, use the traced center position as the
@@ -3880,8 +3880,7 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
         if not cands:
             return
 
-        step = max(4, boundary_fit_step)
-        x_samples = np.arange(0, w, step, dtype=int)
+        x_samples = np.linspace(0, w - 1, num=min(128, w), dtype=int)
 
         for cand in cands:
             c_coef = cand['center_coef']
@@ -4134,8 +4133,52 @@ def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = Non
                 else:
                     unique.append(cand)
 
+        # ---------------------------------------------------------------------
+        # Global Shape Regularization (Prevents faint orders from crossing)
+        # ---------------------------------------------------------------------
+        if len(unique) >= 3:
+            def is_robust_shape(c):
+                # Only use extremely well-traced orders across most of the CCD as global shape anchors.
+                # Loose RMS allows wiggly noise-chasing traces to corrupt the global shape.
+                return (c['x_coverage'] > 0.85 * w) and (c['fit_rms'] < max(1.5, 0.08 * local_sep_func(c['y_center'])))
+
+            robust = [c for c in unique if is_robust_shape(c)]
+            if len(robust) >= 3:
+                max_len = max(len(c['center_coef']) for c in robust)
+                # Ensure robust is strictly sorted by y_center so np.interp works correctly
+                robust_sorted = sorted(robust, key=lambda c: c['y_center'])
+                y_c_robust = np.array([c['y_center'] for c in robust_sorted])
+                coefs_robust = np.array([np.pad(c['center_coef'], (0, max_len - len(c['center_coef']))) for c in robust_sorted])
+                
+                for c in unique:
+                    # 如果该级次本身就很亮且轨迹稳健，则保留其自身真实的光学畸变轨迹
+                    if is_robust_shape(c):
+                        c['is_regularized'] = False
+                        continue
+
+                    c_model_old = Chebyshev(c['center_coef'], domain=(0, w - 1))
+                    # Anchor directly to the robust photometric seed peak found in the median profile
+                    y_anchor = c['y_center']
+                    
+                    new_coef = np.zeros(max_len)
+                    for d in range(1, max_len):
+                        # np.interp guarantees flat extrapolation at edges:
+                        # Faint edge orders will exactly inherit the shape of the outermost bright order.
+                        new_coef[d] = np.interp(y_anchor, y_c_robust, coefs_robust[:, d])
+                        
+                    c_model_new_temp = Chebyshev(new_coef, domain=(0, w - 1))
+                    y_mid_new_temp = c_model_new_temp(x_center)
+                    
+                    # T_0(x) is 1 everywhere, so adjusting c[0] shifts the whole curve exactly
+                    new_coef[0] = y_anchor - y_mid_new_temp
+                    c['center_coef'] = new_coef
+                    c['y_center'] = y_anchor
+                    c['is_regularized'] = True
+                    
+                logger.info(f"Applied global shape regularization to {len(unique) - len(robust)} faint orders based on {len(robust)} robust traces.")
+
         # Apply Moffat boundary detection to the unique orders
-        _build_moffat_boundaries(unique, flux_fraction=boundary_frac, fwhm_scale=fwhm_scale, n_samples=boundary_fit_samples)
+        _build_moffat_boundaries(unique, flux_fraction=boundary_frac, fwhm_scale=fwhm_scale)
 
         # ---------------------------------------------------------------------
         # 2D Coefficient Interpolation for Completely Missing Orders

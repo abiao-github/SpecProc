@@ -274,9 +274,12 @@ class FlatFieldProcessor:
             snr_threshold=snr_threshold,
             step_denominator=step_denominator,
             gap_fill_factor=gap_fill_factor,
-            gap_fill_snr=gap_fill_snr, 
+            gap_fill_snr=gap_fill_snr,
             min_trace_coverage=min_trace_coverage,
             trace_degree=trace_degree,
+            boundary_frac=0.02, # Default, can be exposed
+            fwhm_scale=1.5, # Default, can be exposed
+            width_cheb_degree=3, # Default, can be exposed
             output_dir_base=output_dir_base
         )
 
@@ -2688,6 +2691,651 @@ def fill_missing_orders_by_interpolation(
 
     logger.info(f"Interpolation gap-fill: {n_filled} order(s) added, total {filled.norders} orders")
     return filled
+
+
+# ======================================================================
+# MERGED ALGORITHM KERNEL FROM grating_trace_simple.py
+# ======================================================================
+
+
+"""
+Simple grating order tracing for spectral reduction pipeline.
+
+Handles order detection and tracing for grating spectrographs,
+where orders run horizontally (left to right) across the detector.
+"""
+
+from scipy.signal import find_peaks, peak_widths
+from numpy.polynomial import Chebyshev
+
+def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = None,
+                             snr_threshold: float = 5.0,
+                             step_denominator: int = 20,
+                             gap_fill_factor: float = 1.35,
+                             gap_fill_snr: float = 2.5,
+                             min_trace_coverage: float = 0.20,
+                             trace_degree: int = 4,
+                             boundary_frac: float = 0.02,
+                             fwhm_scale: float = 1.5,
+                             width_cheb_degree: int = 3,
+                             output_dir_base: str = '') -> ApertureSet:
+    """
+    Find the positions of grating orders on a CCD image.
+
+    This is a simplified algorithm for grating spectrographs where orders
+    run horizontally (left to right) across the detector.
+
+    Args:
+        data: Image data (2D array)
+        mask: Optional bad pixel mask (same shape as data)
+        snr_threshold: Detection threshold (multiples of sigma above profile baseline)
+        gap_fill_factor: Factor for gap detection (gap > factor * predicted → missing).
+        gap_fill_snr: SNR threshold for faint-order gap filling.
+        min_trace_coverage: Minimum fraction of detector width a traced
+            order must cover to be accepted.
+        trace_degree: Polynomial degree for center tracing.
+        output_dir_base: Output directory for diagnostic plots.
+
+    Returns:
+        ApertureSet with detected orders
+    """
+    if mask is None:
+        mask = np.zeros_like(data, dtype=np.int32)
+
+    h, w = data.shape
+
+    logger.info(f"Finding grating orders in image of shape {data.shape}")
+
+    img = np.asarray(data, dtype=np.float64)
+
+    x_center = w // 2
+    half_band = max(5, w // 20)
+    x1 = max(0, x_center - half_band)
+    x2 = min(w, x_center + half_band + 1)
+    center_profile = np.median(img[:, x1:x2], axis=1)
+    center_profile = gaussian_filter1d(center_profile, sigma=1.5)
+
+    smooth_prof = gaussian_filter1d(center_profile, sigma=2.0)
+    p99 = np.nanpercentile(smooth_prof, 99)
+    rough_peaks, _ = find_peaks(smooth_prof, distance=5, prominence=max(5.0, p99 * 0.02))
+    
+    med_sep = 30.0
+    def _fallback_sep(y): return med_sep
+    local_sep_func = _fallback_sep
+
+    if len(rough_peaks) >= 5:
+        diffs = np.diff(rough_peaks)
+        mids = 0.5 * (rough_peaks[:-1] + rough_peaks[1:])
+        med_sep = float(np.median(diffs))
+
+        s_factor = 0.5 * len(diffs)
+        try:
+            spline = UnivariateSpline(mids, diffs, s=s_factor)
+            def _dynamic_sep(y):
+                return float(spline(y))
+            local_sep_func = _dynamic_sep
+            logger.info(f"Auto-estimated dynamic separation (UnivariateSpline): median={med_sep:.1f} px, s={s_factor}")
+        except Exception as e:
+            logger.warning(f"Spline fit failed: {e}, fallback to median separation.")
+            local_sep_func = lambda y: med_sep
+    else:
+        logger.warning(f"Auto-estimation of separation failed, using fallback: {med_sep:.1f} px")
+
+    from scipy.ndimage import minimum_filter1d
+    bg_size = int(2.5 * med_sep)
+    envelope = minimum_filter1d(center_profile, size=bg_size)
+    envelope = gaussian_filter1d(envelope, sigma=bg_size/4.0)
+    
+    seed_pure = center_profile - envelope
+    
+    def _estimate_prof_noise(prof):
+        valid_prof = prof[np.isfinite(prof)]
+        if len(valid_prof) < 10: return 1.0, 0.0
+        sorted_prof = np.sort(valid_prof)
+        bg_pixels = sorted_prof[:max(10, len(sorted_prof) // 4)]
+        s_med = float(np.nanmedian(bg_pixels))
+        diffs = np.diff(valid_prof)
+        s_sig = float(np.nanmedian(np.abs(diffs)) / 0.9539)
+        return max(s_sig, 0.1), s_med
+
+    noise, baseline = _estimate_prof_noise(seed_pure)
+    seed_profile = seed_pure
+    
+    det_threshold = baseline + snr_threshold * noise
+    min_dist = max(3, int(med_sep * 0.20)) 
+
+    peaks, _ = find_peaks(
+        seed_profile,
+        height=det_threshold,
+        distance=min_dist,
+        prominence=max(0.8 * noise, 0.15 * snr_threshold * noise),
+    )
+
+    logger.info(
+        f"Found {len(peaks)} seed peaks (SNR > {snr_threshold:.1f}, "
+        f"baseline={baseline:.4f}, noise={noise:.4f})"
+    )
+    
+    peaks = np.asarray(sorted(peaks), dtype=int)
+
+    if len(peaks) >= 2:
+        gap_fill_snr = max(2.5, gap_fill_snr)
+        inserted = []
+        for i in range(len(peaks) - 1):
+            left, right = peaks[i], peaks[i + 1]
+            gap = right - left
+            expected_sep = local_sep_func(0.5 * (left + right))
+            if gap > 1.30 * expected_sep:
+                n_missing = int(round(gap / expected_sep)) - 1
+                if n_missing < 1: n_missing = 1
+                for k in range(1, n_missing + 1):
+                    guess = int(round(left + k * gap / (n_missing + 1)))
+                    win = max(5, int(0.55 * expected_sep))
+                    y1, y2 = max(0, guess - win), min(h, guess + win + 1)
+                    if y2 - y1 < 3: continue
+                    seg = seed_profile[y1:y2]
+                    seg_med = float(np.median(seg))
+                    seg_mad = float(np.median(np.abs(seg - seg_med)))
+                    seg_noise = 1.4826 * seg_mad if seg_mad > 0 else float(np.std(seg - seg_med))
+                    loc = int(np.argmax(seg))
+                    cand = y1 + loc
+                    cand_val = seg[loc]
+                    if seg_noise > 0 and cand_val < (seg_med + gap_fill_snr * seg_noise):
+                        continue
+                    if np.all(np.abs(peaks - cand) > max(3, int(0.30 * expected_sep))):
+                        inserted.append(cand)
+        if inserted:
+            peaks = np.asarray(sorted(np.concatenate([peaks, np.array(inserted, dtype=int)])), dtype=int)
+            logger.info(f"Inserted {len(inserted)} missing-order seed(s) by gap filling")
+
+    if len(peaks) == 0:
+        logger.warning("No order peaks detected; lower threshold or check flat exposures")
+        return ApertureSet()
+
+    def refine_peak_y(col: np.ndarray, y_guess: float, search_half: int,
+                      snr_thresh: float, noise_est: float, baseline_est: float) -> Optional[float]:
+        y0 = int(round(y_guess))
+        y1, y2 = max(0, y0 - search_half), min(h, y0 + search_half + 1)
+        if y2 - y1 < 5: return None
+
+        segment = col[y1:y2]
+        loc = int(np.argmax(segment))
+        peak_val = float(segment[loc])
+
+        if not np.isfinite(peak_val) or peak_val <= 0: return None
+
+        # SNR check
+        if (peak_val - baseline_est) < snr_thresh * noise_est:
+            return None
+
+        bg = 0.5 * (float(segment[0]) + float(segment[-1]))
+        sub_flux = segment.astype(float) - bg
+        core_mask = sub_flux > 0.2 * (peak_val - bg)
+        
+        if np.sum(core_mask) >= 3:
+            yy = np.arange(y1, y2, dtype=float)[core_mask]
+            weights = sub_flux[core_mask]
+            sum_w = np.sum(weights)
+            if sum_w > 0:
+                return float(np.sum(yy * weights) / sum_w)
+        return float(y1 + loc)
+
+    def trace_order(seed_y: float) -> tuple:
+        local_sep = local_sep_func(seed_y)
+        search_half = max(4, int(local_sep * 0.45))
+        
+        # Use the global noise/baseline from the median profile for all columns
+        refined_y = refine_peak_y(img[:, x_center], seed_y, search_half, snr_threshold, noise, baseline)
+        start_y = refined_y if refined_y is not None else float(seed_y)
+
+        xs, ys = [float(x_center)], [start_y]
+
+        for direction in [1, -1]: # right, then left
+            y_prev = start_y
+            miss_count = 0
+            side_x, side_y = [float(x_center)], [start_y]
+            x_range = range(x_center + 1, w) if direction == 1 else range(x_center - 1, -1, -1)
+            
+            for x in x_range:
+                if len(side_x) >= 4:
+                    coef1 = np.polyfit(np.asarray(side_x[-4:]), np.asarray(side_y[-4:]), deg=1)
+                    y_guess = float(np.polyval(coef1, x))
+                else:
+                    y_guess = y_prev
+
+                y_new = refine_peak_y(img[:, x], y_guess, search_half, snr_threshold, noise, baseline)
+                if y_new is None or abs(y_new - y_guess) > search_half:
+                    miss_count += 1
+                    if miss_count > 10: break
+                    continue
+
+                xs.append(float(x))
+                ys.append(y_new)
+                side_x.append(float(x))
+                side_y.append(y_new)
+                y_prev = y_new
+                miss_count = 0
+
+        xs, ys = np.asarray(xs), np.asarray(ys)
+        idx = np.argsort(xs)
+        return xs[idx], ys[idx]
+
+    def estimate_order_width(xs: np.ndarray, ys: np.ndarray, local_sep: float) -> float:
+        if xs.size == 0: return float(local_sep)
+        sample_idx = np.linspace(0, xs.size - 1, num=min(24, xs.size), dtype=int)
+        widths = []
+        for i in sample_idx:
+            x, yc = int(round(xs[i])), float(ys[i])
+            y1, y2 = max(0, int(yc - local_sep)), min(h, int(yc + local_sep))
+            if y2 - y1 < 7: continue
+            prof = img[y1:y2, x]
+            pmax = np.max(prof)
+            if not np.isfinite(pmax) or pmax <= 0: continue
+            try:
+                w_px, _, _, _ = peak_widths(prof, [np.argmax(prof)], rel_height=0.5)
+                if w_px.size > 0 and 2.0 <= w_px[0] <= 2.5 * local_sep:
+                    widths.append(w_px[0])
+            except:
+                continue
+        if not widths: return float(local_sep)
+        width = 1.8 * float(np.median(widths))
+        return float(np.clip(width, 6.0, 2.2 * local_sep))
+
+    def _fit_center_to_coefs(x_vals, y_vals, degree, domain):
+        if x_vals.size < 4: return None
+        deg = max(1, int(min(degree, max(1, x_vals.size - 2))))
+        return np.array(Chebyshev.fit(x_vals, y_vals, deg=deg, domain=domain).coef, dtype=float)
+
+    aperture_set = ApertureSet()
+    candidates = []
+
+    for order_idx, seed in enumerate(peaks):
+        local_sep = local_sep_func(float(seed))
+        x_positions, y_positions = trace_order(float(seed))
+
+        if len(x_positions) < 15: continue
+
+        try:
+            good = np.ones_like(x_positions, dtype=bool)
+            for _ in range(3):
+                if np.sum(good) < 5: break
+                coef = np.polyfit(x_positions[good], y_positions[good], deg=3)
+                resid = y_positions - np.polyval(coef, x_positions)
+                std = np.std(resid[good])
+                if std <= 0.05: break
+                good = np.abs(resid) < 3.0 * std
+
+            if np.sum(good) < 15: continue
+
+            center_coef = _fit_center_to_coefs(x_positions[good], y_positions[good], trace_degree, (0, float(w - 1)))
+            if center_coef is None: continue
+
+            center_model = Chebyshev(center_coef, domain=(0, w - 1))
+            yc_mid = center_model(x_center)
+            x_coverage = float(np.max(x_positions[good]) - np.min(x_positions[good]))
+            if x_coverage < float(min_trace_coverage) * w: continue
+
+            width = estimate_order_width(x_positions[good], y_positions[good], local_sep)
+            
+            candidates.append({
+                'center_coef': center_coef,
+                'width': float(width),
+                'y_center': float(yc_mid),
+            })
+        except Exception as e:
+            logger.warning(f"Order {order_idx + 1}: Failed polynomial tracing: {e}")
+            continue
+
+    if candidates:
+        candidates_sorted = sorted(candidates, key=lambda c: c['y_center'])
+        unique = []
+        for cand in candidates_sorted:
+            if not unique:
+                unique.append(cand)
+                continue
+            prev = unique[-1]
+            pred_sep = local_sep_func(0.5 * (cand['y_center'] + prev['y_center']))
+            actual_sep = abs(cand['y_center'] - prev['y_center'])
+            if actual_sep < 0.3 * pred_sep:
+                continue # Merge/skip duplicate
+            unique.append(cand)
+
+        for new_id, cand in enumerate(unique, start=1):
+            aperture_loc = ApertureLocation(
+                aperture=new_id,
+                order=new_id,
+                center_coef=cand.get('center_coef'),
+                width=cand['width'],
+                is_chebyshev=True,
+                domain=(0, float(w - 1)),
+            )
+            aperture_set.add_aperture(aperture_loc)
+
+    logger.info(f"Detected {aperture_set.norders} orders")
+    return aperture_set
+
+
+# ======================================================================
+# MERGED ALGORITHM KERNEL FROM grating_trace_simple.py
+# ======================================================================
+
+
+"""
+Simple grating order tracing for spectral reduction pipeline.
+
+Handles order detection and tracing for grating spectrographs,
+where orders run horizontally (left to right) across the detector.
+"""
+
+from scipy.signal import find_peaks
+
+
+def _find_grating_orders_impl(data: np.ndarray, mask: Optional[np.ndarray] = None,
+                             snr_threshold: float = 5.0,
+                             step_denominator: int = 20,
+                             gap_fill_factor: float = 1.35,
+                             gap_fill_snr: float = 2.5,
+                             min_trace_coverage: float = 0.20,
+                             trace_degree: int = 4,
+                             boundary_frac: float = 0.02,
+                             fwhm_scale: float = 1.5,
+                             width_cheb_degree: int = 3,
+                             output_dir_base: str = '') -> ApertureSet:
+    """
+    Find the positions of grating orders on a CCD image.
+
+    This is a simplified algorithm for grating spectrographs where orders
+    run horizontally (left to right) across the detector.
+
+    Args:
+        data: Image data (2D array)
+        mask: Optional bad pixel mask (same shape as data)
+        snr_threshold: Detection threshold (multiples of sigma above profile baseline)
+        gap_fill_factor: Factor for gap detection (gap > factor * predicted → missing).
+        gap_fill_snr: SNR threshold for faint-order gap filling.
+        min_trace_coverage: Minimum fraction of detector width a traced
+            order must cover to be accepted.
+        trace_degree: Polynomial degree for center tracing.
+        output_dir_base: Output directory for diagnostic plots.
+
+    Returns:
+        ApertureSet with detected orders
+    """
+    if mask is None:
+        mask = np.zeros_like(data, dtype=np.int32)
+
+    h, w = data.shape
+
+    logger.info(f"Finding grating orders in image of shape {data.shape}")
+
+    img = np.asarray(data, dtype=np.float64)
+
+    x_center = w // 2
+    half_band = max(5, w // 20)
+    x1 = max(0, x_center - half_band)
+    x2 = min(w, x_center + half_band + 1)
+    center_profile = np.median(img[:, x1:x2], axis=1)
+    center_profile = gaussian_filter1d(center_profile, sigma=1.5)
+
+    smooth_prof = gaussian_filter1d(center_profile, sigma=2.0)
+    p99 = np.nanpercentile(smooth_prof, 99)
+    rough_peaks, _ = find_peaks(smooth_prof, distance=5, prominence=max(5.0, p99 * 0.02))
+    
+    med_sep = 30.0
+    def _fallback_sep(y): return med_sep
+    local_sep_func = _fallback_sep
+
+    if len(rough_peaks) >= 5:
+        diffs = np.diff(rough_peaks)
+        mids = 0.5 * (rough_peaks[:-1] + rough_peaks[1:])
+        med_sep = float(np.median(diffs))
+
+        s_factor = 0.5 * len(diffs)
+        try:
+            spline = UnivariateSpline(mids, diffs, s=s_factor)
+            def _dynamic_sep(y):
+                return float(spline(y))
+            local_sep_func = _dynamic_sep
+            logger.info(f"Auto-estimated dynamic separation (UnivariateSpline): median={med_sep:.1f} px, s={s_factor}")
+        except Exception as e:
+            logger.warning(f"Spline fit failed: {e}, fallback to median separation.")
+            local_sep_func = lambda y: med_sep
+    else:
+        logger.warning(f"Auto-estimation of separation failed, using fallback: {med_sep:.1f} px")
+
+    from scipy.ndimage import minimum_filter1d
+    bg_size = int(2.5 * med_sep)
+    envelope = minimum_filter1d(center_profile, size=bg_size)
+    envelope = gaussian_filter1d(envelope, sigma=bg_size/4.0)
+    
+    seed_pure = center_profile - envelope
+    
+    def _estimate_prof_noise(prof):
+        valid_prof = prof[np.isfinite(prof)]
+        if len(valid_prof) < 10: return 1.0, 0.0
+        sorted_prof = np.sort(valid_prof)
+        bg_pixels = sorted_prof[:max(10, len(sorted_prof) // 4)]
+        s_med = float(np.nanmedian(bg_pixels))
+        diffs = np.diff(valid_prof)
+        s_sig = float(np.nanmedian(np.abs(diffs)) / 0.9539)
+        return max(s_sig, 0.1), s_med
+
+    noise, baseline = _estimate_prof_noise(seed_pure)
+    seed_profile = seed_pure
+    
+    det_threshold = baseline + snr_threshold * noise
+    min_dist = max(3, int(med_sep * 0.20)) 
+
+    peaks, _ = find_peaks(
+        seed_profile,
+        height=det_threshold,
+        distance=min_dist,
+        prominence=max(0.8 * noise, 0.15 * snr_threshold * noise),
+    )
+
+    logger.info(
+        f"Found {len(peaks)} seed peaks (SNR > {snr_threshold:.1f}, "
+        f"baseline={baseline:.4f}, noise={noise:.4f})"
+    )
+    
+    peaks = np.asarray(sorted(peaks), dtype=int)
+
+    if len(peaks) >= 2:
+        gap_fill_snr = max(2.5, gap_fill_snr)
+        inserted = []
+        for i in range(len(peaks) - 1):
+            left, right = peaks[i], peaks[i + 1]
+            gap = right - left
+            expected_sep = local_sep_func(0.5 * (left + right))
+            if gap > 1.30 * expected_sep:
+                n_missing = int(round(gap / expected_sep)) - 1
+                if n_missing < 1: n_missing = 1
+                for k in range(1, n_missing + 1):
+                    guess = int(round(left + k * gap / (n_missing + 1)))
+                    win = max(5, int(0.55 * expected_sep))
+                    y1, y2 = max(0, guess - win), min(h, guess + win + 1)
+                    if y2 - y1 < 3: continue
+                    seg = seed_profile[y1:y2]
+                    seg_med = float(np.median(seg))
+                    seg_mad = float(np.median(np.abs(seg - seg_med)))
+                    seg_noise = 1.4826 * seg_mad if seg_mad > 0 else float(np.std(seg - seg_med))
+                    loc = int(np.argmax(seg))
+                    cand = y1 + loc
+                    cand_val = seg[loc]
+                    if seg_noise > 0 and cand_val < (seg_med + gap_fill_snr * seg_noise):
+                        continue
+                    if np.all(np.abs(peaks - cand) > max(3, int(0.30 * expected_sep))):
+                        inserted.append(cand)
+        if inserted:
+            peaks = np.asarray(sorted(np.concatenate([peaks, np.array(inserted, dtype=int)])), dtype=int)
+            logger.info(f"Inserted {len(inserted)} missing-order seed(s) by gap filling")
+
+    if len(peaks) == 0:
+        logger.warning("No order peaks detected; lower threshold or check flat exposures")
+        return ApertureSet()
+
+    def refine_peak_y(col: np.ndarray, y_guess: float, search_half: int,
+                      snr_thresh: float, noise_est: float, baseline_est: float) -> Optional[float]:
+        y0 = int(round(y_guess))
+        y1, y2 = max(0, y0 - search_half), min(h, y0 + search_half + 1)
+        if y2 - y1 < 5: return None
+
+        segment = col[y1:y2]
+        loc = int(np.argmax(segment))
+        peak_val = float(segment[loc])
+
+        if not np.isfinite(peak_val) or peak_val <= 0: return None
+
+        # SNR check
+        if (peak_val - baseline_est) < snr_thresh * noise_est:
+            return None
+
+        bg = 0.5 * (float(segment[0]) + float(segment[-1]))
+        sub_flux = segment.astype(float) - bg
+        core_mask = sub_flux > 0.2 * (peak_val - bg)
+        
+        if np.sum(core_mask) >= 3:
+            yy = np.arange(y1, y2, dtype=float)[core_mask]
+            weights = sub_flux[core_mask]
+            sum_w = np.sum(weights)
+            if sum_w > 0:
+                return float(np.sum(yy * weights) / sum_w)
+        return float(y1 + loc)
+
+    def trace_order(seed_y: float) -> tuple:
+        local_sep = local_sep_func(seed_y)
+        search_half = max(4, int(local_sep * 0.45))
+        
+        # Use the global noise/baseline from the median profile for all columns
+        refined_y = refine_peak_y(img[:, x_center], seed_y, search_half, snr_threshold, noise, baseline)
+        start_y = refined_y if refined_y is not None else float(seed_y)
+
+        xs, ys = [float(x_center)], [start_y]
+
+        for direction in [1, -1]: # right, then left
+            y_prev = start_y
+            miss_count = 0
+            side_x, side_y = [float(x_center)], [start_y]
+            x_range = range(x_center + 1, w) if direction == 1 else range(x_center - 1, -1, -1)
+            
+            for x in x_range:
+                if len(side_x) >= 4:
+                    coef1 = np.polyfit(np.asarray(side_x[-4:]), np.asarray(side_y[-4:]), deg=1)
+                    y_guess = float(np.polyval(coef1, x))
+                else:
+                    y_guess = y_prev
+
+                y_new = refine_peak_y(img[:, x], y_guess, search_half, snr_threshold, noise, baseline)
+                if y_new is None or abs(y_new - y_guess) > search_half:
+                    miss_count += 1
+                    if miss_count > 10: break
+                    continue
+
+                xs.append(float(x))
+                ys.append(y_new)
+                side_x.append(float(x))
+                side_y.append(y_new)
+                y_prev = y_new
+                miss_count = 0
+
+        xs, ys = np.asarray(xs), np.asarray(ys)
+        idx = np.argsort(xs)
+        return xs[idx], ys[idx]
+
+    def estimate_order_width(xs: np.ndarray, ys: np.ndarray, local_sep: float) -> float:
+        if xs.size == 0: return float(local_sep)
+        sample_idx = np.linspace(0, xs.size - 1, num=min(24, xs.size), dtype=int)
+        widths = []
+        for i in sample_idx:
+            x, yc = int(round(xs[i])), float(ys[i])
+            y1, y2 = max(0, int(yc - local_sep)), min(h, int(yc + local_sep))
+            if y2 - y1 < 7: continue
+            prof = img[y1:y2, x]
+            pmax = np.max(prof)
+            if not np.isfinite(pmax) or pmax <= 0: continue
+            try:
+                w, _, _, _ = peak_widths(prof, [np.argmax(prof)], rel_height=0.5)
+                if w.size > 0 and 2.0 <= w[0] <= 2.5 * local_sep:
+                    widths.append(w[0])
+            except:
+                continue
+        if not widths: return float(local_sep)
+        width = 1.8 * float(np.median(widths))
+        return float(np.clip(width, 6.0, 2.2 * local_sep))
+
+    from numpy.polynomial import Chebyshev
+    def _fit_center_to_coefs(x_vals, y_vals, degree, domain):
+        if x_vals.size < 4: return None
+        deg = max(1, int(min(degree, max(1, x_vals.size - 2))))
+        return np.array(Chebyshev.fit(x_vals, y_vals, deg=deg, domain=domain).coef, dtype=float)
+
+    aperture_set = ApertureSet()
+    candidates = []
+
+    for order_idx, seed in enumerate(peaks):
+        local_sep = local_sep_func(float(seed))
+        x_positions, y_positions = trace_order(float(seed))
+
+        if len(x_positions) < 15: continue
+
+        try:
+            good = np.ones_like(x_positions, dtype=bool)
+            for _ in range(3):
+                if np.sum(good) < 5: break
+                coef = np.polyfit(x_positions[good], y_positions[good], deg=3)
+                resid = y_positions - np.polyval(coef, x_positions)
+                std = np.std(resid[good])
+                if std <= 0.05: break
+                good = np.abs(resid) < 3.0 * std
+
+            if np.sum(good) < 15: continue
+
+            center_coef = _fit_center_to_coefs(x_positions[good], y_positions[good], trace_degree, (0, float(w - 1)))
+            if center_coef is None: continue
+
+            center_model = Chebyshev(center_coef, domain=(0, w - 1))
+            yc_mid = center_model(x_center)
+            x_coverage = float(np.max(x_positions[good]) - np.min(x_positions[good]))
+            if x_coverage < float(min_trace_coverage) * w: continue
+
+            width = estimate_order_width(x_positions[good], y_positions[good], local_sep)
+            
+            candidates.append({
+                'center_coef': center_coef,
+                'width': float(width),
+                'y_center': float(yc_mid),
+            })
+        except Exception as e:
+            logger.warning(f"Order {order_idx + 1}: Failed polynomial tracing: {e}")
+            continue
+
+    if candidates:
+        candidates_sorted = sorted(candidates, key=lambda c: c['y_center'])
+        unique = []
+        for cand in candidates_sorted:
+            if not unique:
+                unique.append(cand)
+                continue
+            prev = unique[-1]
+            pred_sep = local_sep_func(0.5 * (cand['y_center'] + prev['y_center']))
+            actual_sep = abs(cand['y_center'] - prev['y_center'])
+            if actual_sep < 0.3 * pred_sep:
+                continue # Merge/skip duplicate
+            unique.append(cand)
+
+        for new_id, cand in enumerate(unique, start=1):
+            aperture_loc = ApertureLocation(
+                aperture=new_id,
+                order=new_id,
+                center_coef=cand.get('center_coef'),
+                width=cand['width'],
+                is_chebyshev=True,
+                domain=(0, float(w - 1)),
+            )
+            aperture_set.add_aperture(aperture_loc)
+
+    logger.info(f"Detected {aperture_set.norders} orders")
+    return aperture_set
 
 
 # ======================================================================

@@ -799,7 +799,7 @@ SpecProc/
 │   ├── gui/                     # GUI 模块
 │   ├── core/                    # 核心处理
 │   ├── config/                  # 配置管理
-│   ├── utils/                   # 工具函数 
+│   ├── utils/                   # 工具函数
 │   └── plotting/                # 绘图功能
 ├── install.sh                   # 安装脚本
 ├── requirements.txt              # Python 依赖

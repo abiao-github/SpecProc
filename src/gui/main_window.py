@@ -1169,7 +1169,7 @@ class MainWindow(QMainWindow):
                 'boundary_frac': self.config.get_float('reduce.trace', 'boundary_frac', 0.02),
                 'fwhm_scale': self.config.get_float('reduce.trace', 'fwhm_scale', 1.5),
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
-                'boundary_fit_samples': self.config.get_int('reduce.trace', 'boundary_fit_samples', 128),
+                'boundary_fit_step': self.config.get_int('reduce.trace', 'boundary_fit_step', 32),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'png'),
             }

@@ -946,7 +946,7 @@ class MainWindow(QMainWindow):
         bias_dir = output_dir / 'step1_basic' / 'bias_subtracted'
         cosmic_dir = output_dir / 'step1_basic' / 'cosmic_corrected'
 
-        def find_latest_input(raw_file_path, check_cosmic=True, check_bias=True, check_overscan=True):
+        def find_latest_input(raw_file_path, check_cosmic=False, check_bias=False, check_overscan=False):
             """Find the most processed version of a file."""
             raw_name = Path(raw_file_path).name
             if check_cosmic:
@@ -963,31 +963,25 @@ class MainWindow(QMainWindow):
                     return str(overscan_path)
             return raw_file_path
 
-
-        # Get calib file
-        calib_file = None
-        if isinstance(self.calib_file, list) and self.calib_file:
-            calib_file = sorted(self.calib_file, key=lambda x: Path(x).stat().st_mtime)[-1]
-
-        # Create a modified pipeline for selected steps
-        # Process all images with overscan correction if stage_0 is selected
-        if "stage_0" in selected_stages:
-            # If Overscan is NOT checked, find existing overscan files.
-            if not step1_do_overscan:
-                current_science_files = [find_latest_input(f, check_cosmic=False, check_bias=False) for f in science_files]
-                current_flat_files = [find_latest_input(f, check_cosmic=False, check_bias=False) for f in self.flat_files]
-                current_bias_files = [find_latest_input(f, check_cosmic=False, check_bias=False) for f in self.bias_files]
-                current_calib_files = [find_latest_input(f, check_cosmic=False, check_bias=False) for f in current_calib_files]
-
-            # If Bias is NOT checked, find existing bias files (which could be overscan-corrected).
-            if not step1_do_bias:
-                current_science_files = [find_latest_input(f, check_cosmic=False) for f in science_files]
-                current_flat_files = [find_latest_input(f, check_cosmic=False) for f in self.flat_files]
-                current_calib_files = [find_latest_input(f, check_cosmic=False) for f in current_calib_files]
-
-            # If Cosmic is NOT checked, find existing cosmic files.
-            if not step1_do_cosmic:
-                current_science_files = [find_latest_input(f) for f in science_files]
+        # Before running any stage, find the correct input files.
+        # If a Step 1 sub-step is selected, its inputs are the raw files.
+        # Otherwise, find the latest processed version.
+        if not step1_do_overscan:
+            # If not doing overscan, inputs for bias/cosmic/later stages might be overscan-corrected.
+            current_science_files = [find_latest_input(f, check_overscan=True) for f in science_files]
+            current_flat_files = [find_latest_input(f, check_overscan=True) for f in self.flat_files]
+            current_bias_files = [find_latest_input(f, check_overscan=True) for f in self.bias_files]
+            current_calib_files = [find_latest_input(f, check_overscan=True) for f in current_calib_files]
+        
+        if not step1_do_bias:
+            # If not doing bias, inputs for cosmic/later stages might be bias-corrected.
+            current_science_files = [find_latest_input(f, check_overscan=True, check_bias=True) for f in science_files]
+            current_flat_files = [find_latest_input(f, check_overscan=True, check_bias=True) for f in self.flat_files]
+            current_calib_files = [find_latest_input(f, check_overscan=True, check_bias=True) for f in current_calib_files]
+        
+        if not step1_do_cosmic:
+            # If not doing cosmic, inputs for later stages might be cosmic-corrected.
+            current_science_files = [find_latest_input(f, check_overscan=True, check_bias=True, check_cosmic=True) for f in science_files]
 
 
         if "stage_0" in selected_stages and step1_do_overscan:
@@ -1163,13 +1157,9 @@ class MainWindow(QMainWindow):
                 'mosaic_maxcount': self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535),
                 'snr_threshold': self.config.get_float('reduce.trace', 'snr_threshold', 5.0),
                 'gap_fill_factor': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6),
-                'gap_fill_snr': self.config.get_float('reduce.trace', 'gap_fill_snr', 2.5),
                 'min_trace_coverage': self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20),
                 'trace_degree': self.config.get_int('reduce.trace', 'degree', 4),
-                'boundary_frac': self.config.get_float('reduce.trace', 'boundary_frac', 0.02),
-                'fwhm_scale': self.config.get_float('reduce.trace', 'fwhm_scale', 1.5),
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
-                'boundary_fit_step': self.config.get_int('reduce.trace', 'boundary_fit_step', 32),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'png'),
             }

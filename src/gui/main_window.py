@@ -792,6 +792,7 @@ class MainWindow(QMainWindow):
         # Reset run-scoped cache to avoid reusing stale paths from previous runs.
         self._flat_files_after_bias = None
         self._flat_files_after_step1 = None
+        self._step3_mask = None
 
         # Check which steps are selected
         selected_stages = []
@@ -1160,6 +1161,7 @@ class MainWindow(QMainWindow):
                 'min_trace_coverage': self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20),
                 'trace_degree': self.config.get_int('reduce.trace', 'degree', 4),
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
+                'aperture_boundary_snr': self.config.get_float('reduce.trace', 'aperture_boundary_snr', 3.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'png'),
             }
@@ -1171,6 +1173,160 @@ class MainWindow(QMainWindow):
             self._flat_field = flat_field
             self._apertures = apertures
             self.processing_state['stage_2_completed'] = True
+
+        if "stage_2" in selected_stages:
+            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
+            
+            # Fallback: load from disk if memory is empty (e.g., running Step 3 alone)
+            if flat_field is None or apertures is None:
+                self.log_text.append("  Loading MasterFlat and Apertures from disk...")
+                try:
+                    from src.utils.fits_io import read_fits_image
+                    from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
+                    
+                    output_dir = Path(self.config.get_output_path())
+                    flat_path = output_dir / 'step2_trace' / 'MasterFlat.fits'
+                    coefs_path = output_dir / 'step2_trace' / 'Orders_trace_coefs.json'
+                    
+                    if flat_path.exists() and coefs_path.exists():
+                        flat_img, _ = read_fits_image(str(flat_path))
+                        
+                        with open(coefs_path, 'r') as f:
+                            coefs_data = json.load(f)
+                            
+                        loaded_apertures = ApertureSet()
+                        width = flat_img.shape[1]
+                        for ap_id_str, ap_data in coefs_data.get('orders', {}).items():
+                            ap = ApertureLocation(
+                                aperture=int(ap_id_str), order=int(ap_id_str),
+                                is_chebyshev=True, domain=(0.0, float(width - 1))
+                            )
+                            if 'center_arr' in ap_data:
+                                ap.center_arr = np.array(ap_data['center_arr'])
+                            if 'w_up_cheb' in ap_data:
+                                ap.w_up_cheb_coef = np.array(ap_data['w_up_cheb'])
+                            if 'w_low_cheb' in ap_data:
+                                ap.w_low_cheb_coef = np.array(ap_data['w_low_cheb'])
+                            loaded_apertures.add_aperture(ap)
+                            
+                        flat_field = FlatField(
+                            flat_data=flat_img, flat_mask=None, flat_norm=None, 
+                            flat_sens=None, scattered_light=None, smoothed_model=None, 
+                            pixel_flat=None, illumination_flat=None, aperture_set=loaded_apertures
+                        )
+                        apertures = loaded_apertures
+                        
+                        self._flat_field = flat_field
+                        self._apertures = apertures
+                        self.pipeline.state.flat_field = flat_field
+                        self.pipeline.state.apertures = apertures
+                        self.log_text.append("  ✓ Successfully loaded MasterFlat and Apertures from disk.")
+                    else:
+                        self.log_text.append("  ! Could not find MasterFlat.fits or Orders_trace_coefs.json on disk.")
+                except Exception as e:
+                    self.log_text.append(f"  ✗ Failed to load from disk: {e}")
+
+            if flat_field is not None and apertures is not None:
+                self.log_text.append("\n============================================================")
+                self.log_text.append("STEP 3: SCATTERED LIGHT SUBTRACTION (MASTER FLAT)")
+                try:
+                    from src.core.scattered_light import create_widened_mask
+                    from src.core.scattered_light import process_background_stage
+                    from src.utils.fits_io import write_fits_image
+                    
+                    out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    mask_margin_pixels = self.config.get_int('reduce.background', 'mask_margin_pixels', 1)
+                    n_mask_below = self.config.get_int('reduce.trace', 'n_mask_below', 4)
+                    n_mask_above = self.config.get_int('reduce.trace', 'n_mask_above', 4)
+                    h, w = flat_field.flat_data.shape
+                    
+                    step3_mask, lo_traces, hi_traces, full_ids = create_widened_mask(
+                        apertures, flat_field.flat_data, mask_margin_pixels,
+                        n_mask_below, n_mask_above
+                    )
+                    
+                    write_fits_image(str(out_dir / 'Scattered_Light_Mask.fits'), step3_mask, dtype='uint8')
+                    self._step3_mask = step3_mask
+                    
+                    if self.config.get_bool('reduce', 'save_plots', True):
+                        import matplotlib.pyplot as plt
+                        fig_format = self.config.get('reduce', 'fig_format', 'png')
+                        plt.figure(figsize=(12, 10))
+                        plt.imshow(step3_mask, aspect='auto', origin='lower', cmap='gray', vmin=0, vmax=1)
+                        
+                        x_anno = w - 1
+                        for i, ap_id in enumerate(full_ids):
+                            yc = 0.5 * (lo_traces[i, x_anno] + hi_traces[i, x_anno])
+                            if np.isfinite(yc) and 0 <= yc < h:
+                                plt.text(x_anno + 5, yc, str(ap_id), color='red', fontsize=3.5, ha='left', va='center', clip_on=False)
+                        
+                        plt.title(f'Step 3 Widened Mask (margin={mask_margin_pixels})\nWhite=Masked (Orders + Virtual), Black=Background')
+                        plt.xlabel('Pixel (X)')
+                        plt.ylabel('Pixel (Y)')
+                        plt.xlim(0, w - 1)
+                        plt.ylim(0, h - 1)
+                        plot_file = out_dir / f'scattered_light_mask.{fig_format}'
+                        plt.savefig(str(plot_file), dpi=150, bbox_inches='tight')
+                        plt.close()
+                        self.log_text.append(f"  ✓ Saved widened order mask and plot (margin={mask_margin_pixels})")
+
+                    bg_kwargs = {
+                        'output_subdir': 'step3_scatterlight',
+                        'output_tag': 'MasterFlat_',
+                        'mask_margin_scale': 1.0,
+                        'mask_margin_pixels': 0, # Already widened
+                        'order_mask': step3_mask,
+                        'poly_order': self.config.get_int('reduce.background', 'poly_order', 3),
+                        'bg_method': self.config.get('reduce.background', 'method', 'convolution'),
+                        'sigma_clip_val': self.config.get_float('reduce.background', 'sigma_clip', 3.0),
+                        'maxiters': self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4),
+                        'bspline_smooth': self.config.get_float('reduce.background', 'bspline_smooth', 1.0),
+                        'n_mask_below': self.config.get_int('reduce.trace', 'n_mask_below', 4),
+                        'n_mask_above': self.config.get_int('reduce.trace', 'n_mask_above', 4),
+                        'clip_mode': self.config.get('reduce.background', 'sigma_clip_mode', 'upper'),
+                        'split_row': self.config.get_int('data', 'detector_split_row', 2068),
+                        'kernel_sigma_x': self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0),
+                        'kernel_sigma_y': self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0),
+                        'spline_smooth_factor': self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
+                        'spline_post_smooth_x': self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
+                        'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                        'fig_format': self.config.get('reduce', 'fig_format', 'png')
+                    }
+                    
+                    self.log_text.append(f"  Subtracting scattered light from Master Flat...")
+                    flat_background = process_background_stage(
+                        science_image=flat_field.flat_data,
+                        output_dir_base=self.config.get_output_path(),
+                        apertures=apertures,
+                        **bg_kwargs
+                    )
+                    flat_clean = np.clip(
+                        flat_field.flat_data.astype(np.float32) - flat_background.astype(np.float32),
+                        1e-6,
+                        None
+                    )
+                    flat_field.scattered_light = flat_background
+                    self._flat_field = flat_field
+                    self.pipeline.state.flat_field = flat_field
+                    
+                    master_flat_path = Path(self.config.get_output_path()) / 'step2_trace' / 'MasterFlat.fits'
+                    from src.utils.fits_io import read_fits_image
+                    _, flat_header = read_fits_image(str(master_flat_path)) if master_flat_path.exists() else (None, None)
+                    if flat_header is not None:
+                        flat_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
+                        
+                    write_fits_image(str(out_dir / 'MasterFlat.fits'), flat_clean.astype('float32'), header=flat_header, dtype='float32')
+                    self.log_text.append(f"  ✓ Master Flat scattered light subtraction complete.")
+                    self.processing_state['stage_3_completed'] = True
+                    
+                except Exception as e:
+                    self.log_text.append(f"  ✗ Master Flat scattered light subtraction failed: {e}")
+                    raise
+            else:
+                self.log_text.append("\n  ! Step 3 (Master Flat): No flat field or apertures available. Run Step 2 first.")
 
         # The rest of the stages would follow here, using the `current_*_files` lists.
         # This part is complex and seems to be what the user wants to fix.
@@ -1184,14 +1340,21 @@ class MainWindow(QMainWindow):
         self.log_text.append(f"  Calibration files ready for next steps: {len(current_calib_files)}")
         self.log_text.append("============================================================")
 
-        # Placeholder for the rest of the pipeline execution
+        # Execute the rest of the pipeline for each science file
         had_error = False
-        # for idx, science_file in enumerate(current_science_files):
-        #     try:
-        #         # self._execute_selected_stages(science_file, selected_stages, ...)
-        #     except Exception as e:
-        #         had_error = True
-        #         break
+        total_sci = len(current_science_files)
+        
+        science_stages = [s for s in selected_stages if s not in ["stage_0", "stage_1"]]
+        if science_stages:
+            for idx, science_file in enumerate(current_science_files):
+                try:
+                    self._execute_selected_stages(science_file, selected_stages, idx, total_sci)
+                except Exception as e:
+                    logger.error(f"Error processing {science_file}: {e}", exc_info=True)
+                    self.log_text.append(f"\n✗ Error processing {Path(science_file).name}: {e}")
+                    had_error = True
+                    break
+
         if not had_error:
             self.log_text.append(f"\n✓ {len(current_science_files)} science images processed through selected steps.")
         else:
@@ -1203,11 +1366,9 @@ class MainWindow(QMainWindow):
 
     def _execute_selected_stages(self, science_file: str, selected_stages: List[str], idx: int = 0, total: int = 1):
         """Execute only the selected processing stages."""
-        from src.core.overscan_correction import process_overscan_stage
-        from src.core.flat_fielding import process_flat_stage
-        from src.core.wave_calibration import process_wavelength_stage
         from src.core.scattered_light import process_background_stage
         from src.core.extraction import process_extraction_stage
+        from src.core.wave_calibration import process_wavelength_stage
         from src.utils.fits_io import read_fits_image, write_fits_image
 
         self.progress_bar.setValue(10)
@@ -1215,28 +1376,11 @@ class MainWindow(QMainWindow):
 
         total_stages = len(selected_stages)
         current_stage = 0
-
-        # For overscan correction, check if already processed
-        if "stage_0" in selected_stages:
-            current_stage += 1
-            progress = (current_stage / total_stages) * 100
-            self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Overscan Correction")
-
-        # For other stages, check if overscan-corrected science file should be used
-        if hasattr(self, '_use_overscan_science') and self._use_overscan_science:
-            output_dir = self.config.get_output_path()
-            overscan_dir = Path(output_dir) / 'step1_basic' / 'overscan_corrected'
-            overscan_science_file = overscan_dir / Path(science_file).name
-            if overscan_science_file.exists():
-                science_file = str(overscan_science_file)
         
-        if "stage_1" in selected_stages:
-            current_stage += 1
-            progress = (current_stage / total_stages) * 100
-            self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Bias Correction")
-            # Bias correction is already handled before the loop - science_file is already bias-corrected
+        # Determine the current science file
+        current_sci_file = science_file
+
+        # (stage_0 and stage_1 are Step 1 & 2, which are executed outside this loop)
 
         if "stage_2" in selected_stages:
             current_stage += 1
@@ -1245,31 +1389,59 @@ class MainWindow(QMainWindow):
             self.stage_label.setText(f"[{idx+1}/{total}] Scattered Light Subtraction")
 
             # Step 3: build/subtract scattered-light background for each science image.
-            sci_img, sci_header = read_fits_image(science_file)
-            sci_name = Path(science_file).stem
-            apertures = getattr(self, '_apertures', None)
+            sci_img, sci_header = read_fits_image(current_sci_file)
+            sci_name = Path(current_sci_file).stem
+            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
+
+            # Attempt to load pre-built Widened Order Mask
+            order_mask = getattr(self, '_step3_mask', None)
+            if order_mask is None:
+                mask_path = Path(self.config.get_output_path()) / 'step3_scatterlight' / 'Scattered_Light_Mask.fits'
+                if mask_path.exists():
+                    try:
+                        mask_img, _ = read_fits_image(str(mask_path))
+                        order_mask = mask_img
+                    except Exception:
+                        pass
 
             background = process_background_stage(
-                self.config,
-                sci_img,
-                None,
+                science_image=sci_img,
+                output_dir_base=self.config.get_output_path(),
                 output_subdir='step3_scatterlight',
                 output_tag=f'{sci_name}_',
                 apertures=apertures,
-                mask_margin_scale=1.2,
+                mask_margin_scale=1.0,
+                sci_header=sci_header,
+                order_mask=order_mask,
+                poly_order=self.config.get_int('reduce.background', 'poly_order', 3),
+                bg_method=self.config.get('reduce.background', 'method', 'convolution'),
+                sigma_clip_val=self.config.get_float('reduce.background', 'sigma_clip', 3.0),
+                maxiters=self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4),
+                bspline_smooth=self.config.get_float('reduce.background', 'bspline_smooth', 1.0),
+                mask_margin_pixels=0, # Already widened in the mask creation
+                n_mask_below=self.config.get_int('reduce.trace', 'n_mask_below', 4),
+                n_mask_above=self.config.get_int('reduce.trace', 'n_mask_above', 4),
+                clip_mode=self.config.get('reduce.background', 'sigma_clip_mode', 'upper'),
+                split_row=self.config.get_int('data', 'detector_split_row', 2068),
+                kernel_sigma_x=self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0),
+                kernel_sigma_y=self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0),
+                spline_smooth_factor=self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
+                spline_post_smooth_x=self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
+                save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                fig_format=self.config.get('reduce', 'fig_format', 'png')
             )
             corrected = sci_img.astype('float32') - background.astype('float32')
 
             out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
             out_dir.mkdir(parents=True, exist_ok=True)
-            corrected_path = out_dir / f'{sci_name}_science_background_subtracted.fits'
+            corrected_path = out_dir / Path(current_sci_file).name
 
             if sci_header is not None:
                 sci_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
             write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
 
             self.log_text.append(f"    ✓ Step 3 output: {corrected_path.name}")
-            science_file = str(corrected_path)
+            current_sci_file = str(corrected_path)
 
         if "stage_3" in selected_stages:
             current_stage += 1
@@ -1278,23 +1450,23 @@ class MainWindow(QMainWindow):
             self.stage_label.setText(f"[{idx+1}/{total}] 2D Flat-Field Correction")
 
             # Step 4: divide science image by the pixel flat from Step 2.
-            flat_field = getattr(self, '_flat_field', None)
+            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
             pixel_flat = flat_field.pixel_flat if flat_field is not None else None
             if pixel_flat is None:
                 self.log_text.append("  ! Step 4: no pixel_flat available – Step 2 must run first")
             else:
-                sci_img, sci_header = read_fits_image(science_file)
+                sci_img, sci_header = read_fits_image(current_sci_file)
                 safe_flat = np.where((pixel_flat > 0.1) & np.isfinite(pixel_flat), pixel_flat, 1.0)
                 corrected = sci_img.astype('float32') / safe_flat.astype('float32')
                 out_dir = Path(self.config.get_output_path()) / 'step4_flat_corrected'
                 out_dir.mkdir(parents=True, exist_ok=True)
-                sci_name = Path(science_file).stem
+                sci_name = Path(current_sci_file).stem
                 corrected_path = out_dir / f'{sci_name}_flat_corrected.fits'
                 if sci_header is not None:
                     sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
                 write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
                 self.log_text.append(f"  ✓ Step 4 output: {corrected_path.name}")
-                science_file = str(corrected_path)
+                current_sci_file = str(corrected_path)
 
         if "stage_4" in selected_stages:
             current_stage += 1
@@ -1302,28 +1474,162 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(int(progress))
             self.stage_label.setText(f"[{idx+1}/{total}] Spectrum Extraction")
 
-            apertures = getattr(self, '_apertures', None)
+            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
+            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
             if apertures is None:
                 self.log_text.append("  ! Step 5: no apertures available – Step 2 must run first")
             else:
-                sci_img, _ = read_fits_image(science_file)
-                sci_name = Path(science_file).stem
+                sci_img, _ = read_fits_image(current_sci_file)
+                sci_name = Path(current_sci_file).stem
+                extract_kwargs = {
+                    'output_dir_base': self.config.get_output_path(),
+                    'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
+                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                }
+                ext_method = self.config.get('reduce.extract', 'method', 'optimal')
                 spectra = process_extraction_stage(
-                    self.config, sci_img, apertures,
-                    output_filename=f'{sci_name}_extracted_spectra.fits',
-                    plot_prefix=sci_name,
+                    sci_img, apertures,
+                    wavelength_calib=None,
+                    flat_field=flat_field,
+                    method_override=ext_method,
+                    output_filename=f'{sci_name}_1D_{ext_method}.fits',
+                    plot_prefix=f'{sci_name}_1D_{ext_method}',
+                    **extract_kwargs
                 )
                 self.log_text.append(f"  ✓ Step 5 extraction complete: {len(spectra.spectra)} orders")
+                self._spectra = spectra
 
         if "stage_5" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
+            self.stage_label.setText(f"[{idx+1}/{total}] De-blazing")
+            
+            spectra = getattr(self, '_spectra', None)
+            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+            
+            if spectra is None:
+                self.log_text.append("  ! Step 6: no extracted spectra available – Step 5 must run first")
+            elif flat_field is None or flat_field.illumination_flat is None:
+                self.log_text.append("  ! Step 6: no blaze function available – Step 2 must run first")
+            else:
+                from src.core.de_blazing import process_de_blazing_stage
+                sci_name = Path(current_sci_file).stem
+                deblazed_spectra = process_de_blazing_stage(
+                    spectra,
+                    output_dir_base=self.config.get_output_path(),
+                    flat_field=flat_field,
+                    save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
+                    output_filename=f'{sci_name}_1D_Deblaze.fits',
+                    plot_prefix=f'{sci_name}_1D_Deblaze',
+                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                )
+                self.log_text.append(f"  ✓ Step 6 De-blazing complete")
+                self._deblazed_spectra = deblazed_spectra
+
+        if "stage_6" in selected_stages:
+            current_stage += 1
+            progress = (current_stage / total_stages) * 100
+            self.progress_bar.setValue(int(progress))
             self.stage_label.setText(f"[{idx+1}/{total}] Wavelength Calibration")
+            
             calib_for_wave = self.calib_file
             if isinstance(self.calib_file, list) and self.calib_file:
                 calib_for_wave = sorted(self.calib_file, key=lambda x: Path(x).stat().st_mtime)[-1]
-            wave_calib = process_wavelength_stage(self.config, calib_for_wave)
+                
+            if not calib_for_wave:
+                 self.log_text.append("  ! Step 7: no calibration file provided")
+            else:
+                 wave_calib = getattr(self, '_wave_calib', None)
+                 if wave_calib is None:
+                     self.log_text.append(f"    Extracting ThAr lamp spectrum from {calib_for_wave} ...")
+                     lamp_img, _ = read_fits_image(calib_for_wave)
+                     apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
+                     flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+                     
+                     extract_kwargs = {
+                         'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
+                         'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                         'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                     }
+                     lamp_spectra = process_extraction_stage(
+                         lamp_img, apertures,
+                         output_dir_base=self.config.get_output_path(),
+                         wavelength_calib=None,
+                         flat_field=flat_field,
+                         method_override='sum',
+                         output_filename='thar_1D_sum.fits',
+                         plot_prefix='thar_1D_sum',
+                         **extract_kwargs
+                     )
+                     
+                     wave_calib = process_wavelength_stage(
+                         lamp_spectra=lamp_spectra,
+                         config=self.config,
+                         output_dir_base=self.config.get_output_path(),
+                         lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
+                         save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                         fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                     )
+                     self._wave_calib = wave_calib
+                 
+                 spectra = getattr(self, '_deblazed_spectra', getattr(self, '_spectra', None))
+                 if spectra is None:
+                     self.log_text.append("  ! Step 7: no science spectra to calibrate")
+                 else:
+                     sci_name = Path(current_sci_file).stem
+                     from src.core.wave_calibration import WavelengthCalibrator
+                     
+                     delta_m = getattr(wave_calib, 'delta_m', 0)
+                     if delta_m != 0:
+                         self.log_text.append(f"    Applying order offset delta_m = {delta_m} ...")
+                         spectra.shift_orders(delta_m)
+                         
+                     calibrator = WavelengthCalibrator()
+                     calibrator.wave_calib = wave_calib
+                     
+                     from src.core.data_structures import SpectraSet
+                     calibrated_spectra = SpectraSet()
+                     
+                     for spectrum in spectra.spectra.values():
+                         n_pixels = len(spectrum.flux)
+                         pixel_array = np.arange(n_pixels)
+                         wavelengths = calibrator.apply_wavelength_calibration(
+                             spectrum.flux, pixel_array, aperture_y=float(spectrum.aperture)
+                         )
+                         calibrated_spectrum = spectrum.copy()
+                         calibrated_spectrum.wavelength = wavelengths
+                         calibrated_spectra.add_spectrum(calibrated_spectrum)
+                         
+                     out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
+                     out_dir.mkdir(parents=True, exist_ok=True)
+                     from src.core.de_blazing import save_deblazed_spectra
+                     save_deblazed_spectra(str(out_dir / f'{sci_name}_1D_calibrated.fits'), calibrated_spectra)
+                     
+                     self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied")
+                     self._calibrated_spectra = calibrated_spectra
+
+        if "stage_7" in selected_stages:
+            current_stage += 1
+            progress = (current_stage / total_stages) * 100
+            self.progress_bar.setValue(int(progress))
+            self.stage_label.setText(f"[{idx+1}/{total}] Order Stitching")
+            
+            spectra = getattr(self, '_calibrated_spectra', None)
+            if spectra is None:
+                self.log_text.append("  ! Step 8: no calibrated spectra available – Step 7 must run first")
+            else:
+                from src.core.order_stitching import process_order_stitching_stage
+                stitched = process_order_stitching_stage(
+                    spectra,
+                    output_dir_base=self.config.get_output_path(),
+                    output_subdir='step8_stitching',
+                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                )
+                self.log_text.append(f"  ✓ Step 8 Order Stitching complete")
 
         # Final progress update
         self.progress_bar.setValue(100)
@@ -1450,20 +1756,20 @@ class MainWindow(QMainWindow):
         """Update overscan checkbox based on configuration."""
         overscan_start_col = self.config.get_int('data', 'overscan_start_column', -1)
         stage_0_checkbox = self.stage_checkboxes.get('stage_0')
+        overscan_cb = self.step1_substep_checkboxes.get('overscan')
         
-        if stage_0_checkbox:
+        if stage_0_checkbox and overscan_cb:
+            # DO NOT set stage_0_checkbox.setChecked() here. This is the user's explicit choice.
+            # Only update the 'overscan' sub-checkbox based on config.
+
             # Temporarily block signals to prevent triggering the change handler
-            stage_0_checkbox.blockSignals(True)
+            overscan_cb.blockSignals(True)
             
             # If overscan_start_column is -1 (disabled), uncheck the checkbox
-            if overscan_start_col == -1:
-                stage_0_checkbox.setChecked(False)
-            else:
-                # If overscan_start_column is set to a valid value, check the checkbox
-                stage_0_checkbox.setChecked(True)
+            overscan_cb.setChecked(overscan_start_col != -1)
             
-            # Restore signals
-            stage_0_checkbox.blockSignals(False)
+            # Restore signals for the sub-checkbox
+            overscan_cb.blockSignals(False)
 
             # Keep Step1 substep toggles disabled when Step1 itself is unchecked.
             enabled = stage_0_checkbox.isChecked()
@@ -1484,8 +1790,9 @@ class MainWindow(QMainWindow):
         self._refresh_step1_checkbox_text()
             
         overscan_start_col = self.config.get_int('data', 'overscan_start_column', -1)
+        overscan_cb = self.step1_substep_checkboxes.get('overscan')
         
-        if state == Qt.Checked:
+        if state == Qt.Checked and overscan_cb and overscan_cb.isChecked():
             # Check if overscan_start_column is set (not -1)
             if overscan_start_col == -1:
                 # Ask user to set the overscan configuration
@@ -1495,10 +1802,11 @@ class MainWindow(QMainWindow):
                     "configuration in the Settings dialog."
                 )
                 
-                # Temporarily block signals to prevent recursion
-                stage_0_checkbox.blockSignals(True)
-                stage_0_checkbox.setChecked(False)
-                stage_0_checkbox.blockSignals(False)
+                # Uncheck only the overscan substep, keep Step 1 checked
+                overscan_cb.blockSignals(True)
+                overscan_cb.setChecked(False)
+                overscan_cb.blockSignals(False)
+                self._refresh_step1_checkbox_text()
                 
                 # Open settings dialog to the Data Reduction tab (index 1) which contains overscan settings
                 from src.gui.settings_dialog import SettingsDialog
@@ -1511,6 +1819,10 @@ class MainWindow(QMainWindow):
                 if result == QDialog.Accepted:
                     overscan_start_col = self.config.get_int('data', 'overscan_start_column', -1)
                     if overscan_start_col != -1:
+                        overscan_cb.blockSignals(True)
+                        overscan_cb.setChecked(True)
+                        overscan_cb.blockSignals(False)
+                        self._refresh_step1_checkbox_text()
                         self.statusBar.showMessage(f"Overscan configuration updated: start column = {overscan_start_col}")
                     else:
                         self.statusBar.showMessage("Overscan configuration saved (disabled)")
@@ -1521,4 +1833,4 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(f"Overscan correction enabled (start column = {overscan_start_col})")
         else:
             # If unchecked, just update status message - don't modify configuration
-            self.statusBar.showMessage("Overscan correction disabled (configuration preserved)")
+            self.statusBar.showMessage("Step 1 toggled (configuration preserved)")

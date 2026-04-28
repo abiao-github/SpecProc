@@ -224,6 +224,7 @@ class ProcessingPipeline:
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
                 'n_extend_below': self.config.get_int('reduce.trace', 'n_extend_below', 0),
                 'n_extend_above': self.config.get_int('reduce.trace', 'n_extend_above', 0),
+                'aperture_boundary_snr': self.config.get_float('reduce.trace', 'aperture_boundary_snr', 3.0),
                 'gap_fill_factor_interp': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.35),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'png'),
@@ -628,15 +629,61 @@ class ProcessingPipeline:
         output_dir_base = self.config.get_output_path()
         # 读取用户设置的mask参数
         mask_margin_pixels = self.config.get_int('reduce.background', 'mask_margin_pixels', 1)
-        n_mask_below = self.config.get_int('reduce.trace', 'n_mask_below', 2)
-        n_mask_above = self.config.get_int('reduce.trace', 'n_mask_above', 1)
+        n_mask_below = self.config.get_int('reduce.trace', 'n_mask_below', 4)
+        n_mask_above = self.config.get_int('reduce.trace', 'n_mask_above', 4)
+        
+        out_dir = Path(output_dir_base) / 'step3_scatterlight'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        from src.core.scattered_light import create_widened_mask
+        h, w = self.state.flat_field.flat_data.shape
+        
+        step3_mask, lo_traces, hi_traces, full_ids = create_widened_mask(
+            self.state.apertures, self.state.flat_field.flat_data, mask_margin_pixels,
+            n_mask_below, n_mask_above
+        )
+        
+        write_fits_image(str(out_dir / 'Scattered_Light_Mask.fits'), step3_mask, dtype='uint8')
+        
+        if self.config.get_bool('reduce', 'save_plots', True):
+            import matplotlib.pyplot as plt
+            fig_format = self.config.get('reduce', 'fig_format', 'png')
+            plt.figure(figsize=(12, 10))
+            plt.imshow(step3_mask, aspect='auto', origin='lower', cmap='gray', vmin=0, vmax=1)
+            
+            x_anno = w - 1
+            for i, ap_id in enumerate(full_ids):
+                yc = 0.5 * (lo_traces[i, x_anno] + hi_traces[i, x_anno])
+                if np.isfinite(yc) and 0 <= yc < h:
+                    plt.text(x_anno + 5, yc, str(ap_id), color='red', fontsize=3.5, ha='left', va='center', clip_on=False)
+                    
+            plt.title(f'Step 3 Widened Mask (margin={mask_margin_pixels})\nWhite=Masked (Orders + Virtual), Black=Background')
+            plt.xlabel('Pixel (X)')
+            plt.ylabel('Pixel (Y)')
+            plt.xlim(0, w - 1)
+            plt.ylim(0, h - 1)
+            plot_file = out_dir / f'scattered_light_mask.{fig_format}'
+            plt.savefig(str(plot_file), dpi=150, bbox_inches='tight')
+            plt.close()
+        
         bg_kwargs = {
             'output_subdir': 'step3_scatterlight',
-            'output_tag': 'master_flat_',
-            'mask_margin_scale': 1.2,
-            'mask_margin_pixels': mask_margin_pixels,
+            'mask_margin_scale': 1.0,
+            'mask_margin_pixels': 0, # Already widened by us
+            'order_mask': step3_mask,
+            'poly_order': self.config.get_int('reduce.background', 'poly_order', 3),
+            'bg_method': self.config.get('reduce.background', 'method', 'convolution'),
+            'sigma_clip_val': self.config.get_float('reduce.background', 'sigma_clip', 3.0),
+            'maxiters': self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4),
+            'bspline_smooth': self.config.get_float('reduce.background', 'bspline_smooth', 1.0),
             'n_mask_below': n_mask_below,
             'n_mask_above': n_mask_above,
+            'clip_mode': self.config.get('reduce.background', 'sigma_clip_mode', 'upper'),
+            'split_row': self.config.get_int('data', 'detector_split_row', 2068),
+            'kernel_sigma_x': self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0),
+            'kernel_sigma_y': self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0),
+            'spline_smooth_factor': self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
+            'spline_post_smooth_x': self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
             'save_plots': self.config.get_bool('reduce', 'save_plots', True),
             'fig_format': self.config.get('reduce', 'fig_format', 'png'),
         }
@@ -644,6 +691,7 @@ class ProcessingPipeline:
             self.state.flat_field.flat_data,
             output_dir_base,
             apertures=self.state.apertures,
+            output_tag='MasterFlat_',
             **bg_kwargs,
         )
         flat_clean = np.clip(
@@ -653,23 +701,20 @@ class ProcessingPipeline:
         )
         self.state.flat_field.scattered_light = flat_background
         
-        out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
-        out_dir.mkdir(parents=True, exist_ok=True)
-        write_fits_image(str(out_dir / 'master_flat_clean.fits'), flat_clean.astype(np.float32), dtype='float32')
+        master_flat_path = Path(output_dir_base) / 'step2_trace' / 'MasterFlat.fits'
+        _, flat_header = read_fits_image(str(master_flat_path)) if master_flat_path.exists() else (None, None)
+        if flat_header is not None:
+            flat_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
+            
+        write_fits_image(str(out_dir / 'MasterFlat.fits'), flat_clean.astype(np.float32), header=flat_header, dtype='float32')
 
         self._report_progress(0.56, "Step 3: Science Scattered Light")
         science_background = process_background_stage(
             science_image,
             output_dir_base,
-            output_subdir='step3_scatterlight',
             output_tag=f'{science_name}_',
             apertures=self.state.apertures,
-            mask_margin_scale=1.2,
-            mask_margin_pixels=mask_margin_pixels,
-            n_mask_below=n_mask_below,
-            n_mask_above=n_mask_above,
-            save_plots=self.config.get_bool('reduce', 'save_plots', True),
-            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+            **bg_kwargs,
         )
 
         corrected = science_image.astype(np.float32) - science_background.astype(np.float32)

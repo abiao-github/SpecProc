@@ -250,15 +250,13 @@ class SettingsDialog(QDialog):
         bg_layout = QFormLayout()
 
         self.bg_method_combo = QComboBox()
-        self.bg_method_combo.addItems(['convolution', 'column_spline', 'chebyshev', 'bspline', 'gaussian_smooth'])
+        self.bg_method_combo.addItems(['convolution', 'column_spline', 'bspline'])
         self.bg_method_combo.setToolTip(
             "'convolution': astropy NaN-aware 2D Gaussian convolution (recommended,\n"
             "  reproduces local ripples/fringes);\n"
             "'column_spline': per-column 1D smoothing spline (follows ripple peaks/troughs,\n"
             "  with light horizontal smoothing);\n"
-            "'chebyshev': global 2D Chebyshev polynomial fit;\n"
-            "'bspline': bivariate spline fit;\n"
-            "'gaussian_smooth': iterative Gaussian smoothing with valid-pixel weighting.")
+            "'bspline': bivariate spline fit.")
         bg_layout.addRow("Background Method:", self.bg_method_combo)
         self.bg_method_combo.currentTextChanged.connect(self._update_bg_params_enabled)
 
@@ -304,11 +302,6 @@ class SettingsDialog(QDialog):
         self.bg_poly_order_spin = QSpinBox()
         self.bg_poly_order_spin.setRange(1, 10)
         bg_layout.addRow("Fit Order:", self.bg_poly_order_spin)
-
-        self.bg_smooth_sigma_spin = QDoubleSpinBox()
-        self.bg_smooth_sigma_spin.setRange(1.0, 200.0)
-        self.bg_smooth_sigma_spin.setSingleStep(1.0)
-        bg_layout.addRow("Smooth Sigma:", self.bg_smooth_sigma_spin)
 
         self.bg_sigma_clip_spin = QDoubleSpinBox()
         self.bg_sigma_clip_spin.setRange(0.0, 10.0)
@@ -451,16 +444,13 @@ class SettingsDialog(QDialog):
         # Method-specific params
         is_conv = (method == 'convolution')
         is_spline = (method == 'column_spline')
-        is_cheby = (method == 'chebyshev')
         is_bspline = (method == 'bspline')
-        is_gauss = (method == 'gaussian_smooth')
 
         self.bg_kernel_sigma_x_spin.setEnabled(is_conv)
         self.bg_kernel_sigma_y_spin.setEnabled(is_conv)
         self.bg_spline_smooth_factor_spin.setEnabled(is_spline)
         self.bg_spline_post_smooth_x_spin.setEnabled(is_spline)
-        self.bg_poly_order_spin.setEnabled(is_cheby or is_bspline)
-        self.bg_smooth_sigma_spin.setEnabled(is_gauss)
+        self.bg_poly_order_spin.setEnabled(is_bspline)
         self.bg_bspline_smooth_spin.setEnabled(is_bspline)
 
         # Common params always enabled: sigma_clip, clip_iterations, clip_mode, mask_margin
@@ -575,22 +565,6 @@ class SettingsDialog(QDialog):
         trace_group = QGroupBox("Orders Tracing")
         trace_layout = QFormLayout()
 
-        # Order Spacing Tolerance
-        self.trace_spacing_tol_spin = QDoubleSpinBox()
-        self.trace_spacing_tol_spin.setRange(0.05, 1.0)
-        self.trace_spacing_tol_spin.setSingleStep(0.01)
-        self.trace_spacing_tol_spin.setDecimals(2)
-        self.trace_spacing_tol_spin.setToolTip(
-            "Order spacing tolerance: maximum allowed deviation (fraction) from predicted spacing for order acceptance.\n"
-            "Default 0.30 = ±30%. Orders with spacing deviating more than this from prediction are rejected.")
-        trace_layout.addRow("Order Spacing Tolerance:", self.trace_spacing_tol_spin)
-
-        self.trace_boundary_fit_step_spin = QSpinBox()
-        self.trace_boundary_fit_step_spin.setRange(4, 256)
-        self.trace_boundary_fit_step_spin.setToolTip(
-            "Step size (in columns) for precise boundary fitting (Moffat method).")
-        trace_layout.addRow("Boundary Fit Step:", self.trace_boundary_fit_step_spin)
-
         self.trace_snr_threshold_spin = QDoubleSpinBox()
         self.trace_snr_threshold_spin.setRange(1.0, 100000.0)
         self.trace_snr_threshold_spin.setSingleStep(0.5)
@@ -598,6 +572,14 @@ class SettingsDialog(QDialog):
             "Order detection SNR threshold (multiples of sigma above background).\n"
             "Typical: 3.0–10.0. Lower to detect very faint orders.")
         trace_layout.addRow("Detection SNR Threshold:", self.trace_snr_threshold_spin)
+
+        self.trace_aperture_boundary_snr_spin = QDoubleSpinBox()
+        self.trace_aperture_boundary_snr_spin.setRange(1.0, 20.0)
+        self.trace_aperture_boundary_snr_spin.setSingleStep(0.5)
+        self.trace_aperture_boundary_snr_spin.setToolTip(
+            "Aperture boundary SNR threshold: the aperture edge is where the signal\n"
+            "drops to N × σ above background. Lower = wider apertures. Typical 2.0-5.0.")
+        trace_layout.addRow("Aperture Boundary SNR:", self.trace_aperture_boundary_snr_spin)
 
         self.trace_min_coverage_spin = QDoubleSpinBox()
         self.trace_min_coverage_spin.setRange(0.05, 0.80)
@@ -619,24 +601,6 @@ class SettingsDialog(QDialog):
         self.trace_width_cheb_degree_spin.setToolTip("Chebyshev polynomial degree for fitting the order width.")
         trace_layout.addRow("Width Cheb Degree:", self.trace_width_cheb_degree_spin)
 
-        self.trace_boundary_frac_spin = QDoubleSpinBox()
-        self.trace_boundary_frac_spin.setRange(0.001, 0.2)
-        self.trace_boundary_frac_spin.setSingleStep(0.001)
-        self.trace_boundary_frac_spin.setDecimals(3)
-        self.trace_boundary_frac_spin.setToolTip(
-            "Initial boundary threshold: fraction of peak for preliminary order edge (default 0.02).\n"
-            "Lower = wider initial region for Moffat fit.")
-        trace_layout.addRow("Boundary Fraction (Initial):", self.trace_boundary_frac_spin)
-
-        self.trace_fwhm_scale_spin = QDoubleSpinBox()
-        self.trace_fwhm_scale_spin.setRange(0.5, 3.0)
-        self.trace_fwhm_scale_spin.setSingleStep(0.05)
-        self.trace_fwhm_scale_spin.setDecimals(2)
-        self.trace_fwhm_scale_spin.setToolTip(
-            "Final boundary = center ± FWHM × scale (default 1.5).\n"
-            "Controls the width of the extracted order region.")
-        trace_layout.addRow("FWHM Scale (Final):", self.trace_fwhm_scale_spin)
-
         # --- Gap-fill parameters (only relevant when checkbox is checked) ---
 
         self.trace_gap_fill_factor_spin = QDoubleSpinBox()
@@ -649,14 +613,6 @@ class SettingsDialog(QDialog):
         self.trace_gap_fill_factor_interp_spin.setSingleStep(0.05)
         self.trace_gap_fill_factor_interp_spin.setToolTip("Gap factor to trigger missing-order insertion during interpolation.")
         trace_layout.addRow("Gap Fill Factor (Interp):", self.trace_gap_fill_factor_interp_spin)
-
-        self.trace_gap_fill_snr_spin = QDoubleSpinBox()
-        self.trace_gap_fill_snr_spin.setRange(0.1, 5.0)
-        self.trace_gap_fill_snr_spin.setSingleStep(0.1)
-        self.trace_gap_fill_snr_spin.setToolTip(
-            "Gap-fill peak acceptance threshold (multiples of robust noise).\n"
-            "Lower values recover fainter orders; raise to avoid false insertions.")
-        trace_layout.addRow("Gap Fill SNR:", self.trace_gap_fill_snr_spin)
 
         self.trace_n_extend_below_spin = QSpinBox()
         self.trace_n_extend_below_spin.setRange(0, 10)
@@ -798,17 +754,14 @@ class SettingsDialog(QDialog):
         self.flat_pixel_min_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5))
         self.flat_pixel_max_spin.setValue(self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5))
         bg_method = self.config.get('reduce.background', 'method', 'convolution')
-        if bg_method == '2d_poly':
-            bg_method = 'chebyshev'
-        elif bg_method == 'smooth':
-            bg_method = 'gaussian_smooth'
+        if bg_method not in ['convolution', 'column_spline', 'bspline']:
+            bg_method = 'convolution'
         self.bg_method_combo.setCurrentText(bg_method)
         self.bg_kernel_sigma_x_spin.setValue(self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0))
         self.bg_kernel_sigma_y_spin.setValue(self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0))
         self.bg_spline_smooth_factor_spin.setValue(self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0))
         self.bg_spline_post_smooth_x_spin.setValue(self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0))
         self.bg_poly_order_spin.setValue(self.config.get_int('reduce.background', 'poly_order', 3))
-        self.bg_smooth_sigma_spin.setValue(self.config.get_float('reduce.background', 'smooth_sigma', 20.0))
         self.bg_sigma_clip_spin.setValue(self.config.get_float('reduce.background', 'sigma_clip', 3.0))
         self.bg_sigma_clip_iter_spin.setValue(self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4))
         clip_mode = self.config.get('reduce.background', 'sigma_clip_mode', 'upper')
@@ -840,21 +793,17 @@ class SettingsDialog(QDialog):
         self.wlcalib_q_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'q_threshold', 0.5))
 
         # Orders Tracing tab
-        self.trace_spacing_tol_spin.setValue(self.config.get_float('reduce.trace', 'spacing_tol', 0.3))
-        self.trace_boundary_fit_step_spin.setValue(self.config.get_int('reduce.trace', 'boundary_fit_step', 32))
         self.trace_snr_threshold_spin.setValue(self.config.get_float('reduce.trace', 'snr_threshold', 5.0))
+        self.trace_aperture_boundary_snr_spin.setValue(self.config.get_float('reduce.trace', 'aperture_boundary_snr', 3.0))
         self.trace_gap_fill_factor_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6))
         self.trace_gap_fill_factor_interp_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_factor_interp', 1.35))
-        self.trace_gap_fill_snr_spin.setValue(self.config.get_float('reduce.trace', 'gap_fill_snr', 2.5))
         self.trace_min_coverage_spin.setValue(self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20))
         self.trace_degree_spin.setValue(self.config.get_int('reduce.trace', 'degree', 4))
         self.trace_width_cheb_degree_spin.setValue(self.config.get_int('reduce.trace', 'width_cheb_degree', 3))
         self.trace_n_extend_below_spin.setValue(self.config.get_int('reduce.trace', 'n_extend_below', 0))
         self.trace_n_extend_above_spin.setValue(self.config.get_int('reduce.trace', 'n_extend_above', 0))
-        self.trace_n_mask_below_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_below', 2))
-        self.trace_n_mask_above_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_above', 1))
-        self.trace_boundary_frac_spin.setValue(self.config.get_float('reduce.trace', 'boundary_frac', 0.02))
-        self.trace_fwhm_scale_spin.setValue(self.config.get_float('reduce.trace', 'fwhm_scale', 1.5))
+        self.trace_n_mask_below_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_below', 4))
+        self.trace_n_mask_above_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_above', 4))
         self.extract_method_combo.setCurrentText(self.config.get('reduce.extract', 'method', 'optimal'))
 
         # Processing & Output tab
@@ -912,7 +861,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.background', 'spline_smooth_factor', str(self.bg_spline_smooth_factor_spin.value()))
             self.config.set('reduce.background', 'spline_post_smooth_x', str(self.bg_spline_post_smooth_x_spin.value()))
             self.config.set('reduce.background', 'poly_order', str(self.bg_poly_order_spin.value()))
-            self.config.set('reduce.background', 'smooth_sigma', str(self.bg_smooth_sigma_spin.value()))
             self.config.set('reduce.background', 'sigma_clip', str(self.bg_sigma_clip_spin.value()))
             self.config.set('reduce.background', 'sigma_clip_maxiters', str(self.bg_sigma_clip_iter_spin.value()))
             self.config.set('reduce.background', 'sigma_clip_mode', self.bg_clip_mode_combo.currentText())
@@ -946,11 +894,10 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.wlcalib', 'q_threshold', str(self.wlcalib_q_threshold_spin.value()))
 
             # Orders Tracing tab
-            self.config.set('reduce.trace', 'boundary_fit_step', str(self.trace_boundary_fit_step_spin.value()))
             self.config.set('reduce.trace', 'snr_threshold', str(self.trace_snr_threshold_spin.value()))
+            self.config.set('reduce.trace', 'aperture_boundary_snr', str(self.trace_aperture_boundary_snr_spin.value()))
             self.config.set('reduce.trace', 'gap_fill_factor', str(self.trace_gap_fill_factor_spin.value()))
             self.config.set('reduce.trace', 'gap_fill_factor_interp', str(self.trace_gap_fill_factor_interp_spin.value()))
-            self.config.set('reduce.trace', 'gap_fill_snr', str(self.trace_gap_fill_snr_spin.value()))
             self.config.set('reduce.trace', 'min_trace_coverage', str(self.trace_min_coverage_spin.value()))
             self.config.set('reduce.trace', 'degree', str(self.trace_degree_spin.value()))
             self.config.set('reduce.trace', 'width_cheb_degree', str(self.trace_width_cheb_degree_spin.value()))
@@ -958,9 +905,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.trace', 'n_extend_above', str(self.trace_n_extend_above_spin.value()))
             self.config.set('reduce.trace', 'n_mask_below', str(self.trace_n_mask_below_spin.value()))
             self.config.set('reduce.trace', 'n_mask_above', str(self.trace_n_mask_above_spin.value()))
-            self.config.set('reduce.trace', 'boundary_frac', str(self.trace_boundary_frac_spin.value()))
-            self.config.set('reduce.trace', 'fwhm_scale', str(self.trace_fwhm_scale_spin.value()))
-            self.config.set('reduce.trace', 'spacing_tol', str(self.trace_spacing_tol_spin.value()))
             self.config.set('reduce.extract', 'method', self.extract_method_combo.currentText())
 
             # Processing & Output tab

@@ -196,7 +196,7 @@ class FlatFieldProcessor:
                         pass
         else:
             header = fits.Header()
-        header['FLATCR'] = (True, 'Flat fielding completed')
+        header['EXTNAME'] = 'MASTER FLAT'
         primary_hdu = fits.PrimaryHDU(data=self.flat_data.astype(np.float32), header=header)
         hdul = fits.HDUList([
             primary_hdu,
@@ -268,21 +268,65 @@ class GratingOrderTracer:
         s_sig = np.median(np.abs(np.diff(valid_prof))) / 0.9539
         noise, baseline = max(s_sig, 0.1), s_med
 
-        diags = {'profile': profile, 'envelope': envelope, 'noise': noise, 'baseline': baseline, 'local_sep_func': local_sep_func, 'med_sep': med_sep}
+        diags = {'profile': profile, 'envelope': envelope, 'noise': noise, 'baseline': baseline,
+                 'local_sep_func': local_sep_func, 'med_sep': med_sep, 'x1': x1, 'x2': x2}
         return seed_pure, diags
 
     def _find_seeds(self, seed_profile: np.ndarray, diags: dict) -> np.ndarray:
         """Finds initial peak locations (seeds) in the 1D profile."""
         det_threshold = diags['baseline'] + self.params['snr_threshold'] * diags['noise']
-        # Use a very small distance to avoid dropping closely packed high-order peaks
-        peaks, _ = find_peaks(
-            seed_profile, 
-            height=det_threshold, 
-            distance=3, 
-            prominence=max(0.5 * diags['noise'], 0.1 * self.params['snr_threshold'] * diags['noise'])
-        )
-        logger.info(f"Found {len(peaks)} seed peaks (SNR > {self.params['snr_threshold']:.1f})")
-        return np.asarray(sorted(peaks), dtype=int)
+        prominence = max(0.5 * diags['noise'], 0.1 * self.params['snr_threshold'] * diags['noise'])
+        
+        # Initial peak finding with a small distance to not miss close orders
+        peaks, props = find_peaks(seed_profile, height=det_threshold, distance=3, prominence=prominence)
+        
+        if len(peaks) < 5:
+            logger.info(f"Found {len(peaks)} seed peaks (SNR > {self.params['snr_threshold']:.1f})")
+            return np.asarray(sorted(peaks), dtype=int)
+
+        # --- Gap detection and seed insertion ---
+        sorted_peaks = np.asarray(sorted(peaks), dtype=int)
+        diffs = np.diff(sorted_peaks)
+        local_sep_func = diags.get('local_sep_func')
+        if not local_sep_func:
+            med_sep = diags.get('med_sep', np.median(diffs) if len(diffs) > 0 else 30.0)
+            local_sep_func = lambda y: float(med_sep)
+
+        new_seeds = list(sorted_peaks)
+        for i in range(len(diffs)):
+            gap = diffs[i]
+            mid_y = (sorted_peaks[i] + sorted_peaks[i+1]) / 2.0
+            expected_sep = local_sep_func(mid_y)
+            gap_thresh = expected_sep * 1.5 # A gap is > 1.5x the local expected separation
+            
+            if gap > gap_thresh:
+                # Found a gap, try to insert seeds
+                n_missing = int(round(gap / expected_sep)) - 1
+                if n_missing > 0 and n_missing <= 5: # Limit insertions
+                    logger.info(f"Gap detected between {sorted_peaks[i]} and {sorted_peaks[i+1]} (gap={gap:.1f}, expected_sep={expected_sep:.1f}). Trying to insert {n_missing} seed(s).")
+                    for j in range(1, n_missing + 1):
+                        # Predict seed position
+                        predicted_y = int(round(sorted_peaks[i] + j * gap / (n_missing + 1)))
+                        
+                        # Search for a peak near the predicted position, even if it's below the main SNR threshold
+                        search_win = max(2, int(expected_sep * 0.2))
+                        y1 = max(0, predicted_y - search_win)
+                        y2 = min(len(seed_profile), predicted_y + search_win + 1)
+                        
+                        if y2 > y1:
+                            local_profile = seed_profile[y1:y2]
+                            # Use a lower threshold for gap filling
+                            gap_fill_thresh = diags['baseline'] + 1.0 * diags['noise'] # Lower SNR for gaps
+                            local_peaks, _ = find_peaks(local_profile, height=gap_fill_thresh, distance=3)
+                            if len(local_peaks) > 0:
+                                best_local_peak_idx = np.argmax(local_profile[local_peaks])
+                                inserted_y = y1 + local_peaks[best_local_peak_idx]
+                                new_seeds.append(inserted_y)
+                                logger.info(f"  -> Inserted seed at y={inserted_y} (predicted at {predicted_y})")
+            
+        final_seeds = np.asarray(sorted(list(set(new_seeds))), dtype=int)
+        logger.info(f"Found {len(peaks)} initial peaks, {len(final_seeds)} seeds after gap filling.")
+        return final_seeds
 
     def _trace_one_order(self, seed_y: float, diags: dict) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Traces a single order starting from a seed."""
@@ -299,12 +343,15 @@ class GratingOrderTracer:
             
             # A true peak must be a local maximum, not just the edge of the window
             if loc == 0 or loc == len(col) - 1:
-                return None
+                return None, 0.0
             
-            # Local prominence check to ensure we are on a peak, not flat noise
-            col_min = np.nanmin(col)
-            if (col[loc] - col_min) < 0.3 * diags['noise']: 
-                return None
+            bg_local = np.nanmin(col)
+            flux_bg_sub = col[loc] - bg_local
+            # To prevent losing the track over absorption lines, we lower the hard cutoff
+            # to 3.0 sigma. If it's between 3.0 and snr_threshold, we will use it for
+            # steering but NOT for final trace fitting.
+            if flux_bg_sub < 3.0 * diags['noise']:
+                return None, 0.0
             
             # Sub-pixel centroiding
             hw = 2
@@ -317,15 +364,20 @@ class GratingOrderTracer:
                 weights = np.maximum(0, sub_col[valid] - bg)
                 sum_w = np.sum(weights)
                 if sum_w > 0:
-                    return float(y1 + np.sum(yy * weights) / sum_w)
-            return float(y1 + loc)
+                    peak_y_subpix = float(y1 + np.sum(yy * weights) / sum_w)
+                    peak_snr = flux_bg_sub / diags['noise']
+                    return peak_y_subpix, peak_snr
+            peak_snr = flux_bg_sub / diags['noise']
+            return float(y1 + loc), peak_snr # Fallback to integer pixel if sub-pixel fails
 
         # Start from the center, calculate dynamic search window
         initial_sep = diags['local_sep_func'](seed_y)
         initial_search_half = max(3, int(initial_sep * 0.25))
-        start_y = refine_peak(self.w // 2, seed_y, initial_search_half)
-        if start_y is None: return None
-
+        
+        res = refine_peak(self.w // 2, seed_y, initial_search_half)
+        if res[0] is None: return None
+        start_y, start_snr = res
+        
         xs.append(float(self.w // 2))
         ys.append(start_y)
 
@@ -333,35 +385,32 @@ class GratingOrderTracer:
         for direction in [1, -1]:
             hist_x = [float(self.w // 2)]
             hist_y = [start_y]
-            miss_count = 0
+            miss_count = 0 # Counter for consecutive columns with signal below threshold or no peak
             
             x_range = range(self.w // 2 + direction, self.w if direction == 1 else -1, direction)
             for x in x_range:
-                # Extrapolation using up to 20 points for stable quadratic slope
-                if len(hist_x) >= 20:
-                    x1, y1 = hist_x[-1], hist_y[-1]
-                    x2, y2 = hist_x[-10], hist_y[-10]
-                    x3, y3 = hist_x[-20], hist_y[-20]
-                    
-                    d1 = (x1 - x2) * (x1 - x3)
-                    d2 = (x2 - x1) * (x2 - x3)
-                    d3 = (x3 - x1) * (x3 - x2)
-                    
-                    if d1 != 0 and d2 != 0 and d3 != 0:
-                        y_guess = y1 * (x - x2) * (x - x3) / d1 + \
-                                  y2 * (x - x1) * (x - x3) / d2 + \
-                                  y3 * (x - x1) * (x - x2) / d3
-                    else:
-                        y_guess = hist_y[-1]
+                # Extrapolate y_guess using a polynomial fit to the recent trace history
+                if len(hist_x) >= 15:
+                    # Use quadratic fit for better curve handling
+                    n_pts, deg = 15, 2
                 elif len(hist_x) >= 5:
-                    dx = hist_x[-1] - hist_x[-5]
-                    dy = hist_y[-1] - hist_y[-5]
-                    slope = dy / dx if dx != 0 else 0
-                    y_guess = hist_y[-1] + slope * (x - hist_x[-1])
+                    # Use linear fit for stability
+                    n_pts, deg = 5, 1
+                else:
+                    n_pts, deg = 0, 0
+
+                if n_pts > 0:
+                    fit_x = np.array(hist_x[-n_pts:])
+                    fit_y = np.array(hist_y[-n_pts:])
+                    # Shift x to be around 0 for better numerical stability
+                    x0 = fit_x[-1]
+                    try:
+                        coeffs = np.polyfit(fit_x - x0, fit_y, deg)
+                        y_guess = np.polyval(coeffs, x - x0)
+                    except (np.linalg.LinAlgError, ValueError):
+                        y_guess = hist_y[-1] # Fallback
                 elif len(hist_x) >= 2:
-                    dx = hist_x[-1] - hist_x[-2]
-                    dy = hist_y[-1] - hist_y[-2]
-                    slope = dy / dx if dx != 0 else 0
+                    slope = (hist_y[-1] - hist_y[-2]) / (hist_x[-1] - hist_x[-2])
                     y_guess = hist_y[-1] + slope * (x - hist_x[-1])
                 else:
                     y_guess = hist_y[-1]
@@ -370,17 +419,30 @@ class GratingOrderTracer:
                 local_sep = diags['local_sep_func'](y_guess)
                 search_half = max(2, int(local_sep * 0.25))
                 
-                y_new = refine_peak(x, y_guess, search_half)
-                if y_new is not None and abs(y_new - y_guess) <= search_half:
-                    xs.append(float(x))
-                    ys.append(y_new)
+                res = refine_peak(x, y_guess, search_half)
+                if res[0] is not None and abs(res[0] - y_guess) <= search_half:
+                    y_new, peak_snr = res
+                    # Update steering history even if SNR is low (e.g. inside absorption line)
+                    # so we don't drift off the track.
                     hist_x.append(float(x))
                     hist_y.append(y_new)
-                    miss_count = 0
+                    
+                    if peak_snr >= self.params['snr_threshold']:
+                        # Strong peak. Save to final trace points.
+                        xs.append(float(x))
+                        ys.append(y_new)
+                        miss_count = 0
+                    else:
+                        # Weak peak (absorption line). Steer, but don't save to final trace.
+                        miss_count += 1
                 else:
-                    miss_count += 1
-                    if miss_count > 20:
-                        break
+                    # Completely lost the peak (e.g., edge of detector)
+                    miss_count += 1 
+                
+                # Allow a coasting distance of 50 pixels to jump over wide absorption lines.
+                max_miss = 50
+                if miss_count > max_miss:
+                    break
 
         if len(xs) < self.params['min_trace_coverage'] * self.w:
             return None
@@ -986,6 +1048,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
                       trace_degree: int = 4,
                       # Profile boundary parameters
                       width_cheb_degree: int = 3,
+                      aperture_boundary_snr: float = 3.0,
                       # Gap fill / extend parameters
                       n_extend_below: int = 0,
                       n_extend_above: int = 0,
@@ -1045,7 +1108,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
     center_col = width // 2
 
     def _estimate_noise_floor(cross_section_1d, bg_envelope_1d, centers_y):
-        """Estimate background noise via iterative MAD sigma-clipping."""
+        """Estimate background noise via iterative MAD sigma-clipping.""" 
         residual = cross_section_1d - bg_envelope_1d
         valid = np.isfinite(residual)
         res = residual[valid]
@@ -1078,7 +1141,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
         else:
             sigma_bg = max(sigma_est, 1e-6)
 
-        return sigma_bg
+        return sigma_bg * aperture_boundary_snr
 
     ordered_apertures = sorted(apertures.apertures.items(), key=lambda x: x[0])
     valid_orders = []
@@ -1139,6 +1202,57 @@ def process_order_tracing_stage(flat_filenames: List[str],
                 for row_idx, root_lo, root_hi in results:
                     y_lo_all[row_idx, xi] = float(np.clip(root_lo, 0, height - 1))
                     y_hi_all[row_idx, xi] = float(np.clip(root_hi, 0, height - 1))
+                    
+    logger.info("Filtering abnormal boundary widths via cross-order interpolation...")
+    centers_all = np.full((len(valid_orders), width), np.nan)
+    for row_idx, item in enumerate(valid_orders):
+        centers_all[row_idx, :] = item['aperture'].get_position(x_coords_all)
+
+    w_up_all = y_hi_all - centers_all
+    w_low_all = centers_all - y_lo_all
+
+    from scipy.ndimage import median_filter
+    for xi in range(width):
+        for w_arr in (w_up_all, w_low_all):
+            col_w = w_arr[:, xi]
+            valid = np.isfinite(col_w) & (col_w > 0)
+            if np.sum(valid) >= 3:
+                idx_valid = np.where(valid)[0]
+                val_valid = col_w[valid]
+                
+                if len(val_valid) >= 5:
+                    trend = median_filter(val_valid, size=5, mode='nearest')
+                else:
+                    trend = np.full_like(val_valid, np.median(val_valid))
+                
+                # 识别异常偏宽的边界：宽度 > 趋势宽度的 1.4 倍，或者比趋势宽出 4 个像素
+                outlier_mask = (val_valid > 1.4 * trend) | (val_valid > trend + 4.0)
+                
+                if np.any(outlier_mask):
+                    good_mask = ~outlier_mask
+                    if np.sum(good_mask) >= 2:
+                        val_valid[outlier_mask] = np.interp(idx_valid[outlier_mask], idx_valid[good_mask], val_valid[good_mask])
+                    elif np.sum(good_mask) == 1:
+                        val_valid[outlier_mask] = val_valid[good_mask][0]
+                    col_w[idx_valid] = val_valid
+                    
+    y_hi_all = centers_all + w_up_all
+    y_lo_all = centers_all - w_low_all
+
+    # Resolve overlaps in raw boundaries before fitting to guide the polynomials
+    for i in range(len(valid_orders) - 1):
+        for xi in range(width):
+            if y_hi_all[i, xi] >= y_lo_all[i+1, xi] - 1.0:
+                c1 = int(round(centers_all[i, xi]))
+                c2 = int(round(centers_all[i+1, xi]))
+                c1 = max(0, min(c1, height - 1))
+                c2 = max(0, min(c2, height - 1))
+                if c2 > c1 + 2:
+                    valley = c1 + np.argmin(flat_data[c1:c2, xi])
+                else:
+                    valley = int(round(0.5 * (c1 + c2)))
+                y_hi_all[i, xi] = valley - 0.5
+                y_lo_all[i+1, xi] = valley + 0.5
 
     x_all_f = x_coords_all.astype(float)
 
@@ -1208,20 +1322,46 @@ def process_order_tracing_stage(flat_filenames: List[str],
         json.dump({'orders': _trace_coefs}, f, indent=2)
     logger.info(f"Saved trace coefs ({len(_trace_coefs)} orders) to {coefs_path.name}")
 
-    order_labels = np.zeros((height, width), dtype=np.int32)
-    for ap_id, ap in apertures.apertures.items():
-        lo_trace = ap.get_lower(x_all_f)
-        hi_trace = ap.get_upper(x_all_f)
-        for xi in range(width):
-            if np.isfinite(lo_trace[xi]) and np.isfinite(hi_trace[xi]):
-                r0 = max(0, int(np.floor(lo_trace[xi])))
-                r1 = min(height, int(np.ceil(hi_trace[xi])) + 1)
-                if r1 > r0:
-                    order_labels[r0:r1, xi] = ap_id
+    all_ap_ids = sorted(list(apertures.apertures.keys()))
+    n_ap = len(all_ap_ids)
+    lo_traces = np.zeros((n_ap, width))
+    hi_traces = np.zeros((n_ap, width))
+    centers = np.zeros((n_ap, width))
 
-    labels_path = Path(base_output_path) / 'step2_trace' / 'Orders_mask.fits'
-    write_fits_image(str(labels_path), order_labels, dtype='int32')
-    logger.info(f"Saved labeled order mask to {labels_path}")
+    for i, ap_id in enumerate(all_ap_ids):
+        ap = apertures.get_aperture(ap_id)
+        centers[i] = ap.get_position(x_all_f)
+        lo_traces[i] = ap.get_lower(x_all_f)
+        hi_traces[i] = ap.get_upper(x_all_f)
+
+    # Enforce valley gap for the final mask and plot
+    for i in range(n_ap - 1):
+        for xi in range(width):
+            if hi_traces[i, xi] >= lo_traces[i+1, xi] - 1.0:
+                c1 = int(round(centers[i, xi]))
+                c2 = int(round(centers[i+1, xi]))
+                c1 = max(0, min(c1, height - 1))
+                c2 = max(0, min(c2, height - 1))
+                if c2 > c1 + 2:
+                    valley = c1 + np.argmin(flat_data[c1:c2, xi])
+                else:
+                    valley = int(round(0.5 * (c1 + c2)))
+                hi_traces[i, xi] = valley - 0.5
+                lo_traces[i+1, xi] = valley + 0.5
+
+    # Use uint8 for boolean mask (1 = order, 0 = background)
+    order_mask = np.zeros((height, width), dtype=np.uint8)
+    for i, ap_id in enumerate(all_ap_ids):
+        for xi in range(width):
+            if np.isfinite(lo_traces[i, xi]) and np.isfinite(hi_traces[i, xi]):
+                r0 = max(0, int(np.ceil(lo_traces[i, xi])))
+                r1 = min(height, int(np.floor(hi_traces[i, xi])) + 1)
+                if r1 > r0:
+                    order_mask[r0:r1, xi] = 1
+
+    mask_path = Path(base_output_path) / 'step2_trace' / 'Orders_mask.fits'
+    write_fits_image(str(mask_path), order_mask, dtype='uint8')
+    logger.info(f"Saved order boolean mask to {mask_path}")
 
     if save_plots and apertures.norders > 0:
         logger.info("Generating diagnostic plots...")
@@ -1233,20 +1373,28 @@ def process_order_tracing_stage(flat_filenames: List[str],
         plt.imshow(flat_data, aspect='auto', origin='lower', cmap='viridis', vmin=vmin, vmax=vmax)
         plt.colorbar(label='Counts')
 
-        for ap_id, ap in apertures.apertures.items():
-            center_pos = ap.get_position(x_coords_all)
-            is_filled = getattr(ap, 'is_interpolated', False)
-            ls = '--' if is_filled else '-'
-            alpha = 0.2 if is_filled else 0.4
+        for i, ap_id in enumerate(all_ap_ids):
+            ap = apertures.get_aperture(ap_id)
+            center_pos = centers[i]
+            lower_pos = lo_traces[i]
+            upper_pos = hi_traces[i]
             
-            # 仅叠加红色级次中心轨迹线，使用半透明和较细的线宽
-            plt.plot(x_coords_all, center_pos, color='red', linestyle=ls, linewidth=0.4, alpha=alpha)
+            is_filled = getattr(ap, 'is_interpolated', False)
+            alpha_val = 0.7 if is_filled else 1.0
+            
+            # 中心轨迹线用间隔大一点的虚线，上下边缘用点线
+            # 颜色与背景光谱的 color map 对比明显
+            plt.plot(x_coords_all, center_pos, color='red', linestyle='--', linewidth=0.5, alpha=alpha_val)
+            plt.plot(x_coords_all, lower_pos, color='orange', linestyle=':', linewidth=0.4, alpha=alpha_val)
+            plt.plot(x_coords_all, upper_pos, color='magenta', linestyle=':', linewidth=0.4, alpha=alpha_val)
             
             if np.any(np.isfinite(center_pos)):
                 x_anno = x_coords_all[np.isfinite(center_pos)][-1]
                 y_anno = center_pos[np.isfinite(center_pos)][-1]
-                plt.text(x_anno + 5, y_anno, str(ap_id), color='red', fontsize=4, ha='left', va='center', alpha=0.6)
+                plt.text(x_anno + 5, y_anno, str(ap_id), color='red', fontsize=5, ha='left', va='center', alpha=alpha_val, clip_on=False)
 
+        plt.xlim(0, width - 1)
+        plt.ylim(bottom=0)
         plt.xlabel('Pixel (X)')
         plt.ylabel('Pixel (Y)')
         plt.title('Order Traces on Combined Master Flat')
@@ -1271,15 +1419,17 @@ def process_order_tracing_stage(flat_filenames: List[str],
                 ax.plot(y_coords, envelope, 'g--', linewidth=0.7, label='Background Envelope')
                 
                 det_threshold_flux = snr_threshold * diags.get('noise', 1.0)
-                ax.plot(y_coords, envelope + det_threshold_flux, color='magenta', linestyle=':', linewidth=0.8, alpha=0.8, label='Detection Threshold')
+                ax.plot(y_coords, envelope + det_threshold_flux, color='magenta', linestyle=':', linewidth=0.8, alpha=0.8, label=f'{snr_threshold} $\\sigma$ Detection Threshold')
 
             # Add markings for each aperture
-            x_center_col = width // 2
             max_prof_val = np.nanmax(diags['profile']) if 'profile' in diags else 1000
+            x1_col = diags.get('x1', max(0, width // 2 - 5))
+            x2_col = diags.get('x2', min(width, width // 2 + 6))
+            x_cols_eval = np.arange(x1_col, x2_col, dtype=float)
             for ap_id, ap in apertures.apertures.items():
-                center_y = ap.get_position(x_center_col)
-                lower_y = ap.get_lower(x_center_col)
-                upper_y = ap.get_upper(x_center_col)
+                center_y = np.nanmedian(ap.get_position(x_cols_eval))
+                lower_y = np.nanmedian(ap.get_lower(x_cols_eval))
+                upper_y = np.nanmedian(ap.get_upper(x_cols_eval))
 
                 if np.isfinite(center_y):
                     if len(seeds) > 0:
@@ -1290,8 +1440,9 @@ def process_order_tracing_stage(flat_filenames: List[str],
                                 peak_top = diags['profile'][peak_y_coord]
                                 
                                 # 红色短线和级次序号标记在 peaks 顶部
-                                ax.vlines(center_y, peak_top, peak_top + 0.025 * max_prof_val, color='red', linewidth=1.5, zorder=10)
-                                ax.text(center_y, peak_top + 0.03 * max_prof_val, str(ap_id), color='red', ha='center', va='bottom', fontsize=7)
+                                v_offset = 0.015 * max_prof_val
+                                ax.vlines(peak_y_coord, peak_top + v_offset, peak_top + v_offset + 0.025 * max_prof_val, color='red', linewidth=1.5, zorder=10)
+                                ax.text(peak_y_coord, peak_top + v_offset + 0.03 * max_prof_val, str(ap_id), color='red', ha='center', va='bottom', fontsize=7)
                                 
                                 # 青色水平 error bar，两边的 cap 底部卡在实际的级次边缘流量对应的位置
                                 err_lower = center_y - lower_y
@@ -1300,7 +1451,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
                                     idx_lower = int(np.clip(round(lower_y), 0, len(diags['profile']) - 1))
                                     idx_upper = int(np.clip(round(upper_y), 0, len(diags['profile']) - 1))
                                     edge_flux = (diags['profile'][idx_lower] + diags['profile'][idx_upper]) / 2.0
-                                    ax.errorbar(center_y, edge_flux, xerr=[[err_lower], [err_upper]], fmt='none', ecolor='cyan', capsize=2.0, elinewidth=0.6, capthick=0.4, zorder=10)
+                                    ax.errorbar(peak_y_coord, edge_flux, xerr=[[err_lower], [err_upper]], fmt='none', ecolor='cyan', capsize=2.0, elinewidth=0.6, capthick=0.4, zorder=10)
 
             ax.set_xlabel('Pixel (Y)')
             ax.set_ylabel('Flux (Counts)')
@@ -1320,7 +1471,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
             
             plot_data = []
             for ap_id, ap in apertures.apertures.items():
-                center_y = ap.get_position(width // 2)
+                center_y = np.nanmedian(ap.get_position(x_cols_eval))
                 if np.isfinite(center_y) and len(seeds) > 0:
                     seed_idx = np.argmin(np.abs(seeds - center_y))
                     if np.abs(seeds[seed_idx] - center_y) < diags.get('med_sep', 30) * 0.75:
@@ -1334,8 +1485,16 @@ def process_order_tracing_stage(flat_filenames: List[str],
             if len(plot_data) > 0:
                 plot_seeds, plot_snrs, plot_labels = zip(*plot_data)
                 ax1.plot(plot_seeds, plot_snrs, 'b-o', linewidth=1.0, markersize=4, label='Peak SNR')
+                
+                # 根据图像截面长度（完整空间方向跨度）稍微左右宽展几列
+                x_margin = len(seed_profile) * 0.02
+                ax1.set_xlim(-x_margin, len(seed_profile) - 1 + x_margin)
+                
+                # 提高 Y 轴上限，为顶部居中的图例留出空间
+                snr_max = max(plot_snrs)
+                ax1.set_ylim(bottom=-snr_max * 0.05, top=max(snr_threshold * 1.5, snr_max * 1.20))
             
-            ax1.axhline(y=snr_threshold, color='magenta', linestyle=':', linewidth=1.2, alpha=0.8, label=f'SNR Threshold ({snr_threshold})')
+            ax1.axhline(y=snr_threshold, color='magenta', linestyle=':', linewidth=1.2, alpha=0.8, label=f'{snr_threshold} $\\sigma$ Threshold')
             
             ax1.set_xlabel('Pixel (Y)')
             ax1.set_ylabel('Signal-to-Noise Ratio (SNR)', color='b')
@@ -1351,28 +1510,33 @@ def process_order_tracing_stage(flat_filenames: List[str],
                 ax2.plot(plot_seeds, separations, 'rs', markersize=3, alpha=0.7, label='Inter-order Separation')
                 
                 # 画出前面多项式拟合得到的光滑曲线
-                y_eval = np.linspace(0, len(seed_profile)-1, 300)
+                x_min, x_max = ax1.get_xlim()
+                y_eval = np.linspace(max(0, x_min), min(len(seed_profile)-1, x_max), 300)
                 sep_eval = [local_sep_func(y) for y in y_eval]
                 ax2.plot(y_eval, sep_eval, 'r-', linewidth=1.0, alpha=0.4, label='Smooth Fit Curve')
                 
                 ax2.set_ylabel('Inter-order Separation (pixels)', color='r')
                 ax2.tick_params(axis='y', labelcolor='r')
                 
+                # 提高右侧 Y 轴上限，防止级次间距曲线撞到顶部图例
+                sep_max = max(sep_eval) if len(sep_eval) > 0 else 10.0
+                ax2.set_ylim(bottom=-sep_max * 0.05, top=sep_max * 1.20)
+                
                 snr_range = max(plot_snrs) - min(plot_snrs) if len(plot_snrs) > 1 else 10.0
                 y_range = max(sep_eval) - min(sep_eval) if len(sep_eval) > 1 else 10.0
                 for y, sep, snr, label in zip(plot_seeds, separations, plot_snrs, plot_labels):
-                    ax1.text(y, snr + snr_range * 0.02, str(label), va='bottom', ha='center', color='blue', fontsize=7)
-                    ax2.text(y, sep + y_range * 0.02, str(label), va='bottom', ha='center', color='red', fontsize=7)
+                    ax1.text(y, snr + snr_range * 0.015, str(label), va='bottom', ha='center', color='blue', fontsize=7, rotation=90)
+                    ax2.text(y, sep + y_range * 0.015, str(label), va='bottom', ha='center', color='red', fontsize=7, rotation=90)
                 
                 # 合并两个图的图例到一起
                 lines1, labels1 = ax1.get_legend_handles_labels()
                 lines2, labels2 = ax2.get_legend_handles_labels()
-                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center', ncol=3)
             elif len(plot_data) > 0:
                 snr_range = max(plot_snrs) - min(plot_snrs) if len(plot_snrs) > 1 else 10.0
                 for y, snr, label in zip(plot_seeds, plot_snrs, plot_labels):
-                    ax1.text(y, snr + snr_range * 0.02, str(label), va='bottom', ha='center', color='blue', fontsize=7)
-                ax1.legend(loc='upper left')
+                    ax1.text(y, snr + snr_range * 0.015, str(label), va='bottom', ha='center', color='blue', fontsize=7, rotation=90)
+                ax1.legend(loc='upper center', ncol=2)
             
             fig.tight_layout()
             snr_plot_file = out_dir / f'order_seed_snr.{fig_format}'

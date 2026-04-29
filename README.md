@@ -18,7 +18,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 
 ### Complete Reduction Pipeline
 
-**8-stage automated spectral reduction**:
+**7-stage automated spectral reduction**:
 
 1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
 2. **Orders Tracing** - Master flat generation and echelle order tracing
@@ -26,8 +26,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 4. **2D Flat-Field Correction** - 2D pixel flat correction
 5. **1D Spectrum Extraction** - 1D spectrum extraction (sum or optimal)
 6. **De-blazing** - Blaze function correction
-7. **Wavelength Calibration** - Wavelength calibration (applied to de-blazed 1D spectra)
-8. **Order Stitching** - Merge overlapping orders into a continuous 1D spectrum
+7. **Wavelength Calibration** - Wavelength calibration applied to both sum and optimal de-blazed 1D spectra
 
 ### Interactive GUI
 
@@ -173,8 +172,7 @@ specproc --config ./specproc.cfg
 │   ├── step3_background/       # Step 3: Background model and diagnostic plots
 │   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
 │   ├── step6_deblazing/        # Step 6: De-blazed spectra and diagnostic plots (if saved)
-│   ├── step7_wavelength/       # Step 7: Wavelength calibration solution and diagnostic plots
-│   └── step8_final_spectra/    # Step 8: Final 1D spectra and diagnostic plots for science frames
+│   └── step7_wavelength/       # Step 7: Final wavelength calibrated 1D spectra and plots
 ├── specproc.cfg              # User config file (optional)
 └── ...
 ```
@@ -252,8 +250,7 @@ rawdata_path = ./20241102_hrs
 #   ├── step3_background/       # Step 3: Background model
 #   ├── step5_extraction/       # Step 5: Extracted 1D spectra (pixel space)
 #   ├── step6_deblazing/        # Step 6: De-blazed spectra (if saved)
-#   ├── step7_wavelength/       # Step 7: Wavelength calibration solution
-#   └── step8_final_spectra/    # Step 8: Final 1D spectra for science frames
+#   └── step7_wavelength/       # Step 7: Final wavelength calibrated 1D spectra
 output_path = output
 
 #### Path Examples
@@ -341,193 +338,11 @@ calibration_file = wlcalib_20211123011_A.fits
 
 ## Processing Pipeline
 
-### Complete 8-Stage Pipeline
+### Complete 7-Stage Pipeline
 
 ![SpecProc Processing Pipeline](docs/processing_pipeline_diagram.png)
 
-*Figure: SpecProc 8-stage spectral reduction pipeline*
-
-**Alternative (for environments that support mermaid):**
-flowchart TD
-    Start([Start]) --> Stage0
-    subgraph Stage0 [STAGE 0: Overscan Correction]
-        A0[Read raw FITS files] --> A1[Extract overscan region]
-        A1 --> A2[Calculate median or polynomial fit]
-        A2 --> A3[Subtract overscan bias from image]
-        A3 --> End0[Output: Overscan corrected image]
-    end
-    End0 --> Stage1
-
-    subgraph Stage1 [STAGE 1: Bias Subtraction]
-        B0[Read overscan corrected images] --> B1[Combine bias frames]
-        B1 --> B2[Generate master bias]
-        B2 --> B3[Subtract master bias from images]
-        B3 --> End1[Output: Bias corrected image]
-    end
-    End1 --> Stage2
-
-    subgraph Stage2 [STAGE 2: Flat Fielding & Order Tracing]
-        C0[Read bias corrected flat frames] --> C1[Combine flat frames]
-        C1 --> C2[Generate master flat]
-        C2 --> C3[Detect echelle orders]
-        C3 --> C4[Fit polynomial traces for each order]
-        C4 --> C5[Extract blaze profiles]
-        C5 --> End2[Output: Master flat and apertures]
-    end
-    End2 --> Stage3
-
-    subgraph Stage3 [STAGE 3: Background Subtraction]
-        D0[Read bias corrected image] --> D1[Estimate background]
-        D1 --> D2[Fit 2D polynomial]
-        D2 --> D3a[Median filter]
-        D2 --> D3b[Apply 2D polynomial]
-        D3a --> End3a[Output: Background subtracted image]
-        D3b --> End3b[Continue to stage 4]
-    end
-    End3a --> Stage4
-    End3b --> Stage4
-
-    subgraph Stage4 [STAGE 4: Cosmic Ray Correction]
-        E0[Read background subtracted image] --> E1[Detect cosmic rays]
-        E1 --> E2[Identify cosmic ray pixels]
-        E2 --> E3[Interpolate with median filter]
-        E3 --> End4[Output: Cosmic ray corrected image]
-    end
-    End4 --> Stage5
-
-    subgraph Stage5 [STAGE 5: 1D Spectrum Extraction]
-        F0[Read cosmic ray corrected image] --> F1[Select extraction method]
-        F1 --> F2a[Sum extraction]
-        F1 --> F2b[Optimal extraction Horne 1986]
-        F2a --> F3[Extract 1D spectrum for each order]
-        F2b --> F4[Calculate extraction errors]
-        F4 --> End5[Output: SpectraSet pixel space]
-    end
-    End5 --> Stage6
-
-    subgraph Stage6 [STAGE 6: Wavelength Calibration]
-        G0[Step 1: ThAr lamp calibration] --> G1[Extract ThAr 1D spectrum]
-        G1 --> G2[Identify emission lines]
-        G2 --> G3[Fit 2D wavelength polynomial]
-        G3 --> G4[Establish pixel to wavelength mapping]
-        G4 --> G5[Step 2: Apply to science spectrum]
-        G5 --> G6[Convert pixel coordinates to wavelength units]
-        G6 --> End6[Output: Wavelength calibrated 1D spectrum]
-    end
-    End6 --> Stage7
-
-    subgraph Stage7 [STAGE 7: De-blazing]
-        H0[Read wavelength calibrated spectrum] --> H1[Read flat spectrum blaze function]
-        H1 --> H2{Order matching}
-        H2 --> H3[Match corresponding orders]
-        H3 --> H4[Divide by blaze function]
-        H4 --> H5[Normalize to unit continuum]
-        H5 --> End7[Output: Final calibrated spectrum]
-    end
-
-    End7 --> Final
-
-    Final([End]) --> Output[Output files]
-
-    style Stage0 fill:#e1f5ff
-    style Stage1 fill:#fff4e1
-    style Stage2 fill:#e8f5e9
-    style Stage3 fill:#fce4ec
-    style Stage4 fill:#f3e5f5
-    style Stage5 fill:#fff9c4
-    style Stage6 fill:#ffccbc
-    style Stage7 fill:#d1c4e9
-
-```mermaid
-flowchart TD
-    Start([Start]) --> Stage0
-    subgraph Stage0 [STAGE 0: Overscan Correction]
-        A0[Read raw FITS files] --> A1[Extract overscan region]
-        A1 --> A2[Calculate median or polynomial fit]
-        A2 --> A3[Subtract overscan bias from image]
-        A3 --> End0[Output: Overscan corrected image]
-    end
-    End0 --> Stage1
-
-    subgraph Stage1 [STAGE 1: Bias Subtraction]
-        B0[Read overscan corrected images] --> B1[Combine bias frames]
-        B1 --> B2[Generate master bias]
-        B2 --> B3[Subtract master bias from images]
-        B3 --> End1[Output: Bias corrected image]
-    end
-    End1 --> Stage2
-
-    subgraph Stage2 [STAGE 2: Flat Fielding & Order Tracing]
-        C0[Read bias corrected flat frames] --> C1[Combine flat frames]
-        C1 --> C2[Generate master flat]
-        C2 --> C3[Detect echelle orders]
-        C3 --> C4[Fit polynomial traces for each order]
-        C4 --> C5[Extract blaze profiles]
-        C5 --> End2[Output: Master flat and apertures]
-    end
-    End2 --> Stage3
-
-    subgraph Stage3 [STAGE 3: Background Subtraction]
-        D0[Read bias corrected image] --> D1[Estimate background]
-        D1 --> D2[Fit 2D polynomial]
-        D2 --> D3a[Median filter]
-        D2 --> D3b[Apply 2D polynomial]
-        D3a --> End3a[Output: Background subtracted image]
-        D3b --> End3b[Continue to stage 4]
-    end
-    End3a --> Stage4
-    End3b --> Stage4
-
-    subgraph Stage4 [STAGE 4: Cosmic Ray Correction]
-        E0[Read background subtracted image] --> E1[Detect cosmic rays]
-        E1 --> E2[Identify cosmic ray pixels]
-        E2 --> E3[Interpolate with median filter]
-        E3 --> End4[Output: Cosmic ray corrected image]
-    end
-    End4 --> Stage5
-
-    subgraph Stage5 [STAGE 5: 1D Spectrum Extraction]
-        F0[Read cosmic ray corrected image] --> F1[Select extraction method]
-        F1 --> F2a[Sum extraction]
-        F1 --> F2b[Optimal extraction Horne 1986]
-        F2a --> F3[Extract 1D spectrum for each order]
-        F2b --> F4[Calculate extraction errors]
-        F4 --> End5[Output: SpectraSet pixel space]
-    end
-    End5 --> Stage6
-
-    subgraph Stage6 [STAGE 6: Wavelength Calibration]
-        G0[Step 1: ThAr lamp calibration] --> G1[Extract ThAr 1D spectrum]
-        G1 --> G2[Identify emission lines]
-        G2 --> G3[Fit 2D wavelength polynomial]
-        G3 --> G4[Establish pixel to wavelength mapping]
-        G4 --> G5[Step 2: Apply to science spectrum]
-        G5 --> G6[Convert pixel coordinates to wavelength units]
-        G6 --> End6[Output: Wavelength calibrated 1D spectrum]
-    end
-    End6 --> Stage7
-
-    subgraph Stage7 [STAGE 7: De-blazing]
-        H0[Read wavelength calibrated spectrum] --> H1[Read flat spectrum blaze function]
-        H1 --> H2{Order matching}
-        H2 --> H3[Match corresponding orders]
-        H3 --> H4[Divide by blaze function]
-        H4 --> H5[Normalize to unit continuum]
-        H5 --> End7[Output: Final calibrated spectrum]
-    end
-    End7 --> Final
-
-    Final([End]) --> Output[Output files]
-
-    style Stage0 fill:#e1f5ff
-    style Stage1 fill:#fff4e1
-    style Stage2 fill:#e8f5e9
-    style Stage3 fill:#fce4ec
-    style Stage4 fill:#f3e5f5
-    style Stage5 fill:#fff9c4
-    style Stage6 fill:#ffccbc
-    style Stage7 fill:#d1c4e9
-```
+*Figure: SpecProc 7-stage spectral reduction pipeline*
 
 ### Stage Descriptions
 

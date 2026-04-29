@@ -29,47 +29,32 @@ class WavelengthCalibrator:
         self.wave_calib = None
         self.reference_lines = {}
 
-    def load_line_list(self, lamp_type: str = 'ThAr') -> Dict[str, np.ndarray]:
+    def load_line_list(self, filepath: str) -> np.ndarray:
         """
-        Load reference line list for calibration lamps.
-
-        Args:
-            lamp_type: Lamp type ('ThAr', 'Ar', 'Ne', 'He', 'Fe')
-
-        Returns:
-            Dictionary with wavelength line lists
+        Load reference line list for calibration lamps from a file.
+        Assumes wavelength is the first column.
         """
-        logger.info(f"Loading {lamp_type} line list...")
+        logger.info(f"Loading line list from {filepath}...")
 
-        # For now, create synthetic line lists
-        # In a real implementation, these would be loaded from data files
-        linelists = {
-            'ThAr': {
-                'wavelength': np.array([
-                    3888.6, 3944.6, 4078.6, 4131.7, 4181.9,
-                    5294.5, 5330.8, 5688.2, 5944.8, 5975.5,
-                    6052.72, 6083.3, 6170.17, 6212.5, 6318.16,
-                ]),
-                'strength': np.ones(15)
-            },
-            'Ne': {
-                'wavelength': np.array([
-                    3965.0, 4144.4, 4169.0, 4198.8, 4226.7,
-                    5852.5, 5881.9, 5902.8, 5929.7, 5944.8,
-                ]),
-                'strength': np.ones(10)
-            },
-            'Ar': {
-                'wavelength': np.array([
-                    4052.9, 4131.7, 4158.6, 4181.9, 4254.4,
-                    5006.1, 5017.2, 5047.7, 5062.5, 5141.8,
-                ]),
-                'strength': np.ones(10)
-            },
-        }
-
-        self.reference_lines[lamp_type] = linelists.get(lamp_type, {})
-        return linelists.get(lamp_type, {})
+        try:
+            wavelengths = []
+            with open(filepath, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.split('#')[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if parts:
+                        try:
+                            wavelengths.append(float(parts[0]))
+                        except ValueError:
+                            pass
+            wavelengths = np.array(wavelengths)
+            wavelengths = wavelengths[~np.isnan(wavelengths)]
+            return np.sort(wavelengths)
+        except Exception as e:
+            logger.error(f"Failed to load linelist from {filepath}: {e}")
+            return np.array([])
 
     def detect_lines_in_spectrum(self, spectrum: np.ndarray,
                                 wavelength: Optional[np.ndarray] = None,
@@ -92,14 +77,14 @@ class WavelengthCalibrator:
         std = np.std(spectrum)
         peaks, properties = find_peaks(spectrum, height=threshold * std, distance=5)
 
-        logger.info(f"Detected {len(peaks)} emission lines")
+        logger.debug(f"Detected {len(peaks)} emission lines")
 
         return peaks, spectrum[peaks]
 
-    def load_anchor_file(self, anchor_file: str) -> Dict[int, List[Tuple[float, float]]]:
+    def load_anchor_file(self, anchor_file: str) -> Dict[int, np.ndarray]:
         """
         读取灯谱证认的发射线锚点文件。
-        预期包含 Order, Wavelength, X_pixel (或者 Order, X_pixel, Wavelength)。
+        预期仅包含两列信息：Order(级次号), Wavelength(波长)。
         """
         anchors = {}
         try:
@@ -107,69 +92,105 @@ class WavelengthCalibrator:
             data = np.genfromtxt(anchor_file, delimiter=',')
             data = data[~np.isnan(data).any(axis=1)]
             
-            if data.shape[1] >= 3:
-                # 动态判断哪列是波长，哪列是像素 (基于波长值一般>3000)
-                col1_mean = np.mean(data[:, 1])
-                col2_mean = np.mean(data[:, 2])
-                
-                if col1_mean > col2_mean and col1_mean > 2000:
-                    wave_col, x_col = 1, 2
-                else:
-                    x_col, wave_col = 1, 2
-                    
+            if data.shape[1] >= 2:
                 for row in data:
                     m_ref = int(row[0])
-                    wave = float(row[wave_col])
-                    x_pix = float(row[x_col])
+                    wave = float(row[1])
                     if m_ref not in anchors:
                         anchors[m_ref] = []
-                    anchors[m_ref].append((x_pix, wave))
+                    anchors[m_ref].append(wave)
+                for m in anchors:
+                    anchors[m] = np.sort(np.array(anchors[m]))
             else:
-                logger.error("Anchor file must contain at least 3 columns: Order, Wavelength, and X_pixel.")
+                logger.error("Anchor file must contain at least 2 columns: Order and Wavelength.")
                 raise ValueError(
-                    "提供的锚点文件只有 2 列。为进行盲配，必须包含参考的 X 像素坐标列 "
-                    "请检查是否为 [级次号, 波长, X像素] 格式。"
+                    "提供的锚点文件只有 1 列。请检查是否为 [级次号, 波长] 格式。"
                 )
         except Exception as e:
             logger.error(f"Failed to load anchor file {anchor_file}: {e}")
             raise
         return anchors
 
-    def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, List[Tuple[float, float]]], pixel_tolerance: float = 5.0) -> Tuple[int, List[Tuple[float, int, float]]]:
+    def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, np.ndarray]) -> Tuple[int, List[Tuple[float, int, float]]]:
         """
         寻找最佳级次偏移 (delta_m = m_ref - m_obs) 并返回成功匹配的锚点 (X_obs, m_true, wavelength)。
+        采用无像素坐标的 1D 模式盲搜：利用任意两对特征峰之间的比例关系建立局部色散，匹配成功线数最多者胜出。
         """
         best_offset = 0
-        max_matches = -1
-        best_matched_points = []
+        max_total_matches = -1
+        best_global_matched_points = []
 
-        # 枚举所有可能的级次偏移
         for delta_m in range(-40, 41):
-            matches = 0
-            matched_points = []
-            for m_obs, peaks_x in detected_peaks.items():
+            total_matches = 0
+            global_matched_points = []
+
+            for m_obs, X in detected_peaks.items():
                 m_ref = m_obs + delta_m
                 if m_ref not in anchors:
                     continue
-                # 对该级次的每个参考锚点进行配对
-                for x_ref, wave_ref in anchors[m_ref]:
-                    if len(peaks_x) == 0:
-                        continue
-                    dist = np.abs(peaks_x - x_ref)
-                    idx = np.argmin(dist)
-                    if dist[idx] < pixel_tolerance:
-                        matches += 1
-                        matched_points.append((peaks_x[idx], m_ref, wave_ref))
-            
-            if matches > max_matches:
-                max_matches = matches
-                best_offset = delta_m
-                best_matched_points = matched_points
 
-        if max_matches == 0:
-            logger.warning("未能在观测到的 peaks 和锚点间找到匹配点，请检查提取数据或 pixel_tolerance！")
+                W = anchors[m_ref]
+                if len(W) < 2 or len(X) < 2:
+                    continue
+
+                best_inliers = []
+
+                # 遍历所有可能的锚点波长对
+                for k in range(len(W) - 1):
+                    for l in range(k + 1, len(W)):
+                        dw = W[l] - W[k]
+
+                        # 遍历所有可能的观测峰对
+                        for i in range(len(X) - 1):
+                            for j in range(i + 1, len(X)):
+                                dx = X[j] - X[i]
+                                if dx == 0: continue
+
+                                # 推算色散率 a (Angstrom/pixel)，考虑光栅可能为正或反色散方向
+                                for a_test in [dw / dx, -dw / dx]:
+                                    # Echelle 光栅物理色散率通常在 0.005 ~ 0.15 A/pix 之间
+                                    if not (0.005 < abs(a_test) < 0.15):
+                                        continue
+                                    
+                                    # 推算截距 b
+                                    x_anchor = X[i] if a_test == dw / dx else X[j]
+                                    b = W[k] - a_test * x_anchor
+
+                                    # 预测所有 X 的波长
+                                    W_pred = a_test * X + b
+
+                                    # 向量化计算与所有锚点波长的距离矩阵
+                                    diffs = np.abs(W[:, None] - W_pred[None, :])
+                                    min_dist_idx = np.argmin(diffs, axis=0)
+                                    min_dist = np.min(diffs, axis=0)
+
+                                    # 阈值：1.5 埃以内认为粗匹配成功
+                                    valid = min_dist < 1.5
+                                    if np.sum(valid) > len(best_inliers):
+                                        # 确保没有两个像素峰匹配到同一个参考波长上
+                                        matched_w = min_dist_idx[valid]
+                                        _, unique_indices = np.unique(matched_w, return_index=True)
+                                        if len(unique_indices) > len(best_inliers):
+                                            valid_x_idx = np.where(valid)[0][unique_indices]
+                                            valid_w_idx = matched_w[unique_indices]
+                                            best_inliers = [(X[vx], m_ref, W[vw]) for vx, vw in zip(valid_x_idx, valid_w_idx)]
+
+                # 如果这个级次找到了足够多的匹配线 (大于等于锚点数一半 或最少2根)
+                if len(best_inliers) >= max(2, min(3, len(W))):
+                    total_matches += len(best_inliers)
+                    global_matched_points.extend(best_inliers)
+
+            if total_matches > max_total_matches:
+                max_total_matches = total_matches
+                best_offset = delta_m
+                best_global_matched_points = global_matched_points
+
+        if max_total_matches <= 0:
+            logger.warning("盲配模式匹配失败！未找到合适的级次偏移。请检查峰值提取、锚点文件或放宽色散率限制。")
+        else:
+            logger.info(f"Blind match found delta_m={best_offset} with {max_total_matches} lines matched across all orders.")
             
-        return best_offset, best_matched_points
+        return best_offset, best_global_matched_points
 
     def rough_calibration(self, matched_points: List[Tuple[float, int, float]]) -> np.ndarray:
         """
@@ -272,14 +293,38 @@ class WavelengthCalibrator:
 
         # Solve least squares
         try:
-            coeffs_1d, residuals, rank, s = np.linalg.lstsq(A, m_lambda, rcond=None)
+            keep = np.ones(len(m_lambda), dtype=bool)
+            coeffs_1d = None
+            for _ in range(5):
+                if np.sum(keep) < (xorder + 1) * (yorder + 1):
+                    logger.warning("Too few points left for 2D poly fit after clipping.")
+                    break
+                    
+                A_fit = A[keep]
+                m_lambda_fit = m_lambda[keep]
+                
+                coeffs_1d, residuals_lstsq, rank, s = np.linalg.lstsq(A_fit, m_lambda_fit, rcond=None)
+                
+                pred_m_lambda = A @ coeffs_1d
+                pred_lambda = pred_m_lambda / y_pix
+                residuals = pred_lambda - wavelengths
+                
+                rms = np.sqrt(np.mean(residuals[keep] ** 2))
+                
+                new_keep = np.abs(residuals) < 3.0 * rms
+                if np.array_equal(new_keep, keep):
+                    break
+                keep = new_keep
+                
+            n_rejected = len(keep) - np.sum(keep)
+            if n_rejected > 0:
+                logger.info(f"Sigma clipping rejected {n_rejected} outliers.")
 
-            # Compute RMS of residuals
             pred_m_lambda = A @ coeffs_1d
             pred_lambda = pred_m_lambda / y_pix
-            rms = np.sqrt(np.mean((pred_lambda - wavelengths) ** 2))
+            rms = np.sqrt(np.mean((pred_lambda[keep] - wavelengths[keep]) ** 2))
 
-            logger.info(f"Wavelength fit RMS: {rms:.4f} Angstrom")
+            logger.info(f"Wavelength fit RMS: {rms:.4f} Angstrom (on {np.sum(keep)} lines)")
 
             # Reshape coefficients into 2D array
             poly_coef = coeffs_1d.reshape((xorder + 1, yorder + 1))
@@ -345,7 +390,7 @@ class WavelengthCalibrator:
         hdr['YORDER']    = self.wave_calib.yorder
         hdr['RMS']       = self.wave_calib.rms
         hdr['NLINES']    = self.wave_calib.nlines
-        hdr['CALIB_TYP'] = self.wave_calib.calib_type
+        hdr['CALIBTYP']  = self.wave_calib.calib_type
         hdr['DELTAM']    = getattr(self.wave_calib, 'delta_m', 0)
         hdr['POLY_TYP']  = getattr(self.wave_calib, 'poly_type', 'chebyshev')
         if hasattr(self.wave_calib, 'domain_x'):
@@ -509,8 +554,8 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
     calibrator = WavelengthCalibrator()
 
     # 1. 载入全量线库
-    linelist_dict = calibrator.load_line_list(lamp_type)
-    full_linelist = linelist_dict.get('wavelength', np.array([]))
+    full_linelist_path = config.get('telescope.linelist', 'full_linelist', 'calib_data/linelists/thar-noao.dat')
+    full_linelist = calibrator.load_line_list(full_linelist_path)
 
     # 2. 从 1D 灯谱中提取观测 peaks
     detected_peaks = {}
@@ -526,8 +571,7 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
 
     # 3. 载入锚点文件
     if anchor_file is None:
-        calib_path = config.get('telescope.linelist', 'calibration_path', 'calib_data/telescopes/xinglong216hrs/')
-        anchor_file = str(Path(calib_path) / 'xinglong_thar_lines.csv')
+        anchor_file = config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong_thar_lines.csv')
         
     anchors = calibrator.load_anchor_file(anchor_file)
 
@@ -546,8 +590,7 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
             prominent_peaks[m_obs] = peaks_x
 
     # 4. 匹配锚点寻找最佳级次偏移 delta_m (仅使用过滤后的强峰)
-    pixel_tol = 5.0 # 允许的像素匹配误差
-    delta_m, matched_anchors = calibrator.find_order_offset_and_match(prominent_peaks, anchors, pixel_tolerance=pixel_tol)
+    delta_m, matched_anchors = calibrator.find_order_offset_and_match(prominent_peaks, anchors)
     logger.info(f"Determined order offset (delta_m = m_ref - m_obs): {delta_m}")
 
     # 输出匹配锚点诊断图 PDF
@@ -568,7 +611,13 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
     logger.info(f"Successfully matched {len(matched_wave)} lines from the full catalog.")
 
     if len(matched_wave) < 15:
-        logger.warning("Very few lines matched to the full catalog. Check the rough calibration or tolerance parameters.")
+        logger.warning("Very few lines matched to the full catalog. Falling back to using only matched anchor points.")
+        if len(matched_anchors) >= 15:
+            pix_pos = np.array([[pt[0], pt[1]] for pt in matched_anchors])
+            matched_wave = np.array([pt[2] for pt in matched_anchors])
+            logger.info(f"Using {len(matched_wave)} anchor points for final 2D fit.")
+        else:
+            raise RuntimeError("Not enough lines matched (from either catalog or anchors) for 2D polynomial fitting.")
 
     # 7. 全局精确 2D 拟合
     x_order = config.get_int('reduce.wlcalib', 'xorder', 4)

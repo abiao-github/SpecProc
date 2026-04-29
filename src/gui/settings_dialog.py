@@ -8,7 +8,8 @@ Provides a GUI for editing configuration parameters organized by tabs.
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
-    QPushButton, QTabWidget, QWidget, QGroupBox, QFormLayout, QScrollArea
+    QPushButton, QTabWidget, QWidget, QGroupBox, QFormLayout, QScrollArea,
+    QFileDialog
 )
 from PyQt5.QtCore import Qt
 
@@ -350,24 +351,21 @@ class SettingsDialog(QDialog):
         self.flat_mosaic_maxcount_spin.setRange(0.0, 100000.0)
         flat_layout.addRow("Mosaic Max Count:", self.flat_mosaic_maxcount_spin)
 
-        self.flat_blaze_knot_spacing_spin = QSpinBox()
-        self.flat_blaze_knot_spacing_spin.setRange(50, 2000)
-        self.flat_blaze_knot_spacing_spin.setSingleStep(50)
-        self.flat_blaze_knot_spacing_spin.setToolTip(
-            "Interior B-spline knot spacing (pixels) for blaze fitting.\n"
-            "Wider = more rigid (better fringe rejection).\n"
-            "Must exceed the fringe period (typically >200 px).\n"
-            "Recommended 400-600 for 4k detectors.")
-        flat_layout.addRow("Blaze Knot Spacing:", self.flat_blaze_knot_spacing_spin)
+        self.flat_blaze_smooth_factor_spin = QDoubleSpinBox()
+        self.flat_blaze_smooth_factor_spin.setRange(0.1, 100.0)
+        self.flat_blaze_smooth_factor_spin.setSingleStep(0.1)
+        self.flat_blaze_smooth_factor_spin.setToolTip(
+            "Smoothing factor for automated B-spline blaze fitting in blue/dark orders.\n"
+            "s = factor * N * variance. Typical values: 1.0 (soft) to 20.0 (rigid).\n"
+            "Larger = more rigid curve, Smaller = softer fit.")
+        flat_layout.addRow("Blaze Smooth Factor:", self.flat_blaze_smooth_factor_spin)
 
-        self.flat_blaze_edge_nknots_spin = QSpinBox()
-        self.flat_blaze_edge_nknots_spin.setRange(2, 20)
-        self.flat_blaze_edge_nknots_spin.setSingleStep(1)
-        self.flat_blaze_edge_nknots_spin.setToolTip(
-            "Number of extra dense knots at each edge of the blaze.\n"
-            "More knots = closer fit to the steep edge roll-off.\n"
-            "4-8 recommended.")
-        flat_layout.addRow("Blaze Edge Knots:", self.flat_blaze_edge_nknots_spin)
+        self.flat_fringe_orders_spin = QSpinBox()
+        self.flat_fringe_orders_spin.setRange(0, 150)
+        self.flat_fringe_orders_spin.setToolTip(
+            "Number of red-end orders to apply Upper Envelope Chebyshev fitting for fringe removal.\n"
+            "Default is 20. Set to 0 to disable and use standard B-spline for all orders.")
+        flat_layout.addRow("Fringe Orders (Red end):", self.flat_fringe_orders_spin)
 
         self.flat_width_smooth_window_spin = QSpinBox()
         self.flat_width_smooth_window_spin.setRange(5, 401)
@@ -470,20 +468,41 @@ class SettingsDialog(QDialog):
         self.linelist_combo.addItems(['ThAr', 'Ar', 'Ne', 'He', 'Fe', 'custom'])
         calib_layout.addRow("Calibration Lamp Type:", self.linelist_combo)
 
-        self.linelist_path_edit = QLineEdit()
-        calib_layout.addRow("Linelist Path:", self.linelist_path_edit)
+        # --- Anchor File ---
+        self.anchor_file_edit = QLineEdit()
+        anchor_file_layout = QHBoxLayout()
+        anchor_file_layout.setContentsMargins(0, 0, 0, 0)
+        anchor_file_layout.addWidget(self.anchor_file_edit)
+        anchor_browse_btn = QPushButton("...")
+        anchor_browse_btn.setFixedWidth(30)
+        anchor_browse_btn.clicked.connect(self._select_anchor_file)
+        anchor_file_layout.addWidget(anchor_browse_btn)
+        calib_layout.addRow("Anchor File (Identified Lines):", anchor_file_layout)
 
-        self.linelist_file_edit = QLineEdit()
-        calib_layout.addRow("Linelist File:", self.linelist_file_edit)
+        # --- Full Linelist ---
+        self.full_linelist_edit = QLineEdit()
+        full_linelist_layout = QHBoxLayout()
+        full_linelist_layout.setContentsMargins(0, 0, 0, 0)
+        full_linelist_layout.addWidget(self.full_linelist_edit)
+        full_linelist_browse_btn = QPushButton("...")
+        full_linelist_browse_btn.setFixedWidth(30)
+        full_linelist_browse_btn.clicked.connect(self._select_full_linelist_file)
+        full_linelist_layout.addWidget(full_linelist_browse_btn)
+        calib_layout.addRow("Full Linelist Catalog:", full_linelist_layout)
 
         self.use_precomputed_calib_check = QCheckBox("Use pre-identified calibration files")
         calib_layout.addRow(self.use_precomputed_calib_check)
 
-        self.calibration_path_edit = QLineEdit()
-        calib_layout.addRow("Calibration Path:", self.calibration_path_edit)
-
-        self.calibration_file_edit = QLineEdit()
-        calib_layout.addRow("Calibration File:", self.calibration_file_edit)
+        # --- Precomputed Calibration File ---
+        self.precomputed_calib_file_edit = QLineEdit()
+        precomputed_calib_layout = QHBoxLayout()
+        precomputed_calib_layout.setContentsMargins(0, 0, 0, 0)
+        precomputed_calib_layout.addWidget(self.precomputed_calib_file_edit)
+        precomputed_browse_btn = QPushButton("...")
+        precomputed_browse_btn.setFixedWidth(30)
+        precomputed_browse_btn.clicked.connect(self._select_precomputed_calib_file)
+        precomputed_calib_layout.addWidget(precomputed_browse_btn)
+        calib_layout.addRow("Precomputed Calibration File:", precomputed_calib_layout)
 
         calib_group.setLayout(calib_layout)
         layout.addRow(calib_group)
@@ -631,18 +650,7 @@ class SettingsDialog(QDialog):
         trace_layout.addRow("Mask Above (Step3):", self.trace_n_mask_above_spin)
 
         trace_group.setLayout(trace_layout)
-
-        # Add Orders tracing参数组到主layout
         layout.addRow(trace_group)
-
-        extract_group = QGroupBox("Spectrum Extraction")
-        extract_layout = QFormLayout()
-        self.extract_method_combo = QComboBox()
-        self.extract_method_combo.addItems(['sum', 'optimal'])
-        extract_layout.addRow("Extraction Method:", self.extract_method_combo)
-
-        extract_group.setLayout(extract_layout)
-        layout.addRow(extract_group)
 
         widget.setLayout(layout)
         scroll.setWidget(widget)
@@ -717,6 +725,30 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    def _select_anchor_file(self):
+        """Open file dialog to select anchor file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Anchor File", "", "CSV Files (*.csv);;Text Files (*.txt *.dat);;All Files (*)"
+        )
+        if file_path:
+            self.anchor_file_edit.setText(file_path)
+
+    def _select_full_linelist_file(self):
+        """Open file dialog to select full linelist catalog."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Full Linelist Catalog", "", "Data Files (*.dat *.txt);;All Files (*)"
+        )
+        if file_path:
+            self.full_linelist_edit.setText(file_path)
+
+    def _select_precomputed_calib_file(self):
+        """Open file dialog to select precomputed calibration FITS file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Precomputed Calibration File", "", "FITS Files (*.fits *.fit);;All Files (*)"
+        )
+        if file_path:
+            self.precomputed_calib_file_edit.setText(file_path)
+
     def load_current_values(self):
         """Load current configuration values into UI."""
         # Data & Instruments tab
@@ -745,8 +777,8 @@ class SettingsDialog(QDialog):
         self.flat_combine_method_combo.setCurrentText(self.config.get('reduce.flat', 'combine_method', 'median'))
         self.flat_q_threshold_spin.setValue(self.config.get_float('reduce.flat', 'q_threshold', 0.5))
         self.flat_mosaic_maxcount_spin.setValue(self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535.0))
-        self.flat_blaze_knot_spacing_spin.setValue(self.config.get_int('reduce.flat', 'blaze_knot_spacing', 500))
-        self.flat_blaze_edge_nknots_spin.setValue(self.config.get_int('reduce.flat', 'blaze_edge_nknots', 6))
+        self.flat_blaze_smooth_factor_spin.setValue(self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0))
+        self.flat_fringe_orders_spin.setValue(self.config.get_int('reduce.flat', 'fringe_orders', 20))
         self.flat_width_smooth_window_spin.setValue(self.config.get_int('reduce.flat', 'width_smooth_window', 41))
         self.flat_n_profile_segments_spin.setValue(self.config.get_int('reduce.flat', 'n_profile_segments', 100))
         self.flat_profile_smooth_sigma_spin.setValue(self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0))
@@ -776,11 +808,10 @@ class SettingsDialog(QDialog):
 
         # Wavelength Calibration tab
         self.linelist_combo.setCurrentText(self.config.get('telescope.linelist', 'linelist_type', 'ThAr'))
-        self.linelist_path_edit.setText(self.config.get('telescope.linelist', 'linelist_path', 'calib_data/linelists/'))
-        self.linelist_file_edit.setText(self.config.get('telescope.linelist', 'linelist_file', 'thar-noao.dat'))
+        self.anchor_file_edit.setText(self.config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong_thar_lines.csv'))
+        self.full_linelist_edit.setText(self.config.get('telescope.linelist', 'full_linelist', 'calib_data/linelists/thar-noao.dat'))
         self.use_precomputed_calib_check.setChecked(self.config.get_bool('telescope.linelist', 'use_precomputed_calibration', False))
-        self.calibration_path_edit.setText(self.config.get('telescope.linelist', 'calibration_path', 'calib_data/telescopes/xinglong216hrs/'))
-        self.calibration_file_edit.setText(self.config.get('telescope.linelist', 'calibration_file', 'wlcalib_20211123011_A.fits'))
+        self.precomputed_calib_file_edit.setText(self.config.get('telescope.linelist', 'precomputed_calib_file', 'calib_data/telescopes/xinglong216hrs/wlcalib_20211123011_A.fits'))
         self.wlcalib_search_database_check.setChecked(self.config.get_bool('reduce.wlcalib', 'search_database', True))
         self.wlcalib_use_prev_fitpar_check.setChecked(self.config.get_bool('reduce.wlcalib', 'use_prev_fitpar', True))
         self.wlcalib_xorder_spin.setValue(self.config.get_int('reduce.wlcalib', 'xorder', 4))
@@ -804,7 +835,6 @@ class SettingsDialog(QDialog):
         self.trace_n_extend_above_spin.setValue(self.config.get_int('reduce.trace', 'n_extend_above', 0))
         self.trace_n_mask_below_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_below', 4))
         self.trace_n_mask_above_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_above', 4))
-        self.extract_method_combo.setCurrentText(self.config.get('reduce.extract', 'method', 'optimal'))
 
         # Processing & Output tab
         self.mode_combo.setCurrentText(self.config.get('reduce', 'mode', 'normal'))
@@ -847,8 +877,8 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
             self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
             self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
-            self.config.set('reduce.flat', 'blaze_knot_spacing', str(self.flat_blaze_knot_spacing_spin.value()))
-            self.config.set('reduce.flat', 'blaze_edge_nknots', str(self.flat_blaze_edge_nknots_spin.value()))
+            self.config.set('reduce.flat', 'blaze_smooth_factor', str(self.flat_blaze_smooth_factor_spin.value()))
+            self.config.set('reduce.flat', 'fringe_orders', str(self.flat_fringe_orders_spin.value()))
             self.config.set('reduce.flat', 'width_smooth_window', str(self.flat_width_smooth_window_spin.value()))
             self.config.set('reduce.flat', 'n_profile_segments', str(self.flat_n_profile_segments_spin.value()))
             self.config.set('reduce.flat', 'profile_smooth_sigma', str(self.flat_profile_smooth_sigma_spin.value()))
@@ -873,12 +903,11 @@ class SettingsDialog(QDialog):
 
             # Wavelength Calibration tab
             self.config.set('telescope.linelist', 'linelist_type', self.linelist_combo.currentText())
-            self.config.set('telescope.linelist', 'linelist_path', self.linelist_path_edit.text())
-            self.config.set('telescope.linelist', 'linelist_file', self.linelist_file_edit.text())
+            self.config.set('telescope.linelist', 'anchor_file', self.anchor_file_edit.text())
+            self.config.set('telescope.linelist', 'full_linelist', self.full_linelist_edit.text())
             self.config.set('telescope.linelist', 'use_precomputed_calibration',
                            'yes' if self.use_precomputed_calib_check.isChecked() else 'no')
-            self.config.set('telescope.linelist', 'calibration_path', self.calibration_path_edit.text())
-            self.config.set('telescope.linelist', 'calibration_file', self.calibration_file_edit.text())
+            self.config.set('telescope.linelist', 'precomputed_calib_file', self.precomputed_calib_file_edit.text())
             self.config.set('reduce.wlcalib', 'search_database',
                            'yes' if self.wlcalib_search_database_check.isChecked() else 'no')
             self.config.set('reduce.wlcalib', 'use_prev_fitpar',
@@ -905,7 +934,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.trace', 'n_extend_above', str(self.trace_n_extend_above_spin.value()))
             self.config.set('reduce.trace', 'n_mask_below', str(self.trace_n_mask_below_spin.value()))
             self.config.set('reduce.trace', 'n_mask_above', str(self.trace_n_mask_above_spin.value()))
-            self.config.set('reduce.extract', 'method', self.extract_method_combo.currentText())
 
             # Processing & Output tab
             self.config.set('reduce', 'mode', self.mode_combo.currentText())

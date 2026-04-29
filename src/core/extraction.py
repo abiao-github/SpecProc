@@ -44,7 +44,7 @@ class SpectrumExtractor:
         Returns:
             1D spectrum array
         """
-        logger.info("Performing sum extraction...")
+        logger.debug("Performing sum extraction...")
 
         rows, cols = image.shape
 
@@ -67,12 +67,12 @@ class SpectrumExtractor:
             else:
                 spectrum[x] = 0.0
 
-        logger.info(f"Sum extraction complete: {len(spectrum)} pixels")
+        logger.debug(f"Sum extraction complete: {len(spectrum)} pixels")
 
         return spectrum
 
     def optimal_extraction(self, image: np.ndarray, aperture_positions: np.ndarray,
-                          profile: Optional[np.ndarray] = None,
+                          spatial_profile_2d: Optional[np.ndarray] = None,
                           lower_bounds: np.ndarray = None,
                           upper_bounds: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -91,7 +91,7 @@ class SpectrumExtractor:
         Returns:
             Tuple of (spectrum, error)
         """
-        logger.info("Performing optimal extraction...")
+        logger.debug("Performing optimal extraction...")
 
         rows, cols = image.shape
 
@@ -118,13 +118,14 @@ class SpectrumExtractor:
             sub_image = image[y_min:y_max, x]
             local_y = np.arange(y_min, y_max) - center
 
-            if profile is not None and len(profile) >= (y_max - y_min):
-                p0 = len(profile) // 2
-                pstart = max(0, p0 - (y_max - y_min) // 2)
-                pend = pstart + (y_max - y_min)
-                weights = profile[pstart:pend].astype(np.float64)
-                weights /= np.sum(weights) if np.sum(weights) > 0 else 1.0
-            else:
+            weights = None
+            if spatial_profile_2d is not None:
+                p_col = spatial_profile_2d[y_min:y_max, x].astype(np.float64)
+                sum_p = np.sum(p_col)
+                if sum_p > 0:
+                    weights = p_col / sum_p
+
+            if weights is None:
                 sigma = self.optimal_sigma
                 weights = np.exp(-0.5 * (local_y / sigma) ** 2)
                 weights /= np.sum(weights) if np.sum(weights) > 0 else 1.0
@@ -133,7 +134,7 @@ class SpectrumExtractor:
             spectrum[x] = np.sum(weighted)
             error[x] = np.sqrt(np.sum((sub_image * weights) ** 2))
 
-        logger.info(f"Optimal extraction complete: {len(spectrum)} pixels")
+        logger.debug(f"Optimal extraction complete: {len(spectrum)} pixels")
 
         return spectrum, error
 
@@ -170,19 +171,14 @@ class SpectrumExtractor:
             lower_bounds = aperture.get_lower(x_pix)
             upper_bounds = aperture.get_upper(x_pix)
 
-            profile = None
+            spatial_profile_2d = None
             if flat_field is not None:
-                if flat_field.cross_profiles is not None and aperture_id in flat_field.cross_profiles:
-                    profile = flat_field.cross_profiles[aperture_id]
-                elif flat_field.flat_norm is not None:
-                    y_mid = int(np.median(center_pos))
-                    profile_window = flat_field.flat_norm[max(y_mid-30,0):min(y_mid+30, flat_field.flat_norm.shape[0]), :]
-                    profile = np.mean(profile_window, axis=1)
-                    profile = profile / (np.sum(profile) if np.sum(profile) > 0 else 1.0)
+                if flat_field.smoothed_model is not None:
+                    spatial_profile_2d = flat_field.smoothed_model
 
             if method == 'optimal':
                 flux, error = self.optimal_extraction(image, center_pos,
-                                                      profile=profile,
+                                                      spatial_profile_2d=spatial_profile_2d,
                                                       lower_bounds=lower_bounds,
                                                       upper_bounds=upper_bounds)
             else:
@@ -311,9 +307,7 @@ def process_extraction_stage(science_image: np.ndarray,
             plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum")
         else:
             # If no wavelength calibration, plot raw pixels
-            pdf_name = f"{plot_prefix}.pdf".replace('_1D', '_1D_pixel')
-            if '_pixel' not in pdf_name:
-                pdf_name = f"{plot_prefix}_pixel.pdf"
+            pdf_name = f"{plot_prefix}.pdf"
             pdf_path = out_dir / pdf_name
             plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum (pixels)", xlabel="Pixel")
 

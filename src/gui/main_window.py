@@ -33,24 +33,24 @@ class ProcessingWorker(QThread):
     progress_updated = pyqtSignal(float, str)
     execution_complete = pyqtSignal(bool, str)
 
-    def __init__(self, pipeline: ProcessingPipeline, raw_image: str,
-                 biases: List[str], flats: List[str], calib: str):
+    def __init__(self, pipeline: ProcessingPipeline, raw_images: List[str],
+                 biases: List[str], flats: List[str], calibs: List[str]):
         """
         Initialize worker thread.
 
         Args:
             pipeline: ProcessingPipeline instance
-            raw_image: Science image path
+            raw_images: List of science image paths
             biases: List of bias frame paths
             flats: List of flat frame paths
-            calib: Wavelength calibration frame path
+            calibs: List of wavelength calibration frame paths
         """
         super().__init__()
         self.pipeline = pipeline
-        self.raw_image = raw_image
+        self.raw_images = raw_images
         self.biases = biases
         self.flats = flats
-        self.calib = calib
+        self.calibs = calibs
 
     def run(self):
         """Execute pipeline in worker thread."""
@@ -62,7 +62,7 @@ class ProcessingWorker(QThread):
 
             # Run pipeline
             self.pipeline.run_full_pipeline(
-                self.raw_image, self.biases, self.flats, self.calib
+                self.raw_images, self.biases, self.flats, self.calibs
             )
 
             self.execution_complete.emit(True, "Pipeline execution completed successfully")
@@ -326,7 +326,6 @@ class MainWindow(QMainWindow):
             ("stage_4", "Step 5: 1D Extraction", True),
             ("stage_5", "Step 6: De-blazing", True),
             ("stage_6", "Step 7: Wavelength Calibration", True),
-            ("stage_7", "Step 8: Order Stitching", True),
         ]
 
         # Step1 sub-step toggles: overscan / bias / cosmic
@@ -710,16 +709,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Please select flat frames")
             return
 
-        # Handle calib files (can be list or string)
-        calib_file = None
-        if isinstance(self.calib_file, list):
-            if self.calib_file:
-                # Use first calib file (or most recent by modification time)
-                calib_file = sorted(self.calib_file, key=lambda x: Path(x).stat().st_mtime)[-1]
-        else:
-            calib_file = self.calib_file
+        # Handle calib files
+        calib_files = self.calib_file if isinstance(self.calib_file, list) else [self.calib_file]
+        calib_files = [f for f in calib_files if f]
 
-        if not calib_file:
+        if not calib_files:
             QMessageBox.warning(self, "Error", "Please select a wavelength calibration frame")
             return
 
@@ -765,27 +759,18 @@ class MainWindow(QMainWindow):
         self.log_text.append(f"Total images to be processed: {total_imgs} (bias: {len(self.bias_files)}, flat: {len(self.flat_files)}, calib: {calib_count}, science: {len(science_files)})")
         self.log_text.append("=" * 60)
 
-        for idx, science_file in enumerate(science_files):
-            self.log_text.append(f"\n[Image {idx+1}/{len(science_files)}] {Path(science_file).name}")
-
-            # Create worker thread
-            self.worker_thread = ProcessingWorker(
-                self.pipeline,
-                science_file,
-                self.bias_files,
-                self.flat_files,
-                calib_file
-            )
-            self.worker_thread.progress_updated.connect(self._on_progress)
-            self.worker_thread.execution_complete.connect(
-                lambda success, msg, img_idx=idx, total_science=len(science_files), total_imgs=total_imgs:
-                    self._on_execution_complete(success, msg, img_idx, total_science, total_imgs)
-            )
-            self.worker_thread.start()
-            self.worker_thread.wait()  # Wait for this image to complete before next
-
-        self.run_all_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self.worker_thread = ProcessingWorker(
+            self.pipeline,
+            science_files,
+            self.bias_files,
+            self.flat_files,
+            calib_files
+        )
+        self.worker_thread.progress_updated.connect(self._on_progress)
+        self.worker_thread.execution_complete.connect(
+            lambda success, msg: self._on_execution_complete(success, msg, len(science_files)-1, len(science_files), total_imgs)
+        )
+        self.worker_thread.start()
 
     def _run_selected_pipeline(self):
         """Execute only the selected processing steps."""
@@ -825,7 +810,6 @@ class MainWindow(QMainWindow):
             "stage_4": "Step 5: 1D Extraction",
             "stage_5": "Step 6: De-blazing",
             "stage_6": "Step 7: Wavelength Calibration",
-            "stage_7": "Step 8: Order Stitching",
         }
         for stage_id in selected_stages:
             self.log_text.append(f"  ✓ {stage_names.get(stage_id, stage_id)}")
@@ -1145,6 +1129,14 @@ class MainWindow(QMainWindow):
             if master_bias is not None:
                 self.processing_state['master_bias_path'] = str(master_bias_path)
 
+            self.log_text.append("\n============================================================")
+            self.log_text.append("Step 1 pre-processing complete.")
+            self.log_text.append(f"  Output directory: {Path(self.config.get_output_path()) / 'step1_basic'}")
+            self.log_text.append(f"  Science files ready for next steps: {len(current_science_files)}")
+            self.log_text.append(f"  Flat files ready for next steps: {len(current_flat_files)}")
+            self.log_text.append(f"  Calibration files ready for next steps: {len(current_calib_files)}")
+            self.log_text.append("============================================================")
+
         if "stage_1" in selected_stages and self.flat_files:
             self.log_text.append("\n============================================================")
             self.log_text.append("STEP 2: ORDER TRACING")
@@ -1174,11 +1166,12 @@ class MainWindow(QMainWindow):
             self._apertures = apertures
             self.processing_state['stage_2_completed'] = True
 
-        if "stage_2" in selected_stages:
+        # Attempt to load flat_field and apertures if needed by downstream stages
+        needs_flat = any(s in selected_stages for s in ["stage_2", "stage_3", "stage_4", "stage_5", "stage_6"])
+        if needs_flat:
             flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
             apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
             
-            # Fallback: load from disk if memory is empty (e.g., running Step 3 alone)
             if flat_field is None or apertures is None:
                 self.log_text.append("  Loading MasterFlat and Apertures from disk...")
                 try:
@@ -1186,7 +1179,9 @@ class MainWindow(QMainWindow):
                     from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
                     
                     output_dir = Path(self.config.get_output_path())
-                    flat_path = output_dir / 'step2_trace' / 'MasterFlat.fits'
+                    flat_path_step3 = output_dir / 'step3_scatterlight' / 'MasterFlat.fits'
+                    flat_path_step2 = output_dir / 'step2_trace' / 'MasterFlat.fits'
+                    flat_path = flat_path_step3 if flat_path_step3.exists() else flat_path_step2
                     coefs_path = output_dir / 'step2_trace' / 'Orders_trace_coefs.json'
                     
                     if flat_path.exists() and coefs_path.exists():
@@ -1217,16 +1212,38 @@ class MainWindow(QMainWindow):
                         )
                         apertures = loaded_apertures
                         
+                        # Load blaze profiles from Step 4
+                        blaze_pkl = output_dir / 'step4_flat_corrected' / 'blaze_profiles.pkl'
+                        if blaze_pkl.exists():
+                            try:
+                                import pickle
+                                with open(blaze_pkl, 'rb') as fb:
+                                    flat_field.blaze_profiles = pickle.load(fb)
+                            except Exception as e:
+                                self.log_text.append(f"  ! Failed to load blaze_profiles.pkl: {e}")
+
+                        # Load 2D smoothed model from Step 4 for True Real-Space Optimal Extraction
+                        model_2d_path = output_dir / 'step4_flat_corrected' / 'model_flat_2d.fits'
+                        if model_2d_path.exists():
+                            try:
+                                model_img, _ = read_fits_image(str(model_2d_path))
+                                flat_field.smoothed_model = model_img
+                            except Exception as e:
+                                self.log_text.append(f"  ! Failed to load model_flat_2d.fits: {e}")
+
                         self._flat_field = flat_field
                         self._apertures = apertures
                         self.pipeline.state.flat_field = flat_field
                         self.pipeline.state.apertures = apertures
-                        self.log_text.append("  ✓ Successfully loaded MasterFlat and Apertures from disk.")
+                        self.log_text.append(f"  ✓ Successfully loaded {flat_path.name} and Apertures from disk.")
                     else:
-                        self.log_text.append("  ! Could not find MasterFlat.fits or Orders_trace_coefs.json on disk.")
+                        self.log_text.append("  ! Could not find MasterFlat.fits or Orders_trace_coefs.json on disk. Run Step 2 first.")
                 except Exception as e:
                     self.log_text.append(f"  ✗ Failed to load from disk: {e}")
 
+        if "stage_2" in selected_stages:
+            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
             if flat_field is not None and apertures is not None:
                 self.log_text.append("\n============================================================")
                 self.log_text.append("STEP 3: SCATTERED LIGHT SUBTRACTION (MASTER FLAT)")
@@ -1328,312 +1345,446 @@ class MainWindow(QMainWindow):
             else:
                 self.log_text.append("\n  ! Step 3 (Master Flat): No flat field or apertures available. Run Step 2 first.")
 
-        # The rest of the stages would follow here, using the `current_*_files` lists.
-        # This part is complex and seems to be what the user wants to fix.
-        # For now, the main logic for Step 1 is corrected.
-        
-        self.log_text.append("\n============================================================")
-        self.log_text.append("Step 1 pre-processing complete.")
-        self.log_text.append(f"  Output directory: {output_dir / 'step1_basic'}")
-        self.log_text.append(f"  Science files ready for next steps: {len(current_science_files)}")
-        self.log_text.append(f"  Flat files ready for next steps: {len(current_flat_files)}")
-        self.log_text.append(f"  Calibration files ready for next steps: {len(current_calib_files)}")
-        self.log_text.append("============================================================")
-
-        # Execute the rest of the pipeline for each science file
-        had_error = False
-        total_sci = len(current_science_files)
-        
-        science_stages = [s for s in selected_stages if s not in ["stage_0", "stage_1"]]
-        if science_stages:
-            for idx, science_file in enumerate(current_science_files):
-                try:
-                    self._execute_selected_stages(science_file, selected_stages, idx, total_sci)
-                except Exception as e:
-                    logger.error(f"Error processing {science_file}: {e}", exc_info=True)
-                    self.log_text.append(f"\n✗ Error processing {Path(science_file).name}: {e}")
-                    had_error = True
-                    break
-
-        if not had_error:
-            self.log_text.append(f"\n✓ {len(current_science_files)} science images processed through selected steps.")
-        else:
-            self.log_text.append("\n✗ Processing stopped due to error.")
-
-        self.run_all_btn.setEnabled(True)
-        self.run_selected_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-
-    def _execute_selected_stages(self, science_file: str, selected_stages: List[str], idx: int = 0, total: int = 1):
-        """Execute only the selected processing stages."""
-        from src.core.scattered_light import process_background_stage
-        from src.core.extraction import process_extraction_stage
-        from src.core.wave_calibration import process_wavelength_stage
-        from src.utils.fits_io import read_fits_image, write_fits_image
-
-        self.progress_bar.setValue(10)
-        self.stage_label.setText(f"Processing [{idx+1}/{total}]...")
-
         total_stages = len(selected_stages)
         current_stage = 0
-        
-        # Determine the current science file
-        current_sci_file = science_file
+        if "stage_0" in selected_stages: current_stage += 1
+        if "stage_1" in selected_stages: current_stage += 1
 
-        # (stage_0 and stage_1 are Step 1 & 2, which are executed outside this loop)
+        extracted_spectra_dict = {}
+        deblazed_spectra_dict = {}
+        calibrated_spectra_dict = {}
 
+        apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
+        flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+
+        # STAGE 2: Scattered Light Subtraction (Science Images)
         if "stage_2" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Scattered Light Subtraction")
+            self.stage_label.setText("Scattered Light Subtraction")
+            
+            self.log_text.append("\n" + "=" * 60)
+            self.log_text.append("STEP 3: SCATTERED LIGHT SUBTRACTION (Science Images)")
+            self.log_text.append("=" * 60)
+            
+            from src.core.scattered_light import process_background_stage
+            from src.utils.fits_io import read_fits_image, write_fits_image
+            
+            new_science_files = []
+            for sci_file in current_science_files:
+                try:
+                    sci_img, sci_header = read_fits_image(sci_file)
+                    sci_name = Path(sci_file).stem
+                    order_mask = getattr(self, '_step3_mask', None)
+                    if order_mask is None:
+                        mask_path = Path(self.config.get_output_path()) / 'step3_scatterlight' / 'Scattered_Light_Mask.fits'
+                        if mask_path.exists():
+                            mask_img, _ = read_fits_image(str(mask_path))
+                            order_mask = mask_img
+                            
+                    background = process_background_stage(
+                        science_image=sci_img,
+                        output_dir_base=self.config.get_output_path(),
+                        output_subdir='step3_scatterlight',
+                        output_tag=f'{sci_name}_',
+                        apertures=apertures,
+                        mask_margin_scale=1.0,
+                        sci_header=sci_header,
+                        order_mask=order_mask,
+                        poly_order=self.config.get_int('reduce.background', 'poly_order', 3),
+                        bg_method=self.config.get('reduce.background', 'method', 'convolution'),
+                        sigma_clip_val=self.config.get_float('reduce.background', 'sigma_clip', 3.0),
+                        maxiters=self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4),
+                        bspline_smooth=self.config.get_float('reduce.background', 'bspline_smooth', 1.0),
+                        mask_margin_pixels=0,
+                        n_mask_below=self.config.get_int('reduce.trace', 'n_mask_below', 4),
+                        n_mask_above=self.config.get_int('reduce.trace', 'n_mask_above', 4),
+                        clip_mode=self.config.get('reduce.background', 'sigma_clip_mode', 'upper'),
+                        split_row=self.config.get_int('data', 'detector_split_row', 2068),
+                        kernel_sigma_x=self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0),
+                        kernel_sigma_y=self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0),
+                        spline_smooth_factor=self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
+                        spline_post_smooth_x=self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
+                        save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                        fig_format=self.config.get('reduce', 'fig_format', 'png')
+                    )
+                    corrected = sci_img.astype('float32') - background.astype('float32')
+                    out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    corrected_path = out_dir / Path(sci_file).name
+                    if sci_header is not None:
+                        sci_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
+                    write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
+                    self.log_text.append(f"  ✓ Step 3 output for {sci_name}: {corrected_path.name}")
+                    new_science_files.append(str(corrected_path))
+                except Exception as e:
+                    self.log_text.append(f"  ✗ Step 3 failed for {Path(sci_file).name}: {e}")
+                    new_science_files.append(sci_file)
+            current_science_files = new_science_files
 
-            # Step 3: build/subtract scattered-light background for each science image.
-            sci_img, sci_header = read_fits_image(current_sci_file)
-            sci_name = Path(current_sci_file).stem
-            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
-
-            # Attempt to load pre-built Widened Order Mask
-            order_mask = getattr(self, '_step3_mask', None)
-            if order_mask is None:
-                mask_path = Path(self.config.get_output_path()) / 'step3_scatterlight' / 'Scattered_Light_Mask.fits'
-                if mask_path.exists():
-                    try:
-                        mask_img, _ = read_fits_image(str(mask_path))
-                        order_mask = mask_img
-                    except Exception:
-                        pass
-
-            background = process_background_stage(
-                science_image=sci_img,
-                output_dir_base=self.config.get_output_path(),
-                output_subdir='step3_scatterlight',
-                output_tag=f'{sci_name}_',
-                apertures=apertures,
-                mask_margin_scale=1.0,
-                sci_header=sci_header,
-                order_mask=order_mask,
-                poly_order=self.config.get_int('reduce.background', 'poly_order', 3),
-                bg_method=self.config.get('reduce.background', 'method', 'convolution'),
-                sigma_clip_val=self.config.get_float('reduce.background', 'sigma_clip', 3.0),
-                maxiters=self.config.get_int('reduce.background', 'sigma_clip_maxiters', 4),
-                bspline_smooth=self.config.get_float('reduce.background', 'bspline_smooth', 1.0),
-                mask_margin_pixels=0, # Already widened in the mask creation
-                n_mask_below=self.config.get_int('reduce.trace', 'n_mask_below', 4),
-                n_mask_above=self.config.get_int('reduce.trace', 'n_mask_above', 4),
-                clip_mode=self.config.get('reduce.background', 'sigma_clip_mode', 'upper'),
-                split_row=self.config.get_int('data', 'detector_split_row', 2068),
-                kernel_sigma_x=self.config.get_float('reduce.background', 'kernel_sigma_x', 13.0),
-                kernel_sigma_y=self.config.get_float('reduce.background', 'kernel_sigma_y', 13.0),
-                spline_smooth_factor=self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
-                spline_post_smooth_x=self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
-                save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                fig_format=self.config.get('reduce', 'fig_format', 'png')
-            )
-            corrected = sci_img.astype('float32') - background.astype('float32')
-
-            out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
-            out_dir.mkdir(parents=True, exist_ok=True)
-            corrected_path = out_dir / Path(current_sci_file).name
-
-            if sci_header is not None:
-                sci_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
-            write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
-
-            self.log_text.append(f"    ✓ Step 3 output: {corrected_path.name}")
-            current_sci_file = str(corrected_path)
-
+        # STAGE 3: 2D Flat-Field Correction
         if "stage_3" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] 2D Flat-Field Correction")
+            self.stage_label.setText("2D Flat-Field Correction")
+            
+            self.log_text.append("\n" + "=" * 60)
+            self.log_text.append("STEP 4: 2D FLAT-FIELD CORRECTION")
+            self.log_text.append("=" * 60)
+            
+            from src.core.flat_correction import process_flat_correction_stage
+            from src.utils.fits_io import read_fits_image, write_fits_image
 
-            # Step 4: divide science image by the pixel flat from Step 2.
-            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
-            pixel_flat = flat_field.pixel_flat if flat_field is not None else None
-            if pixel_flat is None:
-                self.log_text.append("  ! Step 4: no pixel_flat available – Step 2 must run first")
+            calib_files = self.calib_file if isinstance(self.calib_file, list) else [self.calib_file]
+            new_calib_files = []
+            if calib_files and flat_field is not None:
+                for calib_f in calib_files:
+                    if not calib_f: continue
+                    try:
+                        calib_corr_path = self.pipeline.stage_flat_fielding_calib_2d(calib_f)
+                        self.log_text.append(f"  ✓ Step 4 calib output: {Path(calib_corr_path).name}")
+                        new_calib_files.append(calib_corr_path)
+                    except Exception as e:
+                        self.log_text.append(f"  ! Step 4 calib correction skipped/failed: {e}")
+                        new_calib_files.append(calib_f)
+                current_calib_files = new_calib_files
+            
+            if flat_field is None:
+                self.log_text.append("  ! Step 4: no MasterFlat available – Step 2 must run first")
             else:
-                sci_img, sci_header = read_fits_image(current_sci_file)
-                safe_flat = np.where((pixel_flat > 0.1) & np.isfinite(pixel_flat), pixel_flat, 1.0)
-                corrected = sci_img.astype('float32') / safe_flat.astype('float32')
-                out_dir = Path(self.config.get_output_path()) / 'step4_flat_corrected'
-                out_dir.mkdir(parents=True, exist_ok=True)
-                sci_name = Path(current_sci_file).stem
-                corrected_path = out_dir / f'{sci_name}_flat_corrected.fits'
-                if sci_header is not None:
-                    sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
-                write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
-                self.log_text.append(f"  ✓ Step 4 output: {corrected_path.name}")
-                current_sci_file = str(corrected_path)
+                new_science_files = []
+                for sci_file in current_science_files:
+                    try:
+                        sci_img, sci_header = read_fits_image(sci_file)
+                        sci_name = Path(sci_file).stem
+                        flat_corr_kwargs = {
+                            'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
+                            'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+                            'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+                            'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+                            'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+                            'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+                            'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+                            'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
+                            'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                        }
+                        corrected = process_flat_correction_stage(
+                            science_image=sci_img,
+                            flat_field=flat_field,
+                            output_dir_base=self.config.get_output_path(),
+                            apertures=apertures,
+                            science_name=sci_name,
+                            **flat_corr_kwargs
+                        )
+                        out_dir = Path(self.config.get_output_path()) / 'step4_flat_corrected'
+                        corrected_path = out_dir / Path(sci_file).name
+                        if sci_header is not None:
+                            sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
+                            write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
+                        self.log_text.append(f"  ✓ Step 4 output for {sci_name}: {corrected_path.name}")
+                        new_science_files.append(str(corrected_path))
+                    except Exception as e:
+                        self.log_text.append(f"  ✗ Step 4 failed for {Path(sci_file).name}: {e}")
+                        new_science_files.append(sci_file)
+                current_science_files = new_science_files
+                self._flat_field = flat_field
+                self.pipeline.state.flat_field = flat_field
 
+        # STAGE 4: 1D Extraction
         if "stage_4" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Spectrum Extraction")
-
-            apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
-            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+            self.stage_label.setText("1D Extraction")
+            
             if apertures is None:
                 self.log_text.append("  ! Step 5: no apertures available – Step 2 must run first")
             else:
-                sci_img, _ = read_fits_image(current_sci_file)
-                sci_name = Path(current_sci_file).stem
+                self.log_text.append("\n" + "=" * 60)
+                self.log_text.append("STEP 5: 1D EXTRACTION")
+                self.log_text.append("=" * 60)
+                
+                from src.core.extraction import process_extraction_stage
+                from src.utils.fits_io import read_fits_image
                 extract_kwargs = {
                     'output_dir_base': self.config.get_output_path(),
                     'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
                     'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                     'fig_format': self.config.get('reduce', 'fig_format', 'png'),
                 }
-                ext_method = self.config.get('reduce.extract', 'method', 'optimal')
-                spectra = process_extraction_stage(
-                    sci_img, apertures,
-                    wavelength_calib=None,
-                    flat_field=flat_field,
-                    method_override=ext_method,
-                    output_filename=f'{sci_name}_1D_{ext_method}.fits',
-                    plot_prefix=f'{sci_name}_1D_{ext_method}',
-                    **extract_kwargs
-                )
-                self.log_text.append(f"  ✓ Step 5 extraction complete: {len(spectra.spectra)} orders")
-                self._spectra = spectra
 
+                # Extract MasterFlat
+                mf_path = Path(self.config.get_output_path()) / 'step4_flat_corrected' / 'MasterFlat.fits'
+                if mf_path.exists():
+                    try:
+                        mf_img, _ = read_fits_image(str(mf_path))
+                        mf_name = "MasterFlat"
+                        process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{mf_name}_1D_sum.fits', plot_prefix=f'{mf_name}_1D_sum', **extract_kwargs)
+                        process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{mf_name}_1D_optimal.fits', plot_prefix=f'{mf_name}_1D_optimal', **extract_kwargs)
+                        self.log_text.append(f"  ✓ Extracted MasterFlat 1D spectra (sum & optimal)")
+                    except Exception as e:
+                        self.log_text.append(f"  ! Failed to extract MasterFlat: {e}")
+
+                # Extract Calib
+                for calib_f in current_calib_files:
+                    if not calib_f: continue
+                    best_calib = self.pipeline.get_best_calib_file(calib_f)
+                    if best_calib and Path(best_calib).exists():
+                        try:
+                            c_img, _ = read_fits_image(best_calib)
+                            c_name = Path(best_calib).stem
+                            process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{c_name}_1D_sum.fits', plot_prefix=f'{c_name}_1D_sum', **extract_kwargs)
+                            process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs)
+                            self.log_text.append(f"  ✓ Extracted Calibration 1D spectra for {c_name} (sum & optimal)")
+                        except Exception as e:
+                            self.log_text.append(f"  ! Failed to extract Calibration {c_name}: {e}")
+
+                # Extract Science
+                for sci_file in current_science_files:
+                    try:
+                        sci_img, _ = read_fits_image(sci_file)
+                        sci_name = Path(sci_file).stem
+                        process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{sci_name}_1D_sum.fits', plot_prefix=f'{sci_name}_1D_sum', **extract_kwargs)
+                        spectra_opt = process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{sci_name}_1D_optimal.fits', plot_prefix=f'{sci_name}_1D_optimal', **extract_kwargs)
+                        extracted_spectra_dict[sci_name] = spectra_opt
+                        self.log_text.append(f"  ✓ Extracted Science 1D spectra for {sci_name} (sum & optimal)")
+                    except Exception as e:
+                        self.log_text.append(f"  ! Failed to extract Science {Path(sci_file).name}: {e}")
+
+        # STAGE 5: De-blazing
         if "stage_5" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] De-blazing")
+            self.stage_label.setText("De-blazing")
             
-            spectra = getattr(self, '_spectra', None)
-            flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
-            
-            if spectra is None:
-                self.log_text.append("  ! Step 6: no extracted spectra available – Step 5 must run first")
-            elif flat_field is None or flat_field.illumination_flat is None:
-                self.log_text.append("  ! Step 6: no blaze function available – Step 2 must run first")
+            if flat_field is None or not flat_field.blaze_profiles:
+                self.log_text.append("  ! Step 6: no blaze function available – Step 4 must run first")
             else:
+                self.log_text.append("\n" + "=" * 60)
+                self.log_text.append("STEP 6: DE-BLAZING")
+                self.log_text.append("=" * 60)
+                
                 from src.core.de_blazing import process_de_blazing_stage
-                sci_name = Path(current_sci_file).stem
-                deblazed_spectra = process_de_blazing_stage(
-                    spectra,
-                    output_dir_base=self.config.get_output_path(),
-                    flat_field=flat_field,
-                    save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
-                    output_filename=f'{sci_name}_1D_Deblaze.fits',
-                    plot_prefix=f'{sci_name}_1D_Deblaze',
-                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
-                )
-                self.log_text.append(f"  ✓ Step 6 De-blazing complete")
-                self._deblazed_spectra = deblazed_spectra
+                from src.core.extraction import load_extracted_spectra
+                
+                def do_deblaze(target_name, spectra_obj=None):
+                    deblazed_opt = None
+                    for method in ['sum', 'optimal']:
+                        spectra = spectra_obj if (method == 'optimal' and spectra_obj is not None) else None
+                        if spectra is None:
+                            spectra_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
+                            if spectra_path.exists():
+                                try: spectra = load_extracted_spectra(str(spectra_path))
+                                except Exception: pass
+                        if spectra is not None:
+                            try:
+                                db_spec = process_de_blazing_stage(
+                                    spectra,
+                                    output_dir_base=self.config.get_output_path(),
+                                    flat_field=flat_field,
+                                    save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
+                                    output_filename=f'{target_name}_1D_{method}_Deblaze.fits',
+                                    plot_prefix=f'{target_name}_1D_{method}_Deblaze',
+                                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                                    fig_format=self.config.get('reduce', 'fig_format', 'png')
+                                )
+                                self.log_text.append(f"  ✓ Step 6 De-blazing complete for {target_name} ({method})")
+                                if method == 'optimal': deblazed_opt = db_spec
+                            except Exception as e:
+                                self.log_text.append(f"  ! Failed to de-blaze {target_name} ({method}): {e}")
+                    return deblazed_opt
 
+                do_deblaze("MasterFlat")
+                for calib_f in current_calib_files:
+                    if not calib_f: continue
+                    calib_name = Path(self.pipeline.get_best_calib_file(calib_f)).stem
+                    do_deblaze(calib_name)
+                    
+                for sci_file in current_science_files:
+                    sci_name = Path(sci_file).stem
+                    db_opt = do_deblaze(sci_name, extracted_spectra_dict.get(sci_name))
+                    if db_opt is not None:
+                        deblazed_spectra_dict[sci_name] = db_opt
+
+        # STAGE 6: Wavelength Calibration
         if "stage_6" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Wavelength Calibration")
+            self.stage_label.setText("Wavelength Calibration")
             
-            calib_for_wave = self.calib_file
-            if isinstance(self.calib_file, list) and self.calib_file:
-                calib_for_wave = sorted(self.calib_file, key=lambda x: Path(x).stat().st_mtime)[-1]
-                
-            if not calib_for_wave:
-                 self.log_text.append("  ! Step 7: no calibration file provided")
+            if not current_calib_files or not current_calib_files[0]:
+                self.log_text.append("  ! Step 7: no calibration file provided")
             else:
-                 wave_calib = getattr(self, '_wave_calib', None)
-                 if wave_calib is None:
-                     self.log_text.append(f"    Extracting ThAr lamp spectrum from {calib_for_wave} ...")
-                     lamp_img, _ = read_fits_image(calib_for_wave)
-                     apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
-                     flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
+                 self.log_text.append("\n" + "=" * 60)
+                 self.log_text.append("STEP 7: WAVELENGTH CALIBRATION")
+                 self.log_text.append("=" * 60)
+                 
+                 from src.core.wave_calibration import process_wavelength_stage, WavelengthCalibrator
+                 from src.utils.fits_io import read_fits_image
+                 from src.core.extraction import process_extraction_stage, load_extracted_spectra
+                 import os
+                 from astropy.time import Time
+                 
+                 time_key = self.config.get('data', 'statime_key', 'DATE-OBS')
+                 def get_file_time(filepath):
+                     if not filepath or not Path(filepath).exists(): return 0
+                     try:
+                         _, hdr = read_fits_image(filepath)
+                         if hdr and time_key in hdr:
+                             return Time(hdr[time_key]).unix
+                     except Exception: pass
+                     return os.path.getmtime(filepath)
+
+                 calibrations = []
+                 for calib_file in current_calib_files:
+                     if not calib_file: continue
+                     best_calib = self.pipeline.get_best_calib_file(calib_file)
+                     calib_name = Path(best_calib).stem
+                     lamp_spectra = None
                      
-                     extract_kwargs = {
-                         'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
-                         'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                         'fig_format': self.config.get('reduce', 'fig_format', 'png'),
-                     }
-                     lamp_spectra = process_extraction_stage(
-                         lamp_img, apertures,
-                         output_dir_base=self.config.get_output_path(),
-                         wavelength_calib=None,
-                         flat_field=flat_field,
-                         method_override='sum',
-                         output_filename='thar_1D_sum.fits',
-                         plot_prefix='thar_1D_sum',
-                         **extract_kwargs
-                     )
-                     
+                     lamp_db_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{calib_name}_1D_optimal_Deblaze.fits'
+                     if lamp_db_path.exists():
+                         try: lamp_spectra = load_extracted_spectra(str(lamp_db_path))
+                         except Exception: pass
+                         
+                     if lamp_spectra is None:
+                         lamp_ex_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{calib_name}_1D_optimal.fits'
+                         if lamp_ex_path.exists():
+                             try: lamp_spectra = load_extracted_spectra(str(lamp_ex_path))
+                             except Exception: pass
+                             
+                     if lamp_spectra is None:
+                         self.log_text.append(f"  ! Step 7: Calibration lamp 1D optimal spectrum not found for {calib_name}. Please run Step 5 or 6 first.")
+                         continue
+                         
                      wave_calib = process_wavelength_stage(
-                         lamp_spectra=lamp_spectra,
-                         config=self.config,
-                         output_dir_base=self.config.get_output_path(),
+                         lamp_spectra=lamp_spectra, config=self.config, output_dir_base=self.config.get_output_path(),
                          lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
                          save_plots=self.config.get_bool('reduce', 'save_plots', True),
                          fig_format=self.config.get('reduce', 'fig_format', 'png'),
                      )
-                     self._wave_calib = wave_calib
+                     c_time = get_file_time(best_calib)
+                     calibrations.append((c_time, wave_calib, calib_name))
                  
-                 spectra = getattr(self, '_deblazed_spectra', getattr(self, '_spectra', None))
-                 if spectra is None:
-                     self.log_text.append("  ! Step 7: no science spectra to calibrate")
+                 if not calibrations:
+                     self.log_text.append("  ! Step 7: No valid wavelength calibrations could be generated.")
                  else:
-                     sci_name = Path(current_sci_file).stem
-                     from src.core.wave_calibration import WavelengthCalibrator
-                     
-                     delta_m = getattr(wave_calib, 'delta_m', 0)
-                     if delta_m != 0:
-                         self.log_text.append(f"    Applying order offset delta_m = {delta_m} ...")
-                         spectra.shift_orders(delta_m)
+                     targets = [("MasterFlat", None)]
+                     for c_file in current_calib_files:
+                         if not c_file: continue
+                         best_calib = self.pipeline.get_best_calib_file(c_file)
+                         targets.append((Path(best_calib).stem, best_calib))
+                     for s_file in current_science_files:
+                         targets.append((Path(s_file).stem, s_file))
                          
-                     calibrator = WavelengthCalibrator()
-                     calibrator.wave_calib = wave_calib
-                     
-                     from src.core.data_structures import SpectraSet
-                     calibrated_spectra = SpectraSet()
-                     
-                     for spectrum in spectra.spectra.values():
-                         n_pixels = len(spectrum.flux)
-                         pixel_array = np.arange(n_pixels)
-                         wavelengths = calibrator.apply_wavelength_calibration(
-                             spectrum.flux, pixel_array, aperture_y=float(spectrum.aperture)
-                         )
-                         calibrated_spectrum = spectrum.copy()
-                         calibrated_spectrum.wavelength = wavelengths
-                         calibrated_spectra.add_spectrum(calibrated_spectrum)
+                     for target_name, target_file in targets:
+                         target_time = get_file_time(target_file)
+                         closest_calib = min(calibrations, key=lambda x: abs(x[0] - target_time))
+                         wave_calib = closest_calib[1]
+                         self.log_text.append(f"  Using calibration {closest_calib[2]} for {target_name} (closest in time)")
                          
-                     out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
-                     out_dir.mkdir(parents=True, exist_ok=True)
-                     from src.core.de_blazing import save_deblazed_spectra
-                     save_deblazed_spectra(str(out_dir / f'{sci_name}_1D_calibrated.fits'), calibrated_spectra)
-                     
-                     self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied")
-                     self._calibrated_spectra = calibrated_spectra
+                         calib_opt = None
+                         for method in ['sum', 'optimal']:
+                             spectra = None
+                             deblaze_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_{method}_Deblaze.fits'
+                             if deblaze_path.exists():
+                                 try: spectra = load_extracted_spectra(str(deblaze_path))
+                                 except Exception: pass
+                             
+                             if spectra is None:
+                                 extract_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
+                                 if extract_path.exists():
+                                     try: spectra = load_extracted_spectra(str(extract_path))
+                                     except Exception: pass
+                             
+                             if spectra is None:
+                                 self.log_text.append(f"  ! Step 7: no {method} spectra to calibrate for {target_name}")
+                                 continue
+                                 
+                             delta_m = getattr(wave_calib, 'delta_m', 0)
+                             if delta_m != 0:
+                                 spectra.shift_orders(delta_m)
+                                 
+                             calibrator = WavelengthCalibrator()
+                             calibrator.wave_calib = wave_calib
+                             
+                             from src.core.data_structures import SpectraSet
+                             calibrated_spectra = SpectraSet()
+                             
+                             for spectrum in spectra.spectra.values():
+                                 n_pixels = len(spectrum.flux)
+                                 pixel_array = np.arange(n_pixels)
+                                 wavelengths = calibrator.apply_wavelength_calibration(
+                                     spectrum.flux, pixel_array, aperture_y=float(spectrum.aperture)
+                                 )
+                                 calibrated_spectrum = spectrum.copy()
+                                 calibrated_spectrum.wavelength = wavelengths
+                                 calibrated_spectra.add_spectrum(calibrated_spectrum)
+                                 
+                             out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
+                             out_dir.mkdir(parents=True, exist_ok=True)
+                             from src.core.de_blazing import save_deblazed_spectra
+                             save_deblazed_spectra(str(out_dir / f'{target_name}_1D_{method}_calibrated.fits'), calibrated_spectra)
+                             
+                             self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied for {target_name} ({method})")
+                             if method == 'optimal':
+                                 calib_opt = calibrated_spectra
+                                 
+                         if calib_opt is not None and target_name in [Path(s).stem for s in current_science_files]:
+                             calibrated_spectra_dict[target_name] = calib_opt
 
+        # STAGE 7: Order Stitching
         if "stage_7" in selected_stages:
             current_stage += 1
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
-            self.stage_label.setText(f"[{idx+1}/{total}] Order Stitching")
+            self.stage_label.setText("Order Stitching")
             
-            spectra = getattr(self, '_calibrated_spectra', None)
-            if spectra is None:
-                self.log_text.append("  ! Step 8: no calibrated spectra available – Step 7 must run first")
-            else:
-                from src.core.order_stitching import process_order_stitching_stage
-                stitched = process_order_stitching_stage(
-                    spectra,
-                    output_dir_base=self.config.get_output_path(),
-                    output_subdir='step8_stitching',
-                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                    fig_format=self.config.get('reduce', 'fig_format', 'png'),
-                )
-                self.log_text.append(f"  ✓ Step 8 Order Stitching complete")
+            self.log_text.append("\n" + "=" * 60)
+            self.log_text.append("STEP 8: ORDER STITCHING")
+            self.log_text.append("=" * 60)
+            
+            from src.core.order_stitching import process_order_stitching_stage
+            from src.core.extraction import load_extracted_spectra
+            
+            for sci_file in current_science_files:
+                sci_name = Path(sci_file).stem
+                spectra = calibrated_spectra_dict.get(sci_name)
+                if spectra is None:
+                    calibrated_path = Path(self.config.get_output_path()) / 'step7_wavelength' / f'{sci_name}_1D_calibrated.fits'
+                    if calibrated_path.exists():
+                        try: spectra = load_extracted_spectra(str(calibrated_path))
+                        except Exception: pass
+                        
+                if spectra is None:
+                    self.log_text.append(f"  ! Step 8: no calibrated spectra available for {sci_name}")
+                else:
+                    try:
+                        stitched = process_order_stitching_stage(
+                            spectra,
+                            output_dir_base=self.config.get_output_path(),
+                            output_subdir=f'step8_stitching/{sci_name}',
+                            save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                        )
+                        self.log_text.append(f"  ✓ Step 8 Order Stitching complete for {sci_name}")
+                    except Exception as e:
+                        self.log_text.append(f"  ✗ Step 8 Order Stitching failed for {sci_name}: {e}")
 
-        # Final progress update
+        self.log_text.append("\n============================================================")
+        self.log_text.append(f"✓ {len(current_science_files)} science images processed through selected steps.")
+        self.log_text.append("============================================================")
+        
         self.progress_bar.setValue(100)
         self.stage_label.setText("Completed")
+        self.run_all_btn.setEnabled(True)
+        self.run_selected_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
 
     def _select_all_stages(self):
         """Select all processing stages."""

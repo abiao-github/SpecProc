@@ -29,10 +29,6 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
     Returns:
         De-blazed spectra set
     """
-    logger.info("=" * 60)
-    logger.info("STEP 6: DE-BLAZING (Blaze Function Correction)")
-    logger.info("=" * 60)
-
     if flat_field.blaze_profiles is None or len(flat_field.blaze_profiles) == 0:
         logger.warning("No blaze profiles available, skipping de-blazing")
         return spectra_set
@@ -53,10 +49,10 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
                 # Create corrected spectrum
                 corrected_spectrum = spectrum.copy()
                 corrected_spectrum.flux = corrected_flux
+                if spectrum.error is not None:
+                    corrected_spectrum.error = spectrum.error / (blaze_profile + 1e-10)
 
                 corrected_spectra.add_spectrum(corrected_spectrum)
-
-                logger.info(f"De-blazed spectrum for aperture {aperture_id}")
             else:
                 logger.warning(f"Blaze profile length mismatch for aperture {aperture_id}, skipping")
                 corrected_spectra.add_spectrum(spectrum)
@@ -158,10 +154,7 @@ def process_de_blazing_stage(spectra_set: SpectraSet,
         # Save diagnostic plots if enabled
         if save_plots:
             out_dir = deblazed_file.parent
-            # Change plot_prefix e.g. "202411020024_1D_Deblaze" -> "202411020024_1D_pixel_Deblaze"
-            pdf_name = f"{plot_prefix}.pdf".replace('_1D_Deblaze', '_1D_pixel_Deblaze')
-            if '_pixel_' not in pdf_name:
-                pdf_name = f"{plot_prefix}_pixel.pdf"
+            pdf_name = f"{plot_prefix}.pdf"
             pdf_path = out_dir / pdf_name
             plot_spectra_to_pdf(deblazed_spectra, str(pdf_path), title_prefix="De-blazed Spectrum (pixels)", xlabel="Pixel")
 

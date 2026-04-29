@@ -118,8 +118,7 @@ class ConfigManager:
             'combine_method': 'median',
             'q_threshold': '0.5',
             'mosaic_maxcount': '65535',
-            'blaze_knot_spacing': '500',
-            'blaze_edge_nknots': '6',
+            'blaze_smooth_factor': '1.0',
             'width_smooth_window': '41',
             'profile_bin_step': '0.01',
             'pixel_flat_min': '0.5',
@@ -151,7 +150,6 @@ class ConfigManager:
 
         # Extract section
         self.config['reduce.extract'] = {
-            'method': 'sum',  # 'sum' or 'optimal'
         }
 
         # Wavelength calibration section

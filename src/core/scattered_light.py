@@ -68,10 +68,34 @@ class BackgroundRemover:
         for it in range(max(1, maxiters)):
             data = image.astype(np.float64).copy()
             data[current_mask] = np.nan
-            # Edge-pad image and mask, then FFT-convolve, then crop back.
+            
+            # Pre-fill masked regions (orders) using column-wise linear interpolation.
+            # This perfectly solves the "dark square mosaics" artifact caused by
+            # kernel weight starvation when wide orders exceed the kernel's reach.
+            rows, cols = data.shape
+            y_idx = np.arange(rows)
+            for x in range(cols):
+                col = data[:, x]
+                valid = ~np.isnan(col)
+                if valid.any() and not valid.all():
+                    data[~valid, x] = np.interp(y_idx[~valid], y_idx[valid], col[valid])
+            
+            # Fallback for any completely masked columns
+            if np.any(np.isnan(data)):
+                for y in range(rows):
+                    row = data[y, :]
+                    valid = ~np.isnan(row)
+                    if valid.any() and not valid.all():
+                        x_idx = np.arange(cols)
+                        data[y, ~valid] = np.interp(x_idx[~valid], x_idx[valid], row[valid])
+            
+            global_med = np.nanmedian(data) if np.any(np.isfinite(data)) else 0.0
+            data[np.isnan(data)] = global_med
+
+            # Edge-pad image, then FFT-convolve, then crop back.
             data_pad = np.pad(data, ((pad_y, pad_y), (pad_x, pad_x)), mode='edge')
             model_pad = convolve_fft(data_pad, kernel, boundary='fill',
-                                     fill_value=np.nan,
+                                     fill_value=global_med,
                                      nan_treatment='interpolate',
                                      allow_huge=True)
             model = model_pad[pad_y:-pad_y, pad_x:-pad_x]

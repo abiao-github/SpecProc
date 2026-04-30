@@ -1167,7 +1167,7 @@ class MainWindow(QMainWindow):
             self.processing_state['stage_2_completed'] = True
 
         # Attempt to load flat_field and apertures if needed by downstream stages
-        needs_flat = any(s in selected_stages for s in ["stage_2", "stage_3", "stage_4", "stage_5", "stage_6"])
+        needs_flat = any(s in selected_stages for s in ["stage_2", "stage_3", "stage_4", "stage_5"])
         if needs_flat:
             flat_field = getattr(self, '_flat_field', getattr(self.pipeline.state, 'flat_field', None))
             apertures = getattr(self, '_apertures', getattr(self.pipeline.state, 'apertures', None))
@@ -1579,7 +1579,7 @@ class MainWindow(QMainWindow):
                             spectra_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
                             if spectra_path.exists():
                                 try: spectra = load_extracted_spectra(str(spectra_path))
-                                except Exception: pass
+                                except Exception as e: self.log_text.append(f"  ! Error loading {spectra_path.name}: {e}")
                         if spectra is not None:
                             try:
                                 db_spec = process_de_blazing_stage(
@@ -1650,16 +1650,19 @@ class MainWindow(QMainWindow):
                      lamp_db_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{calib_name}_1D_optimal_Deblaze.fits'
                      if lamp_db_path.exists():
                          try: lamp_spectra = load_extracted_spectra(str(lamp_db_path))
-                         except Exception: pass
+                         except Exception as e: self.log_text.append(f"  ! Error loading {lamp_db_path.name}: {e}")
                          
                      if lamp_spectra is None:
                          lamp_ex_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{calib_name}_1D_optimal.fits'
                          if lamp_ex_path.exists():
                              try: lamp_spectra = load_extracted_spectra(str(lamp_ex_path))
-                             except Exception: pass
+                             except Exception as e: self.log_text.append(f"  ! Error loading {lamp_ex_path.name}: {e}")
                              
                      if lamp_spectra is None:
-                         self.log_text.append(f"  ! Step 7: Calibration lamp 1D optimal spectrum not found for {calib_name}. Please run Step 5 or 6 first.")
+                         self.log_text.append(f"  ! Step 7: Calibration lamp spectrum not found. Please run Step 5 or 6 first.")
+                         self.log_text.append(f"    -> Code searched for: {lamp_db_path.name} and {lamp_ex_path.name}")
+                         self.log_text.append(f"    -> Absolute path 1: {lamp_db_path.absolute()} (Exists: {lamp_db_path.exists()})")
+                         self.log_text.append(f"    -> Absolute path 2: {lamp_ex_path.absolute()} (Exists: {lamp_ex_path.exists()})")
                          continue
                          
                      wave_calib = process_wavelength_stage(
@@ -1700,10 +1703,13 @@ class MainWindow(QMainWindow):
                                  extract_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
                                  if extract_path.exists():
                                      try: spectra = load_extracted_spectra(str(extract_path))
-                                     except Exception: pass
+                                     except Exception as e: self.log_text.append(f"  ! Error loading {extract_path.name}: {e}")
                              
                              if spectra is None:
-                                 self.log_text.append(f"  ! Step 7: no {method} spectra to calibrate for {target_name}")
+                                 self.log_text.append(f"  ! Step 7: No {method} spectra found to calibrate for {target_name}")
+                                 self.log_text.append(f"    -> Code searched for: {deblaze_path.name} and {extract_path.name}")
+                                 self.log_text.append(f"    -> Absolute path 1: {deblaze_path.absolute()} (Exists: {deblaze_path.exists()})")
+                                 self.log_text.append(f"    -> Absolute path 2: {extract_path.absolute()} (Exists: {extract_path.exists()})")
                                  continue
                                  
                              delta_m = getattr(wave_calib, 'delta_m', 0)
@@ -1729,8 +1735,14 @@ class MainWindow(QMainWindow):
                              out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
                              out_dir.mkdir(parents=True, exist_ok=True)
                              from src.core.de_blazing import save_deblazed_spectra
-                             save_deblazed_spectra(str(out_dir / f'{target_name}_1D_{method}_calibrated.fits'), calibrated_spectra)
+                             save_deblazed_spectra(str(out_dir / f'{target_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
                              
+                             if self.config.get_bool('reduce', 'save_plots', True):
+                                 from src.plotting.spectra_plotter import plot_spectra_to_pdf
+                                 pdf_path = out_dir / f"{target_name}_1D_{method}_wavecal.pdf"
+                                 plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
+                                                     title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
+
                              self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied for {target_name} ({method})")
                              if method == 'optimal':
                                  calib_opt = calibrated_spectra
@@ -1756,10 +1768,10 @@ class MainWindow(QMainWindow):
                 sci_name = Path(sci_file).stem
                 spectra = calibrated_spectra_dict.get(sci_name)
                 if spectra is None:
-                    calibrated_path = Path(self.config.get_output_path()) / 'step7_wavelength' / f'{sci_name}_1D_calibrated.fits'
+                    calibrated_path = Path(self.config.get_output_path()) / 'step7_wavelength' / f'{sci_name}_1D_optimal_wavecal.fits'
                     if calibrated_path.exists():
                         try: spectra = load_extracted_spectra(str(calibrated_path))
-                        except Exception: pass
+                        except Exception as e: self.log_text.append(f"  ! Error loading {calibrated_path.name}: {e}")
                         
                 if spectra is None:
                     self.log_text.append(f"  ! Step 8: no calibrated spectra available for {sci_name}")

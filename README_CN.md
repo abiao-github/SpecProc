@@ -1,635 +1,252 @@
-# SpecProc: 光谱数据处理图形界面工具
+# SpecProc: 阶梯光栅光谱 FITS 数据处理图形界面管线
 
-一个完整的基于 PyQt 的图形界面工具，用于处理阶梯光谱仪的 FITS 数据。
+![SpecProc GUI](docs/SpecProc.png)
+
+一个功能完整、基于 PyQt 的图形化交互式管线，专门用于处理阶梯光栅光谱仪（Echelle Spectrograph）的 FITS 数据。
 
 ## 目录
 
 - [功能特性](#功能特性)
-- [安装](#安装)
+- [安装指南](#安装指南)
 - [快速开始](#快速开始)
-- [配置](#配置)
-- [处理流程](#处理流程)
+- [配置说明](#配置说明)
+- [数据处理流程](#数据处理流程)
 - [使用方法](#使用方法)
 - [校准数据](#校准数据)
-- [常见问题](#常见问题)
-- [文档](#文档)
+- [故障排除](#故障排除)
+- [文档指南](#文档指南)
+- [项目结构](#项目结构)
+- [开源协议](#开源协议)
+- [参与贡献](#参与贡献)
+- [致谢](#致谢)
 
 ## 功能特性
 
-### 完整的处理流程
+### 完整的处理管线
 
-**8 阶段自动化光谱处理**：
+**8 步全自动化光谱处理流程**：
 
-1. **基础预处理 (Basic Pre-processing)** - 过扫描、本底扣除和宇宙线校正
-2. **阶序追踪 (Orders Tracing)** - 生成主平场和阶梯光栅阶序追踪
-3. **散射光扣除 (Scattered Light Subtraction)** - 阶序间背景建膜与扣除
-4. **二维平场校正 (2D Flat-Field Correction)** - 像素到像素的平场校正
-5. **一维光谱提取 (1D Spectrum Extraction)** - 提取一维光谱（求和或最优提取）
-6. **闪耀函数改正 (De-blazing)** - Blaze 函数校正
-7. **波长定标 (Wavelength Calibration)** - 波长定标（应用于去 Blaze 后的光谱）
-8. **阶序拼接 (Order Stitching)** - 合并重叠的阶序为连续的一维光谱
+1. **基础预处理 (Basic Pre-processing)** - 包含过扫区(Overscan)扣除、本底(Bias)扣除以及宇宙线去除。
+2. **级次寻迹 (Orders Tracing)** - 生成主平场并追踪阶梯光栅的各个衍射级次。
+3. **散射光扣除 (Scattered Light Subtraction)** - 使用 2D 卷积或样条函数建立并扣除级次间的杂散光背景。
+4. **二维平场校正 (2D Flat-Field Correction)** - 高精度逐像素二维平场校正。
+5. **一维光谱抽取 (1D Spectrum Extraction)** - 采用简单求和(Sum)或最优提取(Optimal)算法提取 1D 谱。
+6. **去闪耀 (De-blazing)** - 闪耀函数改正，拉平光谱能量分布。
+7. **波长定标 (Wavelength Calibration)** - 基于特征峰的模式盲配(Pattern Matching)与二维多项式曲面拟合定标
 
-### 图形界面
+### 交互式图形界面
 
-基于 PyQt5 的用户界面，支持：
-- bias、flat、science 图像文件管理
-- 实时进度跟踪
-- 处理日志和诊断
-- 一键执行完整流程或分步执行
+基于 PyQt5 的用户界面提供：
+- 便捷的 Bias、Flat 和 Science FITS 文件管理
+- 实时处理进度跟踪
+- 详尽的处理日志与报错诊断
+- 支持一键全自动执行或单步选中执行
 
-### 主要特性
+## 安装指南
 
-- **配置驱动**：使用 INI 格式配置文件，易于参数调整
-- **通用光谱仪支持**：可配置不同的阶梯光谱仪
-- **灵活输出**：控制是否保存每一步的中间结果
-- **命令行界面**：除 GUI 外，还支持 CLI 批处理
-
-## 安装
-
-选择以下任一安装方法：
-
-### 方法 1：使用 pip
-
-从 PyPI 直接安装 SpecProc。
+### 推荐方式：使用 Conda (本地源码安装)
 
 ```bash
-# 安装 SpecProc
-pip install specproc
-
-# 启动应用程序
-specproc
-```
-
-**说明：**
-- 需要 Python 3.7+
-- 依赖包会自动从 PyPI 安装
-- 卸载使用 `pip uninstall specproc`
-
-### 方法 2：使用 conda
-
-Conda 提供完整的环境和所有依赖。有两种安装选项：
-
-#### 选项 2.1：在已有的 conda 环境中安装
-
-```bash
-# 激活你的 conda 环境
-conda activate your_environment
-
-# 从 conda-forge 安装 SpecProc
-conda install -c conda-forge specproc
-
-# 启动应用程序
-specproc
-```
-
-#### 选项 2.2：创建新的 conda 环境
-
-```bash
-# 为 SpecProc 创建新的 conda 环境
+# 创建全新的 conda 环境
 conda create -n specproc python=3.8
 conda activate specproc
 
-# 安装 SpecProc 和所有依赖
-conda install -c conda-forge specproc
+# 安装科学计算与 GUI 依赖
+conda install -c conda-forge pyqt5 numpy scipy astropy matplotlib -y
 
-# 启动应用程序
-specproc
-```
-
-**说明：**
-- 推荐给希望使用独立环境的用户
-- 所有依赖由 conda 管理
-- 支持 Python 3.7-3.11
-
-### 方法 3：从源代码安装
-
-运行安装脚本从本地源代码安装 SpecProc 和所有依赖。
-
-```bash
-# 进入 SpecProc 目录
+# 进入源码目录并以开发模式安装
 cd /path/to/SpecProc
+pip install -e .
 
-# 添加可执行权限（如需要）
-chmod +x install.sh
-
-# 运行安装脚本
-./install.sh
-
-# 启动应用程序
+# 启动程序
 specproc
 ```
-
-**说明：**
-- 安装脚本自动处理所有依赖
-- 自动检测可用的包管理器（pip 或 conda）
-- 将 SpecProc 安装到你的系统
-- 适用于从本地源代码进行自动化安装
 
 ## 快速开始
 
 ### 工作目录设置
 
-**重要**：SpecProc 应该在你的工作目录中运行，而不是在源代码目录中运行。
+**极其重要**：`specproc` 必须在您的观测数据工作目录下运行，**绝不能**在 SpecProc 源码目录下运行！
 
-### 正确的使用流程
+### 标准工作流
 
 ```bash
-# 1. 创建工作目录（用于观测项目）
+# 1. 创建您的数据处理工作目录 (例如针对某次观测)
 mkdir -p /myworkspace
 cd /myworkspace
 
-# 2. 创建数据处理所需的子目录
+# 2. 创建一个目录用于存放 FITS 数据
 mkdir -p 20241102_hrs output
 
-# 3. 将 FITS 数据文件放到 20241102_hrs 目录
+# 3. 将您的 FITS 文件复制到该目录中
 cp /somewhere/bias_*.fits ./20241102_hrs/
 cp /somewhere/flat_*.fits ./20241102_hrs/
 cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
-# 4. 创建用户配置文件（可选）
+# 4. 拷贝默认配置文件到当前目录并重命名 (可选)
 cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
 
-# 5. 在工作目录中运行 SpecProc
+# 5. 在您的工作目录启动管线
 specproc --config ./specproc.cfg
 ```
 
-### 目录结构
+### 生成的目录结构
 
-**工作目录**（你处理数据的地方）：
-```
-/myworkspace/                  # 你的工作目录
-├── 20241102_hrs/              # 原始 FITS 数据
-│   ├── bias_*.fits
-│   ├── flat_*.fits
-│   ├── thar_*.fits      # ThAr 灯谱
-│   └── science_*.fits   # 科学图像
-├── output/                    # 处理结果（自动生成）
-│   ├── step1_basic/            # 第1步：基础预处理
-│   │   ├── overscan_corrected/ # 过扫描校正后的图像和诊断图
-│   │   ├── bias_subtracted/    # 主偏置帧和偏置减除后的图像
-│   │   └── cosmic_corrected/   # 宇宙线校正后的科学图像（如启用）
-│   ├── step2_flat/             # 第2步：主平场、Blaze 轮廓和诊断图
-│   ├── step3_background/       # 第3步：背景模型和诊断图
-│   ├── step5_extraction/       # 第5步：提取的一维光谱和诊断图
-│   ├── step6_wavelength/       # 第6步：波长定标解和诊断图
-│   ├── step7_deblazing/        # 第7步：去 Blaze 的光谱和诊断图（如保存）
-│   └── step8_final_spectra/    # 第8步：科学帧的最终一维光谱和诊断图
-├── specproc.cfg              # 用户配置文件（可选）
-└── ...
+一旦运行成功，您的工作目录将呈现如下结构：
+```text
+/myworkspace/                  # 您的当前工作目录
+├── 20241102_hrs/              # 输入的 FITS 文件
+├── output/                    # 处理结果 (自动生成)
+│   ├── step1_basic/            # 步骤 1: 基础预处理 (脱偏置、宇宙线)
+│   ├── step2_flat/             # 步骤 2: 主平场与寻迹边界、诊断图
+│   ├── step3_scatterlight/     # 步骤 3: 杂散光背景模型
+│   ├── step4_flat_corrected/   # 步骤 4: 2D 平场校正后的图像、Blaze模型
+│   ├── step5_extraction/       # 步骤 5: 抽取出的 1D 光谱 (未波长定标)
+│   ├── step6_deblazing/        # 步骤 6: 去闪耀后的 1D 光谱
+│   ├── step7_wavelength/       # 步骤 7: 波长定标后的 1D 光谱及诊断PDF
+│   └── step8_stitching/        # 步骤 8: 最终拼接完成的连续 1D 光谱
+└── specproc.cfg              # 您的自定义配置文件
 ```
 
-**注意**：
-- ❌ 不要在 SpecProc 源代码目录（`/path/to/SpecProc`）中运行
-- ✅ 在你的工作目录中运行 `specproc`
-- ✅ `rawdata` 和 `output` 会在你的工作目录中自动创建
+## 配置说明
 
-## 配置
+您可以通过修改工作目录下的 `specproc.cfg` 来调整管线行为。
 
-### 配置文件类型
-
-#### 默认配置文件
-
-**位置**：`SpecProc/default_config.cfg`
-**用途**：提供默认参数值
-**修改**：不建议直接修改
-
-#### 用户配置文件
-
-**位置**：工作目录中的 `specproc.cfg`
-**用途**：覆盖默认配置，自定义参数
-**优先级**：用户配置 > 默认配置
-
-### 路径配置
-
-#### 数据路径
-
-```ini
-[data]
-# 原始数据目录路径
-# 例如：在 /myworkspace/ 目录运行 specproc
-#
-# 路径行为：
-# - rawdata_path = /data/20241102_hrs  → 绝对路径，从 /data/20241102_hrs/ 加载数据
-# - rawdata_path = ./20241102_hrs       → 相对路径，从工作目录/20241102_hrs/ 加载数据
-#   （例如：在 /myworkspace/ 目录下运行，则从 /myworkspace/20241102_hrs/ 加载）
-#
-# 示例（假设工作目录是 /myworkspace/）：
-#   rawdata_path = ./20241102_hrs      → 数据从 /myworkspace/20241102_hrs/ 加载
-#   rawdata_path = /data/20241102_hrs   → 数据从 /data/20241102_hrs/ 加载
-rawdata_path = ./20241102_hrs
-```
-
-#### 输出路径
+### 常见参数解析
 
 ```ini
 [reduce]
-# 输出目录路径（所有处理结果）
-# 例如：在 /myworkspace/ 目录运行 specproc
-#
-# 路径行为：
-# - output_path = /data/output  → 绝对路径，结果保存到 /data/output/
-# - output_path = ./output      → 相对路径，结果保存到工作目录/output/
-#   （例如：在 /myworkspace/ 目录下运行，则保存到 /myworkspace/output/）
-#
-# 示例（假设工作目录是 /myworkspace/）：
-#   output_path = ./output        → 结果保存到 /myworkspace/output/
-#   output_path = /data/output    → 结果保存到 /data/output/
-#
-# 输出目录结构（对应 9 个处理步骤）：
-# output/
-#   ├── step0_overscan/         # 第0步：过扫描校正后的图像和诊断图
-#   ├── step1_bias/             # 第1步：主偏置帧和诊断图
-#   ├── step2_flat/             # 第2步：主平场、Blaze 轮廓和诊断图
-#   ├── step3_background/       # 第3步：背景模型和诊断图
-#   ├── step4_cosmic/           # 第4步：宇宙线校正后的图像和诊断图（如启用）
-#   ├── step5_extraction/       # 第5步：提取的一维光谱和诊断图
-#   ├── step6_wavelength/       # 第6步：波长定标解和诊断图
-#   ├── step7_deblazing/        # 第7步：去 Blaze 的光谱和诊断图（如保存）
-#   └── step8_final_spectra/    # 第8步：科学帧的最终一维光谱和诊断图
+# 总体输出目录
 output_path = output
-```
 
-#### 路径示例
-
-```bash
-# 假设工作目录是 /myworkspace/
-cd /myworkspace/
-
-# 配置文件（相对路径示例）：
 [data]
-rawdata_path = ./20241102_hrs
-[reduce]
-output_path = ./output
+# 是否开启过扫区扣除 (设为 -1 禁用)
+overscan_start_column = -1
 
-# 实际使用的路径：
-# 输入：/myworkspace/20241102_hrs/
-# 输出：/myworkspace/output/
+# 探测器上下两半的分割行数 (Xinglong 2.16m 为 2068)
+detector_split_row = 2068
 
-# 配置文件（绝对路径示例）：
-[data]
-rawdata_path = /data/20241102_hrs
-[reduce]
-output_path = /data/output
+[reduce.flat]
+# Blaze 函数的 B-Spline 平滑度因子 (越大越平滑刚硬，越小越贴合局部特征)
+blaze_smooth_factor = 1.0
+# 横截面 Profile 沿 X 轴方向的切片数
+n_profile_segments = 100
+# 自动识别并使用刚性多项式对抗干涉条纹的红端级次数
+fringe_orders = 20
 
-# 实际使用的路径：
-# 输入：/data/20241102_hrs/
-# 输出：/data/output/
+[reduce.background]
+# 杂散光拟合方法: convolution 或 column_spline
+method = convolution
+# 高斯核大小 (控制横向杂散光波纹的贴合度)
+kernel_sigma_x = 13.0
+kernel_sigma_y = 13.0
+
+[reduce.wlcalib]
+# 盲配的 RMS 误差容忍度 (埃)
+rms_threshold = 0.5
 ```
 
-### 中间结果保存
+## 数据处理流程
 
-控制每一步是否保存中间结果：
-
-```ini
-[reduce.save_intermediate]
-# 每一步是否保存中间结果
-# 可以单独控制每一步是否保存
-# 默认所有步骤都保存
-save_overscan = yes        # 第0步：过扫描校正（保存到 output/step0_overscan/）
-save_bias = yes             # 第1步：偏置减除（保存主偏置帧到 output/step1_bias/）
-save_flat = yes              # 第2步：平场改正（保存主平场到 output/step2_flat/）
-save_background = yes        # 第3步：背景扣除（保存背景模型到 output/step3_background/）
-save_cosmic = yes           # 第4步：宇宙线去除（保存校正后的图像到 output/step4_cosmic/）
-save_extraction = yes       # 第5步：一维谱提取（保存到 output/step5_extraction/）
-save_wlcalib = yes          # 第6步：波长定标（保存定标解到 output/step6_wavelength/）
-save_deblaze = yes          # 第7步：Blaze 函数改正（保存到 output/step7_deblazing/）
-```
-
-**效果**：
-- 如果某一步设置为 `no`，则不会创建对应的输出子目录
-- 最终光谱总是保存到 `output/step8_final_spectra/`，不受这些设置影响
-- 诊断图表可以保存到对应的步骤子目录中
-- 在 GUI 中应该有对应的取消勾选选项
-- 默认所有步骤都保存
-
-### 望远镜和校准配置
-
-```ini
-[telescope]
-# 望远镜名称（用于查找校准数据）
-name = xinglong216hrs
-
-# 光谱仪名称（用于校准文件查找）
-instrument = hrs
-
-[telescope.linelist]
-# 灯谱线类型
-linelist_type = ThAr
-
-# 灯谱线文件路径
-linelist_path = calib_data/linelists/
-
-# 使用的具体灯谱线文件（可选）
-# 对于兴隆216 HRS：thar-noao.dat 是推荐的
-linelist_file = thar-noao.dat
-
-# 是否使用预先识别的校准文件（可选）
-use_precomputed_calibration = yes
-calibration_path = calib_data/telescopes/xinglong216hrs/
-
-# 使用的具体校准文件（可选）
-# 使用最新的：wlcalib_20211123011_A.fits
-calibration_file = wlcalib_20211123011_A.fits
-```
-
-## 处理流程
-
-### 完整的 8 阶段处理流程
-
-![SpecProc 处理流程图](docs/processing_pipeline_diagram.png)
-
-*图：SpecProc 8 阶段光谱还原处理流程*
-
-### 阶段说明
-
-#### 第1步：基础预处理 (Basic Pre-processing)
-- **输入**：原始 FITS 文件（bias, flat, ThAr, science）
-- **处理**：
-  - 提取 overscan 区域（读出偏置区域）
+#### STEP 1: 基础预处理 (Basic Pre-processing)
+- **输入**: 原始 FITS 文件 (bias, flat, ThAr, science)
+- **处理**:
+  - 提取过扫区 (读出偏置区域)
   - 计算中值或多项式拟合
-  - 从图像减去 overscan 偏置
-  - 合并多个 bias 帧（均值/中值）
+  - 从图像中扣除过扫区偏置
+  - 合并多个 bias 图像 (均值/中值)
   - 生成 master bias
-  - 从 science/flat/ThAr 减去 master bias
-  - 使用 L.A.Cosmic 算法检测并去除宇宙线（仅限科学图像）
-- **输出**：完成预处理的图像
-- **说明**：在追踪和提取之前的基本物理校正。
+  - 从 science/flat/ThAr 图像中扣除 master bias
+  - 使用 L.A.Cosmic 识别并去除宇宙线 (仅限科学图像)
+- **输出**: 预处理后的图像 (已做过扫区、本底、宇宙线校正)
+- **说明**: 基础校正，为寻迹和提取准备数据。
 
-#### 第2步：阶序追踪 (Orders Tracing)
-- **输入**：预处理后的平场图像
-- **处理**：
-  - 合并平场图像
+#### STEP 2: 级次寻迹 (Orders Tracing)
+- **输入**: 预处理后的 flat 图像
+- **处理**:
+  - 合并 flat 图像
   - 生成 master flat
-  - 检测阶梯阶序
-  - 为每个阶序拟合多项式轨迹
-  - 提取 blaze 函数
-- **输出**：Master flat、阶序和 blaze 函数
-- **说明**：为后续步骤提供阶序和 blaze 函数
+  - 识别阶梯光栅衍射级次
+  - 为每个级次拟合多项式迹线
+  - 提取闪耀分布 (blaze profiles)
+- **输出**: Master flat, 孔径边界 (apertures) 和 闪耀曲线
+- **说明**: 为后续步骤提供级次边界和分布特征。
 
-#### 第3步：散射光扣除 (Scattered Light Subtraction)
-- **输入**：预处理后的科学图像
-- **处理**：
-  - 使用 2D 多项式或中值滤波估计背景
-  - 从图像减去背景
-  - 扣除级次间的散射光
-- **输出**：去除了散射光背景的图像
-- **说明**：消除级次间杂散光干扰。
+#### STEP 3: 散射光扣除 (Scattered Light Subtraction)
+- **输入**: 预处理后的 science 图像
+- **处理**:
+  - 使用 2D 卷积或样条函数评估背景散射光
+  - 从科学图像中扣除背景模型
+- **输出**: 扣除背景后的图像
+- **说明**: 消除级次间的杂散光。
 
-#### 第4步：2D平场校正 (2D Flat-Field Correction)
-- **输入**：背景扣除后的图像
-- **处理**：
-  - 生成 2D 像素平场校正图
-  - 将 2D 平场校正应用到科学图像
-- **输出**：2D 平场校正后的图像
-- **说明**：校正 CCD 像素响应不均匀性。
+#### STEP 4: 二维平场校正 (2D Flat-Field Correction)
+- **输入**: 扣除背景的 science 图像
+- **处理**:
+  - 生成 2D 像素平场校正映射 (pixel-to-pixel flat)
+  - 将 2D 平场校正应用于科学图像
+- **输出**: 已做 2D 平场校正的图像
+- **说明**: 纠正像素级的灵敏度差异。
 
-#### 第5步：一维谱提取 (1D Spectrum Extraction)
-- **输入**：2D平场校正后的图像
-- **处理**：
-  - 为每个阶梯阶序提取 1D 光谱
-  - 方法：求和提取或最优提取（Horne 1986）
+#### STEP 5: 一维光谱抽取 (1D Spectrum Extraction)
+- **输入**: 2D 平场校正图像
+- **处理**:
+  - 抽取每个级次的 1D 光谱
+  - 方法: 简单求和 (Sum) 或 最优提取 (Optimal, Horne 1986)
   - 计算提取误差
-- **输出**：像素空间的一维光谱
-- **说明**：将 2D 弯曲的光谱信号提取为一维数组。
+- **输出**: SpectraSet (像素坐标系)
+- **说明**: 将二维弯曲迹线坍缩为一维像素光谱。
 
-#### 第6步：闪耀函数改正 (De-blazing)
-- **输入**：像素空间的一维光谱
-- **处理**：
-  - 从平场读取 blaze 函数（在像素空间）
-  - 匹配阶序
-  - 除以 blaze 函数：F_corrected(λ) = F_observed(λ) / B(λ)
-  - 归一化到单位连续谱
-- **输出**：经闪耀函数校正的光谱
-- **说明**：消除光谱仪光栅衍射效率分布的影响。
+#### STEP 6: 去闪耀 (De-blazing)
+- **输入**: 提取的 1D 光谱 (像素坐标系)
+- **处理**:
+  - 读取平场的闪耀函数
+  - 匹配对应级次
+  - 除以闪耀函数: F_corrected(λ) = F_observed(λ) / B(λ)
+  - 归一化为单位连续谱
+- **输出**: 去闪耀的光谱
+- **说明**: 校正光栅闪耀函数的包络效应。
 
-#### 第7步：波长定标 (Wavelength Calibration)
-- **输入**：经闪耀函数校正的一维光谱（像素空间）
-- **处理**：
-  - 第一步：定标 ThAr 灯谱
+#### STEP 7: 波长定标 (Wavelength Calibration)
+- **输入**: 去闪耀后的 1D 光谱 (像素坐标系)
+- **处理**:
+  - 步骤 1: 标定 ThAr 灯谱
     - 提取 1D 光谱
-    - 识别发射谱线
-    - 拟合 2D 波长多项式 λ(x,y) = Σ p_ij·x^i·y^j
-  - 第二步：应用到科学光谱
+    - 证认发射线
+    - 拟合 2D 波长多项式: λ(x,y) = Σ p_ij·x^i·y^j
+  - 步骤 2: 应用于科学光谱
     - 将像素坐标转换为波长单位
-- **输出**：带波长信息的一维光谱 (wavelength space)
-- **说明**：为去 Blaze 后的光谱建立物理波长刻度。
+- **输出**: 完成波长定标的 1D 光谱
+- **说明**: 建立各级次的物理波长标尺。
 
-#### 第8步：阶序拼接 (Order Stitching)
-- **输入**：带波长信息的一维光谱
-- **处理**：
-  - 将重叠的相邻级次拼接
-  - 在重叠区域根据信噪比进行加权合并
-- **输出**：最终连续的一维光谱
-- **说明**：生成可供最终科学分析的光谱数据。
+#### STEP 8: 级次拼接 (Order Stitching)
+- **输入**: 已定标的一维多级次光谱
+- **处理**: 将多个重叠的级次在重合波段依据信噪比进行加权融合，输出一条便于后续进行吸收线分析的连续一维物理光谱。
+- **输出**: 最终的连续 1D 光谱
+- **说明**: 生成可用于科学分析的最终数据产品。
 
 ## 使用方法
 
-### GUI 模式（默认）
+### GUI 模式 (默认)
 
 ```bash
-# 启动 GUI（默认模式）
+# 启动 GUI (默认模式)
 specproc
 
-# 或显式指定 GUI 模式
+# 或明确指定 GUI 模式
 specproc --mode gui
 
 # 使用自定义配置文件
 specproc --config /path/to/config.cfg
 ```
+**操作流程**:
+1. 在左侧栏分别添加对应的 Bias、Flat、Calibration(ThAr) 和 Science 图像。
+2. （可选）点击右上角 "Settings" 确认望远镜台址和参数。
+3. 勾选需要执行的步骤，点击 **"Run All Steps"** 一键到底，或点击 "Run Selected Steps" 单步调试。
 
-**GUI 工作流程**：
-1. 选择 bias 文件
-2. 选择 flat 文件
-3. 选择校准文件（ThAr 灯谱）
-4. 选择 science 文件
-5. 点击"运行完整流程"或分步执行
-6. 实时查看进度
-7. 在 output 目录查看结果
-
-### CLI 模式（命令行）
-
+### 命令行批处理模式 (CLI)
 ```bash
-# 运行 CLI 模式
-specproc --mode cli
-
-# 使用自定义配置
-specproc --mode cli --config /path/to/config.cfg
+specproc --mode cli --config ./specproc.cfg
 ```
-
-**CLI 工作流程**：
-1. 按提示选择文件
-2. 选择处理步骤（0-7，或回车执行全部）
-3. 监控控制台进度
-4. 在 output 目录查看结果
-
-## 校准数据
-
-### 目录结构
-
-```
-calib_data/
-├── linelists/              # 灯谱发射线目录
-│   ├── thar-noao.dat      # ThAr 灯谱线（兴隆216 HRS 推荐）
-│   ├── thar.dat           # 标准 ThAr 灯谱线
-│   └── FeAr.dat           # FeAr 灯谱线
-└── telescopes/             # 望远镜特定校准文件
-    ├── generic/           # 通用配置模板
-    └── xinglong216hrs/    # 兴隆216望远镜
-        ├── wlcalib_20141103049.fits
-        ├── wlcalib_20171202012.fits
-        ├── wlcalib_20190905028_A.fits
-        └── wlcalib_20211123011_A.fits
-```
-
-### 灯谱线文件
-
-**可用的灯谱线文件**：
-- `thar-noao.dat` - ThAr 灯谱线（兴隆216 HRS 推荐）
-- `thar.dat` - 标准 ThAr 灯谱线
-- `FeAr.dat` - FeAr 灯谱线
-
-**支持的灯类型**：
-- `ThAr` - 氩钍灯（阶梯光谱仪最常用）
-- `FeAr` - 铁氩灯
-- `Ar` - 氩灯
-- `Ne` - 氖灯
-- `He` - 氦灯
-- `Fe` - 铁灯
-
-### 望远镜校准文件
-
-**兴隆216 HRS 可用的校准文件**：
-- `wlcalib_20141103049.fits` - 2014-11-03 04:50
-- `wlcalib_20171202012.fits` - 2017-12-02 01:20
-- `wlcalib_20190905028_A.fits` - 2019-09-05 02:50（版本 A）
-- `wlcalib_20211123011_A.fits` - 2021-11-23 01:10（版本 A）- **最新**
-
-### 使用选项
-
-#### 使用预计算的校准文件（推荐）
-
-```ini
-use_precomputed_calibration = yes
-calibration_file = wlcalib_20211123011_A.fits
-```
-
-#### 重新拟合波长定标
-
-```ini
-use_precomputed_calibration = no
-linelist_file = thar-noao.dat
-```
-
-### 添加自定义校准数据
-
-#### 添加新的灯谱线文件：
-
-1. 在 `linelists/` 目录创建文件
-2. 遵循文件格式（波长、强度、注释）
-3. 在配置文件中配置：`linelist_file = <文件名>`
-
-#### 添加新的望远镜：
-
-1. 创建目录：`calib_data/telescopes/<望远镜名称>/`
-2. 放置校准文件，使用正确的命名规则
-3. 在配置文件中配置：
-   ```ini
-   [telescope]
-   name = <望远镜名称>
-   instrument = <光谱仪名称>
-   ```
-
-## 常见问题
-
-### ImportError: No module named 'PyQt5'
-
-```bash
-conda activate specproc
-pip install PyQt5
-```
-
-### specproc 命令找不到
-
-```bash
-conda activate specproc
-pip install -e .
-```
-
-### 配置文件找不到
-
-```bash
-# 复制默认配置
-cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
-```
-
-### GitHub 大文件错误
-
-**错误**：`File exceeds GitHub's file size limit of 100.00 MB`
-
-**解决方案**：大 FITS 文件不应该提交。使用 `.gitignore` 排除它们。
-
-**防止将来添加**：
-- 在 `.gitignore` 中添加输出目录
-- 在单独的工作目录运行 SpecProc，而不是在源代码目录
-
-### 处理错误
-
-1. **缺少 bias 文件**：Bias 校正是可选的，但推荐使用
-2. **缺少 flat 文件**：阶序追踪需要
-3. **缺少校准文件**：波长定标需要
-
-## 文档
-
-- 查看 [calib_data/README_CN.md](calib_data/README_CN.md) 了解校准数据配置
-- 查看 [CONFIGURATION_GUIDE_CN.md](CONFIGURATION_GUIDE_CN.md) 了解详细配置指南
-- 查看 [PIPELINE_FLOWCHART.md](PIPELINE_FLOWCHART.md) 了解详细处理流程
-
-## 项目结构
-
-```
-SpecProc/
-├── README.md                    # 主文档（英文）
-├── README_CN.md                # 主文档（中文）
-├── DOCUMENTATION.md             # 文档索引
-├── INSTALLATION_GUIDE.md       # 安装指南（英文）
-├── INSTALLATION_GUIDE_CN.md    # 安装指南（中文）
-├── QUICK_START.md               # 快速开始（中文）
-├── QUICK_REFERENCE.md           # 快速参考（英文）
-├── CONFIGURATION_GUIDE_CN.md   # 配置指南（中文）
-├── default_config.cfg           # 默认配置
-├── specproc.cfg.example         # 用户配置示例
-├── calib_data/
-│   ├── README.md                # 校准数据指南（英文）
-│   ├── README_CN.md            # 校准数据指南（中文）
-│   ├── linelists/               # 灯谱线文件
-│   └── telescopes/              # 望远镜校准文件
-├── src/                         # 源代码
-│   ├── gui/                     # GUI 模块
-│   ├── core/                    # 核心处理
-│   ├── config/                  # 配置管理
-│   ├── utils/                   # 工具函数
-│   └── plotting/                # 绘图功能
-├── install.sh                   # 安装脚本
-├── requirements.txt              # Python 依赖
-├── setup.py                     # 安装配置
-├── run.py                      # 主入口点
-└── test_*.py                    # 测试文件
-```
-
-## 许可证
-
-查看 LICENSE 文件了解详情。
-
-## 贡献
-
-欢迎贡献！请随时提交 Pull Request。
-
-## 致谢
-
-- 受 [gamse](https://github.com/wangleon/gamse) 包启发
-- 使用 PyQt5、NumPy、SciPy 和 Astropy 构建
-
-## 支持
-
-如有问题和疑问，请在 GitHub 上提交 Issue。
+无需图形界面，适合部署在远端服务器批量执行常规管线作业。

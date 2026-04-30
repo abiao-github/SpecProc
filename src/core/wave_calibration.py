@@ -114,81 +114,137 @@ class WavelengthCalibrator:
     def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, np.ndarray]) -> Tuple[int, List[Tuple[float, int, float]]]:
         """
         寻找最佳级次偏移 (delta_m = m_ref - m_obs) 并返回成功匹配的锚点 (X_obs, m_true, wavelength)。
-        采用无像素坐标的 1D 模式盲搜：利用任意两对特征峰之间的比例关系建立局部色散，匹配成功线数最多者胜出。
+        两阶段盲搜法：
+        1. 仅使用中间级次，显式区分正反色散方向搜索最佳 delta_m。
+        2. 利用确定的方向和偏移量，对全量级次进行秒级匹配。
         """
+        all_m_obs = sorted(list(detected_peaks.keys()))
+        if not all_m_obs:
+            return 0, []
+
+        # ====================================================================
+        # Phase 1: 选取中间级次进行快速盲搜，确定最佳偏移量和色散方向
+        # ====================================================================
+        n_orders = len(all_m_obs)
+        start_idx = n_orders // 4          # 25% 位置
+        end_idx = n_orders * 3 // 4        # 75% 位置
+        if end_idx - start_idx < 3:        # 如果总级次太少，则启动兜底保护
+            start_idx, end_idx = 0, n_orders
+        middle_orders = all_m_obs[start_idx:end_idx]
+
         best_offset = 0
+        best_direction = 1  # 1: Left-to-Right, -1: Right-to-Left
         max_total_matches = -1
-        best_global_matched_points = []
 
-        for delta_m in range(-40, 41):
-            total_matches = 0
-            global_matched_points = []
+        logger.info(f"Phase 1: Blind matching on middle {len(middle_orders)} orders to find delta_m and dispersion direction...")
 
-            for m_obs, X in detected_peaks.items():
-                m_ref = m_obs + delta_m
-                if m_ref not in anchors:
-                    continue
+        for direction in [1, -1]:
+            for delta_m in range(-40, 41):
+                total_matches = 0
+                for m_obs in middle_orders:
+                    X = detected_peaks[m_obs]
+                    m_ref = m_obs + delta_m
+                    if m_ref not in anchors: continue
+                    
+                    W = anchors[m_ref]
+                    if len(W) < 2 or len(X) < 2: continue
 
-                W = anchors[m_ref]
-                if len(W) < 2 or len(X) < 2:
-                    continue
+                    best_inliers = []
 
-                best_inliers = []
+                    # 遍历所有可能的锚点波长对和观测峰对
+                    for k in range(len(W) - 1):
+                        for l in range(k + 1, len(W)):
+                            dw = W[l] - W[k]
+                            for i in range(len(X) - 1):
+                                for j in range(i + 1, len(X)):
+                                    dx = X[j] - X[i]
+                                    if dx == 0: continue
 
-                # 遍历所有可能的锚点波长对
-                for k in range(len(W) - 1):
-                    for l in range(k + 1, len(W)):
-                        dw = W[l] - W[k]
-
-                        # 遍历所有可能的观测峰对
-                        for i in range(len(X) - 1):
-                            for j in range(i + 1, len(X)):
-                                dx = X[j] - X[i]
-                                if dx == 0: continue
-
-                                # 推算色散率 a (Angstrom/pixel)，考虑光栅可能为正或反色散方向
-                                for a_test in [dw / dx, -dw / dx]:
-                                    # Echelle 光栅物理色散率通常在 0.005 ~ 0.15 A/pix 之间
-                                    if not (0.005 < abs(a_test) < 0.15):
-                                        continue
+                                    # 色散率 a = direction * |dw/dx|
+                                    a_test = direction * abs(dw / dx)
+                                    if not (0.005 < abs(a_test) < 0.15): continue
                                     
-                                    # 推算截距 b
-                                    x_anchor = X[i] if a_test == dw / dx else X[j]
-                                    b = W[k] - a_test * x_anchor
+                                    # 正向色散：波长随 X 增加。所以较小的 X[i] 对应较小的 W[k]
+                                    # 反向色散：波长随 X 减小。所以较大的 X[j] 对应较小的 W[k]
+                                    b = W[k] - a_test * (X[i] if direction == 1 else X[j])
 
-                                    # 预测所有 X 的波长
                                     W_pred = a_test * X + b
-
-                                    # 向量化计算与所有锚点波长的距离矩阵
                                     diffs = np.abs(W[:, None] - W_pred[None, :])
                                     min_dist_idx = np.argmin(diffs, axis=0)
                                     min_dist = np.min(diffs, axis=0)
 
-                                    # 阈值：1.5 埃以内认为粗匹配成功
                                     valid = min_dist < 1.5
                                     if np.sum(valid) > len(best_inliers):
-                                        # 确保没有两个像素峰匹配到同一个参考波长上
                                         matched_w = min_dist_idx[valid]
                                         _, unique_indices = np.unique(matched_w, return_index=True)
                                         if len(unique_indices) > len(best_inliers):
                                             valid_x_idx = np.where(valid)[0][unique_indices]
                                             valid_w_idx = matched_w[unique_indices]
                                             best_inliers = [(X[vx], m_ref, W[vw]) for vx, vw in zip(valid_x_idx, valid_w_idx)]
+                                            
+                    if len(best_inliers) >= max(2, min(3, len(W))):
+                        total_matches += len(best_inliers)
 
-                # 如果这个级次找到了足够多的匹配线 (大于等于锚点数一半 或最少2根)
-                if len(best_inliers) >= max(2, min(3, len(W))):
-                    total_matches += len(best_inliers)
-                    global_matched_points.extend(best_inliers)
-
-            if total_matches > max_total_matches:
-                max_total_matches = total_matches
-                best_offset = delta_m
-                best_global_matched_points = global_matched_points
+                if total_matches > max_total_matches:
+                    max_total_matches = total_matches
+                    best_offset = delta_m
+                    best_direction = direction
 
         if max_total_matches <= 0:
             logger.warning("盲配模式匹配失败！未找到合适的级次偏移。请检查峰值提取、锚点文件或放宽色散率限制。")
-        else:
-            logger.info(f"Blind match found delta_m={best_offset} with {max_total_matches} lines matched across all orders.")
+            return 0, []
+            
+        dir_str = "Left-to-Right (+)" if best_direction == 1 else "Right-to-Left (-)"
+        logger.info(f"Phase 1 complete: Found delta_m={best_offset}, dispersion direction={dir_str}")
+
+        # ====================================================================
+        # Phase 2: 使用确定的最佳偏移量和色散方向，全量级次提取匹配点
+        # ====================================================================
+        logger.info(f"Phase 2: Extracting matched anchors across all orders using delta_m={best_offset}...")
+        best_global_matched_points = []
+        global_total_matches = 0
+
+        for m_obs in all_m_obs:
+            X = detected_peaks[m_obs]
+            m_ref = m_obs + best_offset
+            if m_ref not in anchors: continue
+            W = anchors[m_ref]
+            if len(W) < 2 or len(X) < 2: continue
+
+            best_inliers = []
+            for k in range(len(W) - 1):
+                for l in range(k + 1, len(W)):
+                    dw = W[l] - W[k]
+                    for i in range(len(X) - 1):
+                        for j in range(i + 1, len(X)):
+                            dx = X[j] - X[i]
+                            if dx == 0: continue
+                            
+                            # 直接使用 Phase 1 确定的最佳色散方向
+                            a_test = best_direction * abs(dw / dx)
+                            if not (0.005 < abs(a_test) < 0.15): continue
+                            
+                            b = W[k] - a_test * (X[i] if best_direction == 1 else X[j])
+                                
+                            W_pred = a_test * X + b
+                            diffs = np.abs(W[:, None] - W_pred[None, :])
+                            min_dist_idx = np.argmin(diffs, axis=0)
+                            min_dist = np.min(diffs, axis=0)
+                            
+                            valid = min_dist < 1.5
+                            if np.sum(valid) > len(best_inliers):
+                                matched_w = min_dist_idx[valid]
+                                _, unique_indices = np.unique(matched_w, return_index=True)
+                                if len(unique_indices) > len(best_inliers):
+                                    valid_x_idx = np.where(valid)[0][unique_indices]
+                                    valid_w_idx = matched_w[unique_indices]
+                                    best_inliers = [(X[vx], m_ref, W[vw]) for vx, vw in zip(valid_x_idx, valid_w_idx)]
+                                    
+            if len(best_inliers) >= max(2, min(3, len(W))):
+                global_total_matches += len(best_inliers)
+                best_global_matched_points.extend(best_inliers)
+
+        logger.info(f"Blind match fully complete: delta_m={best_offset} with {global_total_matches} lines matched across all orders.")
             
         return best_offset, best_global_matched_points
 

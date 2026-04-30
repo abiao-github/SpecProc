@@ -1,6 +1,6 @@
 #!/bin/bash
 # SpecProc Installation Script
-# This script will set up SpecProc in a new conda environment
+# Installs SpecProc into the currently active conda/Python environment.
 
 set -e  # Exit on error
 
@@ -16,20 +16,25 @@ if ! command -v conda &> /dev/null; then
     exit 1
 fi
 
-# Environment name
-ENV_NAME="specproc"
-PYTHON_VERSION="3.8"
-
-echo "Step 1: Creating conda environment..."
-conda create -n $ENV_NAME python=$PYTHON_VERSION -y
-echo "✓ Conda environment '$ENV_NAME' created with Python $PYTHON_VERSION"
+# Detect the currently active conda environment
+CURRENT_ENV="${CONDA_DEFAULT_ENV:-base}"
+echo "Detected active conda environment: $CURRENT_ENV"
 echo ""
 
-echo "Step 2: Installing dependencies..."
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate $ENV_NAME
+if [ "$CURRENT_ENV" = "base" ]; then
+    echo "⚠  You are in the 'base' environment."
+    read -p "   Install into 'base'? [y/N] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted. Please activate your target environment first:"
+        echo "  conda activate <your_env>"
+        exit 0
+    fi
+fi
 
-# Install PyQt5
+echo "Step 1: Installing dependencies into '$CURRENT_ENV' ..."
+
+# Install PyQt5 via conda (pip version can be problematic)
 echo "Installing PyQt5..."
 conda install -c conda-forge pyqt5 -y
 
@@ -39,13 +44,13 @@ conda install numpy scipy astropy matplotlib -y
 echo "✓ Dependencies installed"
 echo ""
 
-echo "Step 3: Installing SpecProc..."
+echo "Step 2: Installing SpecProc (editable mode)..."
 echo "Current directory: $(pwd)"
 pip install -e .
 echo "✓ SpecProc installed in development mode"
 echo ""
 
-echo "Step 4: Verifying installation..."
+echo "Step 3: Verifying installation..."
 if command -v specproc &> /dev/null; then
     echo "✓ SpecProc command is available"
 else
@@ -58,26 +63,24 @@ echo "==================================="
 echo "Installation Complete!"
 echo "==================================="
 echo ""
-echo "To use SpecProc:"
+echo "SpecProc is installed in environment: $CURRENT_ENV"
 echo ""
-echo "1. Activate the environment:"
-echo "   conda activate $ENV_NAME"
+echo "Usage:"
 echo ""
-echo "2. Run GUI mode (default):"
-echo "   specproc"
-echo "   or"
-echo "   specproc --mode gui"
+echo "  Run GUI mode (default):"
+echo "    specproc"
+echo "    or"
+echo "    specproc --mode gui"
 echo ""
-echo "3. Run CLI mode:"
-echo "   specproc --mode cli"
+echo "  Run CLI mode:"
+echo "    specproc --mode cli"
 echo ""
-echo "4. Specify config file:"
-echo "   specproc --config /path/to/config.cfg"
+echo "  Specify config file:"
+echo "    specproc --config /path/to/config.cfg"
 echo ""
 echo "Note: The 'specproc' command works from any directory!"
 echo ""
 echo "For more information, see:"
-echo "  - INSTALLATION_GUIDE_CN.md (中文)"
-echo "  - INSTALLATION_GUIDE.md (English)"
-echo "  - README.md"
+echo "  - README_CN.md (中文)"
+echo "  - README.md (English)"
 echo ""

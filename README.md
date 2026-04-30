@@ -1,5 +1,7 @@
 # SpecProc: PyQt GUI for Echelle Spectrograph FITS Data Reduction
 
+![SpecProc GUI](docs/SpecProc.png)
+
 A complete PyQt-based graphical interface for reducing echelle spectrograph FITS data.
 
 ## Table of Contents
@@ -18,7 +20,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 
 ### Complete Reduction Pipeline
 
-**7-stage automated spectral reduction**:
+**8-stage automated spectral reduction**:
 
 1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
 2. **Orders Tracing** - Master flat generation and echelle order tracing
@@ -27,6 +29,7 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 5. **1D Spectrum Extraction** - 1D spectrum extraction (sum or optimal)
 6. **De-blazing** - Blaze function correction
 7. **Wavelength Calibration** - Wavelength calibration applied to both sum and optimal de-blazed 1D spectra
+8. **Order Stitching** - Merge overlapping neighboring orders into a continuous 1D spectrum
 
 ### Interactive GUI
 
@@ -173,6 +176,7 @@ specproc --config ./specproc.cfg
 │   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
 │   ├── step6_deblazing/        # Step 6: De-blazed spectra and diagnostic plots (if saved)
 │   └── step7_wavelength/       # Step 7: Final wavelength calibrated 1D spectra and plots
+│   └── step8_stitching/        # Step 8: Final stitched continuous 1D spectra and plots
 ├── specproc.cfg              # User config file (optional)
 └── ...
 ```
@@ -338,12 +342,6 @@ calibration_file = wlcalib_20211123011_A.fits
 
 ## Processing Pipeline
 
-### Complete 7-Stage Pipeline
-
-![SpecProc Processing Pipeline](docs/processing_pipeline_diagram.png)
-
-*Figure: SpecProc 7-stage spectral reduction pipeline*
-
 ### Stage Descriptions
 
 #### STEP 1: Basic Pre-processing
@@ -417,13 +415,6 @@ calibration_file = wlcalib_20211123011_A.fits
 - **Output**: Wavelength-calibrated 1D spectra
 - **Note**: Establishes the physical wavelength scale for each order.
 
-#### STEP 8: Order Stitching
-- **Input**: Wavelength calibrated 1D spectra
-- **Processing**:
-  - Merge overlapping neighboring orders
-  - Handle SNR-based weighting at overlap regions
-- **Output**: Final continuous 1D spectrum
-- **Note**: Final data product ready for scientific analysis.
 
 ## Usage
 

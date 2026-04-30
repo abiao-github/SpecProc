@@ -362,11 +362,11 @@ class ProcessingPipeline:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 
                 from src.core.de_blazing import save_deblazed_spectra
-                save_deblazed_spectra(str(out_dir / f'{science_name}_1D_{method}_calibrated.fits'), calibrated_spectra)
+                save_deblazed_spectra(str(out_dir / f'{science_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
                 
                 if self.config.get_bool('reduce', 'save_plots', True):
                     from src.plotting.spectra_plotter import plot_spectra_to_pdf
-                    pdf_path = out_dir / f"{science_name}_1D_{method}_calibrated.pdf"
+                    pdf_path = out_dir / f"{science_name}_1D_{method}_wavecal.pdf"
                     plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
                                         title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
 
@@ -862,13 +862,14 @@ class ProcessingPipeline:
 
         try:
             # Step 1: Overscan subtraction & trimming for all inputs
-            all_raw_files = [raw_image_path] + bias_filenames + flat_filenames + calib_filenames
+            all_raw_files = raw_image_paths + bias_filenames + flat_filenames + calib_filenames
             corrected_files = self.stage_overscan_correction(all_raw_files)
 
             # Extract corrected filenames
-            raw_image_path_corr = corrected_files[0]
-            bias_filenames_corr = corrected_files[1:1+len(bias_filenames)]
-            flat_start = 1 + len(bias_filenames)
+            n_sci = len(raw_image_paths)
+            science_corrected_files = corrected_files[:n_sci]
+            bias_filenames_corr = corrected_files[n_sci:n_sci+len(bias_filenames)]
+            flat_start = n_sci + len(bias_filenames)
             flat_end = flat_start + len(flat_filenames)
             flat_filenames_corr = corrected_files[flat_start:flat_end]
             calib_filenames_corr = corrected_files[flat_end:]

@@ -303,7 +303,7 @@ def process_extraction_stage(science_image: np.ndarray,
     if save_plots:
         out_dir = spectra_file.parent
         if wavelength_calib is not None:
-            pdf_path = out_dir / f"{plot_prefix}_all_orders.pdf"
+            pdf_path = out_dir / f"{plot_prefix}_all_apertures.pdf"
             plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum")
         else:
             # If no wavelength calibration, plot raw pixels

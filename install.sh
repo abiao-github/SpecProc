@@ -55,7 +55,7 @@ if command -v specproc &> /dev/null; then
     echo "✓ SpecProc command is available"
 else
     echo "Warning: specproc command not found in PATH"
-    echo "You can still run: python run.py"
+    echo "You can still run: python -m specproc.main"
 fi
 
 echo ""
@@ -76,7 +76,7 @@ echo "  Run CLI mode:"
 echo "    specproc --mode cli"
 echo ""
 echo "  Specify config file:"
-echo "    specproc --config /path/to/config.cfg"
+echo "    specproc --config specproc.cfg"
 echo ""
 echo "Note: The 'specproc' command works from any directory!"
 echo ""

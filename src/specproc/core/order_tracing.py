@@ -1397,7 +1397,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
         plt.ylim(bottom=0)
         plt.xlabel('Pixel (X)')
         plt.ylabel('Pixel (Y)')
-        plt.title('Order Traces on Combined Master Flat')
+        plt.title('Aperture Traces on Combined Master Flat')
         plt.grid(False)
         traces_plot_file = out_dir / f'order_traces.{fig_format}'
         plt.savefig(str(traces_plot_file), dpi=150, bbox_inches='tight')
@@ -1455,7 +1455,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
 
             ax.set_xlabel('Pixel (Y)')
             ax.set_ylabel('Flux (Counts)')
-            ax.set_title('Order Seeds Detection')
+            ax.set_title('Aperture Seeds Detection')
             ax.legend()
             ax.grid(True, alpha=0.3)
             seed_peaks_plot_file = out_dir / f'order_seed_peaks.{fig_format}'
@@ -1499,7 +1499,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
             ax1.set_xlabel('Pixel (Y)')
             ax1.set_ylabel('Signal-to-Noise Ratio (SNR)', color='b')
             ax1.tick_params(axis='y', labelcolor='b')
-            ax1.set_title('Peak SNR and Inter-Order Separation')
+            ax1.set_title('Peak SNR and Inter-Aperture Separation')
             ax1.grid(True, alpha=0.3, axis='x')
             
             if local_sep_func and len(plot_data) > 0:
@@ -1507,7 +1507,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
                 separations = [local_sep_func(y) for y in plot_seeds]
                 
                 # Inter-order Separation 只画点
-                ax2.plot(plot_seeds, separations, 'rs', markersize=3, alpha=0.7, label='Inter-order Separation')
+                ax2.plot(plot_seeds, separations, 'rs', markersize=3, alpha=0.7, label='Inter-aperture Separation')
                 
                 # 画出前面多项式拟合得到的光滑曲线
                 x_min, x_max = ax1.get_xlim()
@@ -1515,7 +1515,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
                 sep_eval = [local_sep_func(y) for y in y_eval]
                 ax2.plot(y_eval, sep_eval, 'r-', linewidth=1.0, alpha=0.4, label='Smooth Fit Curve')
                 
-                ax2.set_ylabel('Inter-order Separation (pixels)', color='r')
+                ax2.set_ylabel('Inter-aperture Separation (pixels)', color='r')
                 ax2.tick_params(axis='y', labelcolor='r')
                 
                 # 提高右侧 Y 轴上限，防止级次间距曲线撞到顶部图例

@@ -81,7 +81,7 @@ class ConfigManager:
         self.config['data'] = {
             'statime_key': 'DATE-OBS',
             'exptime_key': 'EXPTIME',
-            'direction': 'xr-',
+            'direction': 'xrb',
             'overscan_start_column': '-1',  # Default: no overscan correction
             'overscan_method': 'mean_savgol',
             'trim_x_start': '-1',

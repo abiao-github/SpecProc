@@ -38,4 +38,10 @@ where = ["src"]
 include = ["specproc*"]
 
 [tool.setuptools.package-data]
-specproc = ["*.cfg", "*.sample"]
+# 声明将 calib_data 及其子目录下的文件一并打包
+specproc = [
+    "*.cfg", 
+    "*.sample",
+    "calib_data/linelists/*",
+    "calib_data/telescopes/*/*"
+]

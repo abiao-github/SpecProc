@@ -23,10 +23,10 @@ A complete PyQt-based graphical interface for reducing echelle spectrograph FITS
 **8-stage automated spectral reduction**:
 
 1. **Basic Pre-processing** - Overscan, bias subtraction, and cosmic ray correction
-2. **Orders Tracing** - Master flat generation and echelle order tracing
-3. **Scattered Light Subtraction** - Inter-order background modeling and removal (astropy convolution or spline)
+2. **Apertures Tracing** - Master flat generation and echelle aperture tracing
+3. **Scattered Light Subtraction** - Inter-aperture background modeling and removal (astropy convolution or spline)
 4. **2D Flat-Field Correction** - 2D pixel flat correction
-5. **1D Spectrum Extraction** - 1D spectrum extraction (sum or optimal)
+5. **1D Spectrum Extraction** - 1D spectrum extraction for each aperture (sum or optimal)
 6. **De-blazing** - Blaze function correction
 7. **Wavelength Calibration** - Wavelength calibration applied to both sum and optimal de-blazed 1D spectra
 8. **Order Stitching** - Merge overlapping neighboring orders into a continuous 1D spectrum
@@ -150,7 +150,7 @@ cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
 # 4. Create user config file (optional)
-cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
+cp /path/to/SpecProc/src/specproc/default_config.cfg ./specproc.cfg
 
 # 5. Run SpecProc in your working directory
 specproc --config ./specproc.cfg
@@ -192,7 +192,7 @@ specproc --config ./specproc.cfg
 
 #### Default Configuration
 
-**Location**: `SpecProc/default_config.cfg`
+**Location**: `SpecProc/src/specproc/default_config.cfg`
 **Purpose**: Provides default parameter values
 **Modification**: Not recommended to modify directly
 
@@ -357,13 +357,13 @@ calibration_file = wlcalib_20211123011_A.fits
 - **Output**: Pre-processed images (overscan, bias, cosmic-ray corrected)
 - **Note**: Fundamental corrections applied to prepare data for tracing and extraction.
 
-#### STEP 2: Orders Tracing
+#### STEP 2: Apertures Tracing
 - **Input**: Pre-processed flat frames
 - **Processing**:
   - Combine flat frames
   - Generate master flat
-  - Detect echelle orders
-  - Fit polynomial traces for each order
+  - Detect echelle apertures
+  - Fit polynomial traces for each aperture
   - Extract blaze profiles
 - **Output**: Master flat, apertures, and blaze profiles
 - **Note**: Provides apertures and blaze profiles for later stages
@@ -374,7 +374,7 @@ calibration_file = wlcalib_20211123011_A.fits
   - Estimate background scattered light using 2D convolution or splines
   - Subtract background model from science image
 - **Output**: Background subtracted image
-- **Note**: Removes inter-order stray light.
+- **Note**: Removes inter-aperture stray light.
 
 #### STEP 4: 2D Flat-Field Correction
 - **Input**: Background subtracted science image
@@ -387,7 +387,7 @@ calibration_file = wlcalib_20211123011_A.fits
 #### STEP 5: 1D Spectrum Extraction
 - **Input**: 2D Flat-fielded image
 - **Processing**:
-  - Extract 1D spectrum for each echelle order
+  - Extract 1D spectrum for each aperture
   - Method: Sum extraction or Optimal extraction (Horne 1986)
   - Calculate extraction errors
 - **Output**: SpectraSet (pixel space)
@@ -397,7 +397,7 @@ calibration_file = wlcalib_20211123011_A.fits
 - **Input**: Extracted 1D spectra (pixel space)
 - **Processing**:
   - Read flat spectrum blaze function (in pixel space)
-  - Match orders
+  - Match apertures
   - Divide by blaze function: F_corrected(λ) = F_observed(λ) / B(λ)
   - Normalize to unit continuum
 - **Output**: De-blazed spectra
@@ -560,7 +560,6 @@ cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
 SpecProc/
 ├── README.md                    # Main documentation
 ├── README_CN.md                # Main documentation (Chinese)
-├── default_config.cfg           # Default configuration
 ├── specproc.cfg.example         # Example user configuration
 ├── install.sh                   # Installation script
 ├── requirements.txt              # Python dependencies
@@ -568,12 +567,12 @@ SpecProc/
 ├── setup.py                     # Installation configuration
 ├── LICENSE                      # License
 ├── .gitignore                  # Git ignore rules
-├── calib_data/                 # Calibration data
-│   ├── README.md
-│   ├── linelists/
-│   └── telescopes/
 ├── src/
 │   └── specproc/               # Source code
+│       ├── calib_data/              # Calibration data
+│       │   ├── linelists/
+│       │   └── telescopes/
+│       ├── default_config.cfg       # Default configuration
 │       ├── gui/                     # GUI modules
 │       ├── core/                    # Core processing
 │       ├── config/                  # Configuration management

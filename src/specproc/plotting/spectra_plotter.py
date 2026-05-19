@@ -79,7 +79,7 @@ class MatplotlibCanvas(FigureCanvas):
         for (aperture_id, aperture), color in zip(apertures.items(), colors):
             center_pos = aperture.get_position(cols)
             self.axes.plot(cols, center_pos, color=color, linewidth=1,
-                          label=f"Order {aperture_id}")
+                          label=f"Aperture {aperture_id}")
 
             # Add extraction limits
             upper = aperture.get_upper(cols)
@@ -457,7 +457,7 @@ def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spec
 
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Flux")
-            ax.set_title(f"{title_prefix} - Order {aperture_id}")
+            ax.set_title(f"{title_prefix} - Aperture {aperture_id}")
             ax.legend()
             ax.grid(True, alpha=0.3)
 

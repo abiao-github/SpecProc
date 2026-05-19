@@ -84,7 +84,7 @@ class WavelengthCalibrator:
     def load_anchor_file(self, anchor_file: str) -> Dict[int, np.ndarray]:
         """
         读取灯谱证认的发射线锚点文件。
-        预期仅包含两列信息：Order(级次号), Wavelength(波长)。
+        预期仅包含两列信息：True_Order(真实级次号), Wavelength(波长)。
         """
         anchors = {}
         try:
@@ -111,37 +111,64 @@ class WavelengthCalibrator:
             raise
         return anchors
 
+    def load_calibration(self, filepath: str) -> WaveCalib:
+        """
+        从先前保存的 FITS 文件中加载波长定标模型 (Pre-computed Calibration File).
+        """
+        from astropy.io import fits
+        logger.info(f"Loading precomputed wavelength calibration from {filepath}...")
+        with fits.open(filepath) as hdul:
+            hdr = hdul[0].header
+            coefs = hdul[0].data
+            wave_calib = WaveCalib(
+                poly_coef=coefs,
+                xorder=hdr.get('XORDER', 4),
+                yorder=hdr.get('YORDER', 4),
+                poly_type=hdr.get('POLY_TYP', 'chebyshev'),
+                domain_x=(hdr.get('X_MIN', 0.0), hdr.get('X_MAX', 4000.0)),
+                domain_y=(hdr.get('Y_MIN', 0.0), hdr.get('Y_MAX', 150.0)),
+                line_pixels=np.array([]),
+                line_orders=np.array([]),
+                line_catalog=np.array([]),
+                rms=hdr.get('RMS', 0.0),
+                nlines=hdr.get('NLINES', 0),
+                calib_type=hdr.get('CALIBTYP', 'Unknown')
+            )
+            wave_calib.delta_m = hdr.get('DELTAM', 0)
+        self.wave_calib = wave_calib
+        return wave_calib
+
     def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, np.ndarray]) -> Tuple[int, List[Tuple[float, int, float]]]:
         """
-        寻找最佳级次偏移 (delta_m = m_ref - m_obs) 并返回成功匹配的锚点 (X_obs, m_true, wavelength)。
+        寻找最佳偏移 (delta_m = True_Order - Aperture_Number) 并返回成功匹配的锚点 (X_obs, True_Order, wavelength)。
         两阶段盲搜法：
-        1. 仅使用中间级次，显式区分正反色散方向搜索最佳 delta_m。
-        2. 利用确定的方向和偏移量，对全量级次进行秒级匹配。
+        1. 仅使用中间孔径(Aperture)，显式区分正反色散方向搜索最佳 delta_m。
+        2. 利用确定的方向和偏移量，对全量孔径进行秒级匹配。
         """
         all_m_obs = sorted(list(detected_peaks.keys()))
         if not all_m_obs:
             return 0, []
 
         # ====================================================================
-        # Phase 1: 选取中间级次进行快速盲搜，确定最佳偏移量和色散方向
+        # Phase 1: 选取中间孔径(Aperture)进行快速盲搜，确定最佳偏移量和色散方向
         # ====================================================================
-        n_orders = len(all_m_obs)
-        start_idx = n_orders // 4          # 25% 位置
-        end_idx = n_orders * 3 // 4        # 75% 位置
-        if end_idx - start_idx < 3:        # 如果总级次太少，则启动兜底保护
-            start_idx, end_idx = 0, n_orders
-        middle_orders = all_m_obs[start_idx:end_idx]
+        n_apertures = len(all_m_obs)
+        start_idx = n_apertures // 4          # 25% 位置
+        end_idx = n_apertures * 3 // 4        # 75% 位置
+        if end_idx - start_idx < 3:           # 如果总孔径太少，则启动兜底保护
+            start_idx, end_idx = 0, n_apertures
+        middle_apertures = all_m_obs[start_idx:end_idx]
 
         best_offset = 0
         best_direction = 1  # 1: Left-to-Right, -1: Right-to-Left
         max_total_matches = -1
 
-        logger.info(f"Phase 1: Blind matching on middle {len(middle_orders)} orders to find delta_m and dispersion direction...")
+        logger.info(f"Phase 1: Blind matching on middle {len(middle_apertures)} apertures to find delta_m and dispersion direction...")
 
         for direction in [1, -1]:
             for delta_m in range(-40, 41):
                 total_matches = 0
-                for m_obs in middle_orders:
+                for m_obs in middle_apertures:
                     X = detected_peaks[m_obs]
                     m_ref = m_obs + delta_m
                     if m_ref not in anchors: continue
@@ -191,16 +218,16 @@ class WavelengthCalibrator:
                     best_direction = direction
 
         if max_total_matches <= 0:
-            logger.warning("盲配模式匹配失败！未找到合适的级次偏移。请检查峰值提取、锚点文件或放宽色散率限制。")
+            logger.warning("盲配模式匹配失败！未找到合适的级次(Order)偏移。请检查峰值提取、锚点文件或放宽色散率限制。")
             return 0, []
             
         dir_str = "Left-to-Right (+)" if best_direction == 1 else "Right-to-Left (-)"
         logger.info(f"Phase 1 complete: Found delta_m={best_offset}, dispersion direction={dir_str}")
 
         # ====================================================================
-        # Phase 2: 使用确定的最佳偏移量和色散方向，全量级次提取匹配点
+        # Phase 2: 使用确定的最佳偏移量和色散方向，全量孔径(Apertures)提取匹配点
         # ====================================================================
-        logger.info(f"Phase 2: Extracting matched anchors across all orders using delta_m={best_offset}...")
+        logger.info(f"Phase 2: Extracting matched anchors across all apertures using delta_m={best_offset}...")
         best_global_matched_points = []
         global_total_matches = 0
 
@@ -244,7 +271,7 @@ class WavelengthCalibrator:
                 global_total_matches += len(best_inliers)
                 best_global_matched_points.extend(best_inliers)
 
-        logger.info(f"Blind match fully complete: delta_m={best_offset} with {global_total_matches} lines matched across all orders.")
+        logger.info(f"Blind match fully complete: delta_m={best_offset} with {global_total_matches} lines matched across all apertures.")
             
         return best_offset, best_global_matched_points
 
@@ -417,7 +444,7 @@ class WavelengthCalibrator:
         Args:
             spectrum: 1D spectrum array
             pixel_array: Pixel coordinate array
-            aperture_y: Y coordinate (order number) of aperture
+            aperture_y: Y coordinate (True Order number) of aperture
 
         Returns:
             Wavelength array
@@ -574,7 +601,7 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
                     ax.text(x_obs, max_flux * 1.05, f"{wave:.3f}", color='b', 
                             rotation=90, va='bottom', ha='center', fontsize=8)
                             
-            ax.set_title(f"Order {m_true} (Original: {m_obs}, Offset: {delta_m})")
+            ax.set_title(f"True Order {m_true} (Aperture: {m_obs}, Offset: {delta_m})")
             ax.set_xlabel("Pixel (X)")
             ax.set_ylabel("Flux")
             
@@ -587,13 +614,37 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
             pdf.savefig(fig)
             plt.close(fig)
 
+def _resolve_data_path(filepath: str) -> str:
+    """Resolve calibration data path (supports running from arbitrary working directories)."""
+    if not filepath:
+        return filepath
+        
+    path = Path(filepath)
+    # 如果是绝对路径或者在当前工作目录下能直接找到，直接返回
+    if path.is_absolute() or path.exists():
+        return str(path)
+        
+    # 如果在当前目录找不到，回退到源代码根目录寻找
+    # __file__ 当前位于 src/specproc/core/wave_calibration.py
+    pkg_dir = Path(__file__).parent.parent
+    project_root = pkg_dir.parent.parent
+    
+    if (project_root / filepath).exists():
+        return str(project_root / filepath)
+        
+    if (pkg_dir / filepath).exists():
+        return str(pkg_dir / filepath)
+        
+    return filepath
+
 def process_wavelength_stage(lamp_spectra: SpectraSet,
                              config: ConfigManager,
                              output_dir_base: str,
                              anchor_file: Optional[str] = None,
                              lamp_type: str = 'ThAr',
                              save_plots: bool = True,
-                             fig_format: str = 'png') -> WaveCalib:
+                             fig_format: str = 'png',
+                             lamp_name: str = 'wavelength_calibration') -> WaveCalib:
     """
     执行波长定标 (Step 7).
 
@@ -611,7 +662,7 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
 
     # 1. 载入全量线库
     full_linelist_path = config.get('telescope.linelist', 'full_linelist', 'calib_data/linelists/thar-noao.dat')
-    full_linelist = calibrator.load_line_list(full_linelist_path)
+    full_linelist = calibrator.load_line_list(_resolve_data_path(full_linelist_path))
 
     # 2. 从 1D 灯谱中提取观测 peaks
     detected_peaks = {}
@@ -625,46 +676,102 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
         detected_peaks[m_obs] = peaks
         detected_fluxes[m_obs] = peak_fluxes
 
-    # 3. 载入锚点文件
-    if anchor_file is None:
-        anchor_file = config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong_thar_lines.csv')
-        
-    anchors = calibrator.load_anchor_file(anchor_file)
-
-    # 提取最明显的 peaks 参与锚点盲配，加快速度并降低弱线干扰
-    # 保留数量设为单级次内最大锚点数的 1.5 倍，且至少保留 15 个
-    max_anchors = max([len(pts) for pts in anchors.values()]) if anchors else 10
-    top_n = max(int(max_anchors * 1.5), 15)
+    use_precomputed = config.get_bool('telescope.linelist', 'use_precomputed_calibration', False)
+    precomputed_file = config.get('telescope.linelist', 'precomputed_calib_file', '')
     
-    prominent_peaks = {}
-    for m_obs, peaks_x in detected_peaks.items():
-        fluxes = detected_fluxes[m_obs]
-        if len(peaks_x) > top_n:
-            top_indices = np.argsort(fluxes)[-top_n:]
-            prominent_peaks[m_obs] = peaks_x[top_indices]
+    prev_calib = None
+    if use_precomputed and precomputed_file:
+        precomputed_path = _resolve_data_path(precomputed_file)
+        if Path(precomputed_path).exists():
+            try:
+                prev_calib = calibrator.load_calibration(precomputed_path)
+                logger.info(f"Successfully loaded historical calibration. delta_m = {prev_calib.delta_m}.")
+            except Exception as e:
+                logger.warning(f"Failed to load precomputed calibration: {e}")
         else:
-            prominent_peaks[m_obs] = peaks_x
+            logger.warning(f"Precomputed calibration file not found: {precomputed_path}")
 
-    # 4. 匹配锚点寻找最佳级次偏移 delta_m (仅使用过滤后的强峰)
-    delta_m, matched_anchors = calibrator.find_order_offset_and_match(prominent_peaks, anchors)
-    logger.info(f"Determined order offset (delta_m = m_ref - m_obs): {delta_m}")
+    if prev_calib is not None:
+        # 使用历史定标直接预测并全库匹配，完全跳过盲搜
+        delta_m = prev_calib.delta_m
+        pix_pos = []
+        matched_wave = []
+        wave_tol = config.get_float('reduce.wlcalib', 'rms_threshold', 0.5) * 4.0 # 预测容差可适当放宽
+        
+        for m_obs, peaks_x in detected_peaks.items():
+            if len(peaks_x) == 0: continue
+            m_true = m_obs + delta_m
+            wave_pred = prev_calib.apply_to_pixel(peaks_x, np.full_like(peaks_x, m_true))
+            
+            for x_val, w_pred in zip(peaks_x, wave_pred):
+                dist = np.abs(full_linelist - w_pred)
+                idx = np.argmin(dist)
+                if dist[idx] < wave_tol:
+                    pix_pos.append([x_val, m_true])
+                    matched_wave.append(full_linelist[idx])
+                    
+        pix_pos = np.array(pix_pos)
+        matched_wave = np.array(matched_wave)
+        logger.info(f"Matched {len(matched_wave)} lines using precomputed historical model.")
+        matched_anchors = [] # 占位
+        
+    else:
+        # 3. 载入锚点文件
+        if anchor_file is None:
+            anchor_file = config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong_thar_lines.csv')
+            
+        anchors = calibrator.load_anchor_file(_resolve_data_path(anchor_file))
 
-    # 输出匹配锚点诊断图 PDF
-    if save_plots:
-        pdf_path = Path(output_dir_base) / 'step7_wavelength' / 'matched_anchors_diagnostic.pdf'
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        _plot_matched_anchors_pdf(lamp_spectra, prominent_peaks, matched_anchors, delta_m, str(pdf_path))
-        logger.info(f"Saved matched anchors diagnostic PDF to {pdf_path}")
+        # 读取剔除级次配置
+        discard_top = config.get_int('reduce.wlcalib', 'discard_top_apertures', 0)
+        discard_bottom = config.get_int('reduce.wlcalib', 'discard_bottom_apertures', 0)
+        all_m_obs = sorted(list(detected_peaks.keys()))
+        
+        start_idx = discard_bottom
+        end_idx = len(all_m_obs) - discard_top
+        if start_idx < end_idx:
+            valid_m_obs = all_m_obs[start_idx:end_idx]
+            if discard_bottom > 0 or discard_top > 0:
+                logger.info(f"Discarding {discard_bottom} bottom and {discard_top} top apertures. Using {len(valid_m_obs)} for anchors.")
+        else:
+            valid_m_obs = all_m_obs
+            logger.warning("Discard parameters too large, ignoring discard configuration.")
 
-    # 5. 基于锚点拟合粗定标方程 (m * lambda = a*X^2 + b*X + c)
-    rough_coeffs = calibrator.rough_calibration(matched_anchors)
+        # 动态选取最强发射线：计算锚点总数，分配到剩余孔径中
+        total_anchors = sum([len(pts) for pts in anchors.values()]) if anchors else 50
+        n_valid = max(len(valid_m_obs), 1)
+        top_n = max(int((total_anchors * 1.5) / n_valid), 5) # 总量约等于锚点总数的1.5倍
+        
+        prominent_peaks = {}
+        for m_obs in valid_m_obs:
+            peaks_x = detected_peaks[m_obs]
+            fluxes = detected_fluxes[m_obs]
+            if len(peaks_x) > top_n:
+                top_indices = np.argsort(fluxes)[-top_n:]
+                prominent_peaks[m_obs] = peaks_x[top_indices]
+            else:
+                prominent_peaks[m_obs] = peaks_x
 
-    # 6. 使用粗定标预测波长，并进行全库匹配
-    wave_tol = config.get_float('reduce.wlcalib', 'rms_threshold', 0.5)
-    pix_pos, matched_wave = calibrator.match_full_catalog(
-        detected_peaks, rough_coeffs, delta_m, full_linelist, tolerance=wave_tol
-    )
-    logger.info(f"Successfully matched {len(matched_wave)} lines from the full catalog.")
+        # 4. 匹配锚点寻找最佳级次偏移 delta_m (仅使用过滤后的强峰)
+        delta_m, matched_anchors = calibrator.find_order_offset_and_match(prominent_peaks, anchors)
+        logger.info(f"Determined order offset (delta_m = m_ref - m_obs): {delta_m}")
+
+        # 输出匹配锚点诊断图 PDF
+        if save_plots and matched_anchors:
+            pdf_path = Path(output_dir_base) / 'step7_wavelength' / f'wcal_{lamp_name}_matched_anchors.pdf'
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            _plot_matched_anchors_pdf(lamp_spectra, prominent_peaks, matched_anchors, delta_m, str(pdf_path))
+            logger.info(f"Saved matched anchors diagnostic PDF to {pdf_path}")
+
+        # 5. 基于锚点拟合粗定标方程 (m * lambda = a*X^2 + b*X + c)
+        rough_coeffs = calibrator.rough_calibration(matched_anchors)
+
+        # 6. 使用粗定标预测波长，并进行全库匹配
+        wave_tol = config.get_float('reduce.wlcalib', 'rms_threshold', 0.5)
+        pix_pos, matched_wave = calibrator.match_full_catalog(
+            detected_peaks, rough_coeffs, delta_m, full_linelist, tolerance=wave_tol
+        )
+        logger.info(f"Successfully matched {len(matched_wave)} lines from the full catalog.")
 
     if len(matched_wave) < 15:
         logger.warning("Very few lines matched to the full catalog. Falling back to using only matched anchor points.")
@@ -683,15 +790,15 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
     wave_calib.delta_m = delta_m
 
     # 保存校准结果
-    calib_file = Path(output_dir_base) / 'step7_wavelength' / 'wavelength_calibration.fits'
+    calib_file = Path(output_dir_base) / 'step7_wavelength' / f'wcal_{lamp_name}.fits'
     calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.save_calibration(str(calib_file))
 
     # 绘制验证图并保存
     if save_plots and getattr(wave_calib, 'line_pixels', None) is not None:
         out_dir = calib_file.parent
-        plot_file = out_dir / f'wavelength_calibration.{fig_format}'
-        surf_plot_file = out_dir / f'wavelength_calibration_surface.{fig_format}'
+        plot_file = out_dir / f'wcal_{lamp_name}.{fig_format}'
+        surf_plot_file = out_dir / f'wcal_{lamp_name}_surface.{fig_format}'
         try:
             _plot_calib_diagnostic(wave_calib, str(plot_file))
             _plot_calib_surface_diagnostic(wave_calib, str(surf_plot_file))

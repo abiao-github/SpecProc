@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         self.stage_checkboxes = {}
         stages = [
             ("stage_0", "Step 1: Basic Pre-processing", True),
-            ("stage_1", "Step 2: Order Tracing", True),
+            ("stage_1", "Step 2: Aperture Tracing", True),
             ("stage_2", "Step 3: Scattered Light Subtraction", True),
             ("stage_3", "Step 4: 2D Flat-Field Correction", True),
             ("stage_4", "Step 5: 1D Extraction", True),
@@ -804,7 +804,7 @@ class MainWindow(QMainWindow):
         self.log_text.append("SELECTED STEPS:")
         stage_names = {
             "stage_0": "Step 1: Basic Pre-processing (Overscan/Bias/Cosmic)",
-            "stage_1": "Step 2: Order Tracing",
+            "stage_1": "Step 2: Aperture Tracing",
             "stage_2": "Step 3: Scattered Light Subtraction",
             "stage_3": "Step 4: 2D Flat-Field Correction",
             "stage_4": "Step 5: 1D Extraction",
@@ -820,7 +820,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Step 1 (Basic Pre-processing) requires bias frames")
             return
         if "stage_1" in selected_stages and not self.flat_files:
-            QMessageBox.warning(self, "Error", "Step 2 (Order Tracing) requires flat frames")
+            QMessageBox.warning(self, "Error", "Step 2 (Aperture Tracing) requires flat frames")
             return
         if "stage_5" in selected_stages:
             # Check if we have any calibration files
@@ -1139,7 +1139,7 @@ class MainWindow(QMainWindow):
 
         if "stage_1" in selected_stages and self.flat_files:
             self.log_text.append("\n============================================================")
-            self.log_text.append("STEP 2: ORDER TRACING")
+            self.log_text.append("STEP 2: APERTURE TRACING")
             from specproc.core.order_tracing import process_order_tracing_stage
             self.log_text.append(f"  Using {len(current_flat_files)} flat frames as input...")
 
@@ -1161,7 +1161,8 @@ class MainWindow(QMainWindow):
             flat_field, apertures = process_order_tracing_stage(
                 current_flat_files, **trace_kwargs
             )
-            self.log_text.append(f"  ✓ Order tracing complete: {apertures.norders if apertures else 0} orders detected.")
+            num_aps = getattr(apertures, 'napertures', getattr(apertures, 'norders', 0)) if apertures else 0
+            self.log_text.append(f"  ✓ Aperture tracing complete: {num_aps} apertures detected.")
             self._flat_field = flat_field
             self._apertures = apertures
             self.processing_state['stage_2_completed'] = True
@@ -1182,7 +1183,9 @@ class MainWindow(QMainWindow):
                     flat_path_step3 = output_dir / 'step3_scatterlight' / 'MasterFlat.fits'
                     flat_path_step2 = output_dir / 'step2_trace' / 'MasterFlat.fits'
                     flat_path = flat_path_step3 if flat_path_step3.exists() else flat_path_step2
-                    coefs_path = output_dir / 'step2_trace' / 'Orders_trace_coefs.json'
+                    coefs_path_ap = output_dir / 'step2_trace' / 'Apertures_trace_coefs.json'
+                    coefs_path_ord = output_dir / 'step2_trace' / 'Orders_trace_coefs.json'
+                    coefs_path = coefs_path_ap if coefs_path_ap.exists() else coefs_path_ord
                     
                     if flat_path.exists() and coefs_path.exists():
                         flat_img, _ = read_fits_image(str(flat_path))
@@ -1192,9 +1195,10 @@ class MainWindow(QMainWindow):
                             
                         loaded_apertures = ApertureSet()
                         width = flat_img.shape[1]
-                        for ap_id_str, ap_data in coefs_data.get('orders', {}).items():
+                        apertures_data = coefs_data.get('apertures', coefs_data.get('orders', {}))
+                        for ap_id_str, ap_data in apertures_data.items():
                             ap = ApertureLocation(
-                                aperture=int(ap_id_str), order=int(ap_id_str),
+                                aperture=int(ap_id_str), order=int(ap_id_str), # Order is a placeholder until Step 7
                                 is_chebyshev=True, domain=(0.0, float(width - 1))
                             )
                             if 'center_arr' in ap_data:
@@ -1280,7 +1284,7 @@ class MainWindow(QMainWindow):
                             if np.isfinite(yc) and 0 <= yc < h:
                                 plt.text(x_anno + 5, yc, str(ap_id), color='red', fontsize=3.5, ha='left', va='center', clip_on=False)
                         
-                        plt.title(f'Step 3 Widened Mask (margin={mask_margin_pixels})\nWhite=Masked (Orders + Virtual), Black=Background')
+                        plt.title(f'Step 3 Widened Mask (margin={mask_margin_pixels})\nWhite=Masked (Apertures + Virtual), Black=Background')
                         plt.xlabel('Pixel (X)')
                         plt.ylabel('Pixel (Y)')
                         plt.xlim(0, w - 1)
@@ -1288,7 +1292,7 @@ class MainWindow(QMainWindow):
                         plot_file = out_dir / f'scattered_light_mask.{fig_format}'
                         plt.savefig(str(plot_file), dpi=150, bbox_inches='tight')
                         plt.close()
-                        self.log_text.append(f"  ✓ Saved widened order mask and plot (margin={mask_margin_pixels})")
+                        self.log_text.append(f"  ✓ Saved widened aperture mask and plot (margin={mask_margin_pixels})")
 
                     bg_kwargs = {
                         'output_subdir': 'step3_scatterlight',
@@ -1670,6 +1674,7 @@ class MainWindow(QMainWindow):
                          lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
                          save_plots=self.config.get_bool('reduce', 'save_plots', True),
                          fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                         lamp_name=calib_name
                      )
                      c_time = get_file_time(best_calib)
                      calibrations.append((c_time, wave_calib, calib_name))

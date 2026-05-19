@@ -54,7 +54,7 @@ class SettingsDialog(QDialog):
         # Create tabs following data reduction pipeline order
         self.tab_widget.addTab(self._create_data_tab(), "Data & Instruments")
         self.tab_widget.addTab(self._create_reduction_tab(), "Data Reduction")
-        self.tab_widget.addTab(self._create_extraction_tab(), "Orders Tracing")
+        self.tab_widget.addTab(self._create_extraction_tab(), "Apertures Tracing")
         self.tab_widget.addTab(self._create_wlcalib_tab(), "Wavelength Calibration")
         self.tab_widget.addTab(self._create_processing_tab(), "Processing & Output")
 
@@ -94,7 +94,7 @@ class SettingsDialog(QDialog):
         data_layout.addRow("Exposure Time Key (EXPTIME):", self.exptime_key_edit)
 
         self.direction_combo = QComboBox()
-        self.direction_combo.addItems(['xr-', 'xl-', 'yr-', 'yl-'])
+        self.direction_combo.addItems(['xrb', 'xlb', 'yrb', 'ylb'])
         data_layout.addRow("Dispersion Direction:", self.direction_combo)
 
         self.output_path_edit = QLineEdit()
@@ -256,7 +256,7 @@ class SettingsDialog(QDialog):
             "'convolution': astropy NaN-aware 2D Gaussian convolution (recommended,\n"
             "  reproduces local ripples/fringes);\n"
             "'column_spline': per-column 1D smoothing spline (follows ripple peaks/troughs,\n"
-            "  with light horizontal smoothing);\n"
+            "  through inter-aperture pixels then lightly smooths horizontally);\n"
             "'bspline': bivariate spline fit.")
         bg_layout.addRow("Background Method:", self.bg_method_combo)
         self.bg_method_combo.currentTextChanged.connect(self._update_bg_params_enabled)
@@ -317,7 +317,7 @@ class SettingsDialog(QDialog):
         self.bg_clip_mode_combo.addItems(['upper', 'both', 'lower'])
         self.bg_clip_mode_combo.setToolTip(
             "'upper': reject only bright outliers (recommended for flats with "
-            "unmasked faint orders);\n"
+            "unmasked faint apertures);\n"
             "'both': symmetric rejection;\n"
             "'lower': reject only faint outliers.")
         bg_layout.addRow("Clip Mode:", self.bg_clip_mode_combo)
@@ -355,7 +355,7 @@ class SettingsDialog(QDialog):
         self.flat_blaze_smooth_factor_spin.setRange(0.1, 100.0)
         self.flat_blaze_smooth_factor_spin.setSingleStep(0.1)
         self.flat_blaze_smooth_factor_spin.setToolTip(
-            "Smoothing factor for automated B-spline blaze fitting in blue/dark orders.\n"
+            "Smoothing factor for automated B-spline blaze fitting in blue/dark apertures.\n"
             "s = factor * N * variance. Typical values: 1.0 (soft) to 20.0 (rigid).\n"
             "Larger = more rigid curve, Smaller = softer fit.")
         flat_layout.addRow("Blaze Smooth Factor:", self.flat_blaze_smooth_factor_spin)
@@ -363,9 +363,9 @@ class SettingsDialog(QDialog):
         self.flat_fringe_orders_spin = QSpinBox()
         self.flat_fringe_orders_spin.setRange(0, 150)
         self.flat_fringe_orders_spin.setToolTip(
-            "Number of red-end orders to apply Upper Envelope Chebyshev fitting for fringe removal.\n"
-            "Default is 20. Set to 0 to disable and use standard B-spline for all orders.")
-        flat_layout.addRow("Fringe Orders (Red end):", self.flat_fringe_orders_spin)
+            "Number of red-end apertures to apply Upper Envelope Chebyshev fitting for fringe removal.\n"
+            "Default is 20. Set to 0 to disable and use standard B-spline for all apertures.")
+        flat_layout.addRow("Fringe Apertures (Red end):", self.flat_fringe_orders_spin)
 
         self.flat_width_smooth_window_spin = QSpinBox()
         self.flat_width_smooth_window_spin.setRange(5, 401)
@@ -566,6 +566,16 @@ class SettingsDialog(QDialog):
         self.wlcalib_q_threshold_spin.setSingleStep(0.05)
         adv_layout.addRow("Line Intensity Threshold:", self.wlcalib_q_threshold_spin)
 
+        self.wlcalib_discard_top_spin = QSpinBox()
+        self.wlcalib_discard_top_spin.setRange(0, 50)
+        self.wlcalib_discard_top_spin.setToolTip("Number of apertures to discard at the top edge during anchor matching.")
+        adv_layout.addRow("Discard Top Apertures:", self.wlcalib_discard_top_spin)
+
+        self.wlcalib_discard_bottom_spin = QSpinBox()
+        self.wlcalib_discard_bottom_spin.setRange(0, 50)
+        self.wlcalib_discard_bottom_spin.setToolTip("Number of apertures to discard at the bottom edge during anchor matching.")
+        adv_layout.addRow("Discard Bottom Apertures:", self.wlcalib_discard_bottom_spin)
+
         adv_group.setLayout(adv_layout)
         layout.addRow(adv_group)
 
@@ -574,22 +584,22 @@ class SettingsDialog(QDialog):
         return scroll
 
     def _create_extraction_tab(self) -> QWidget:
-        """Create order tracing and spectrum extraction settings tab."""
+        """Create aperture tracing and spectrum extraction settings tab."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         widget = QWidget()
         layout = QFormLayout()
 
-        # Order tracing
-        trace_group = QGroupBox("Orders Tracing")
+        # Aperture tracing
+        trace_group = QGroupBox("Apertures Tracing")
         trace_layout = QFormLayout()
 
         self.trace_snr_threshold_spin = QDoubleSpinBox()
         self.trace_snr_threshold_spin.setRange(1.0, 100000.0)
         self.trace_snr_threshold_spin.setSingleStep(0.5)
         self.trace_snr_threshold_spin.setToolTip(
-            "Order detection SNR threshold (multiples of sigma above background).\n"
-            "Typical: 3.0–10.0. Lower to detect very faint orders.")
+            "Aperture detection SNR threshold (multiples of sigma above background).\n"
+            "Typical: 3.0–10.0. Lower to detect very faint apertures.")
         trace_layout.addRow("Detection SNR Threshold:", self.trace_snr_threshold_spin)
 
         self.trace_aperture_boundary_snr_spin = QDoubleSpinBox()
@@ -605,19 +615,19 @@ class SettingsDialog(QDialog):
         self.trace_min_coverage_spin.setSingleStep(0.05)
         self.trace_min_coverage_spin.setDecimals(2)
         self.trace_min_coverage_spin.setToolTip(
-            "Minimum fraction of detector width an order must span.\n"
-            "Lower to accept faint partial orders; raise to reject short false traces.")
+            "Minimum fraction of detector width an aperture must span.\n"
+            "Lower to accept faint partial apertures; raise to reject short false traces.")
         trace_layout.addRow("Min Trace Coverage:", self.trace_min_coverage_spin)
 
         self.trace_degree_spin = QSpinBox()
         self.trace_degree_spin.setRange(1, 10)
         self.trace_degree_spin.setToolTip(
-            "Polynomial degree for Chebyshev fit of the order trace (applies to both center and edges).")
+            "Polynomial degree for Chebyshev fit of the aperture trace (applies to both center and edges).")
         trace_layout.addRow("Trace Degree:", self.trace_degree_spin)
 
         self.trace_width_cheb_degree_spin = QSpinBox()
         self.trace_width_cheb_degree_spin.setRange(1, 10)
-        self.trace_width_cheb_degree_spin.setToolTip("Chebyshev polynomial degree for fitting the order width.")
+        self.trace_width_cheb_degree_spin.setToolTip("Chebyshev polynomial degree for fitting the aperture width.")
         trace_layout.addRow("Width Cheb Degree:", self.trace_width_cheb_degree_spin)
 
         # --- Gap-fill parameters (only relevant when checkbox is checked) ---
@@ -630,7 +640,7 @@ class SettingsDialog(QDialog):
         self.trace_gap_fill_factor_interp_spin = QDoubleSpinBox()
         self.trace_gap_fill_factor_interp_spin.setRange(1.0, 4.0)
         self.trace_gap_fill_factor_interp_spin.setSingleStep(0.05)
-        self.trace_gap_fill_factor_interp_spin.setToolTip("Gap factor to trigger missing-order insertion during interpolation.")
+        self.trace_gap_fill_factor_interp_spin.setToolTip("Gap factor to trigger missing-aperture insertion during interpolation.")
         trace_layout.addRow("Gap Fill Factor (Interp):", self.trace_gap_fill_factor_interp_spin)
 
         self.trace_n_extend_below_spin = QSpinBox()
@@ -755,7 +765,7 @@ class SettingsDialog(QDialog):
         self.rawdata_path_edit.setText(self.config.get('data', 'rawdata_path', './rawdata'))
         self.statime_key_edit.setText(self.config.get('data', 'statime_key', 'DATE-OBS'))
         self.exptime_key_edit.setText(self.config.get('data', 'exptime_key', 'EXPTIME'))
-        self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xr-'))
+        self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xrb'))
         self.output_path_edit.setText(self.config.get('reduce', 'output_path', 'output'))
         self.telescope_name_edit.setText(self.config.get('telescope', 'name', 'xinglong216hrs'))
         self.instrument_edit.setText(self.config.get('telescope', 'instrument', 'hrs'))
@@ -822,6 +832,8 @@ class SettingsDialog(QDialog):
         self.wlcalib_window_size_spin.setValue(self.config.get_int('reduce.wlcalib', 'window_size', 10))
         self.wlcalib_clipping_spin.setValue(self.config.get_float('reduce.wlcalib', 'clipping', 3.0))
         self.wlcalib_q_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'q_threshold', 0.5))
+        self.wlcalib_discard_top_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_top_apertures', 0))
+        self.wlcalib_discard_bottom_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_bottom_apertures', 0))
 
         # Orders Tracing tab
         self.trace_snr_threshold_spin.setValue(self.config.get_float('reduce.trace', 'snr_threshold', 5.0))
@@ -921,6 +933,8 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.wlcalib', 'window_size', str(self.wlcalib_window_size_spin.value()))
             self.config.set('reduce.wlcalib', 'clipping', str(self.wlcalib_clipping_spin.value()))
             self.config.set('reduce.wlcalib', 'q_threshold', str(self.wlcalib_q_threshold_spin.value()))
+            self.config.set('reduce.wlcalib', 'discard_top_apertures', str(self.wlcalib_discard_top_spin.value()))
+            self.config.set('reduce.wlcalib', 'discard_bottom_apertures', str(self.wlcalib_discard_bottom_spin.value()))
 
             # Orders Tracing tab
             self.config.set('reduce.trace', 'snr_threshold', str(self.trace_snr_threshold_spin.value()))

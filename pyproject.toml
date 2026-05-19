@@ -31,11 +31,11 @@ Homepage = "https://github.com/yourusername/specproc"
 Repository = "https://github.com/yourusername/specproc"
 
 [project.scripts]
-specproc = "src.main:main"
+specproc = "specproc.main:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
+where = ["src"]
+include = ["specproc*"]
 
 [tool.setuptools.package-data]
-src = ["*.cfg", "*.sample"]
+specproc = ["*.cfg", "*.sample"]

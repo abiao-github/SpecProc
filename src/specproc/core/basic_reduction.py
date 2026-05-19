@@ -17,11 +17,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Tuple, Optional
 
-from src.utils.overscan import OverscanCorrector
-from src.utils.fits_io import read_fits_image, write_fits_image, combine_fits_images
-from src.utils.image_processing import combine_images
-from src.config.config_manager import ConfigManager
-from src.plotting.spectra_plotter import (
+from specproc.utils.overscan import OverscanCorrector
+from specproc.utils.fits_io import read_fits_image, write_fits_image, combine_fits_images
+from specproc.utils.image_processing import combine_images
+from specproc.config.config_manager import ConfigManager
+from specproc.plotting.spectra_plotter import (
     plot_2d_image_to_file,
     plot_overscan_corrected_image,
 )
@@ -195,7 +195,7 @@ class OverscanCorrectionStage:
                 plot_2d_image_to_file(corrected, str(plot_file), "Overscan Corrected Image")
 
             if hasattr(self.corrector, 'overscan_profile') and self.corrector.overscan_profile:
-                from src.plotting.spectra_plotter import plot_overscan_profile
+                from specproc.plotting.spectra_plotter import plot_overscan_profile
                 profile_file = out_dir / f'{stem}_overscan_profile.{self.fig_format}'
                 plot_overscan_profile(
                     self.corrector.overscan_profile,

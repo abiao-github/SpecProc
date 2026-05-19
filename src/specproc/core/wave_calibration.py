@@ -13,10 +13,10 @@ import logging
 from typing import Tuple, Optional, List, Dict
 from scipy.optimize import curve_fit
 from pathlib import Path
-from src.core.data_structures import WaveCalib, Spectrum, SpectraSet
-from src.config.config_manager import ConfigManager
-from src.utils.fits_io import read_fits_image
-from src.plotting.spectra_plotter import plot_wavelength_calibration
+from specproc.core.data_structures import WaveCalib, Spectrum, SpectraSet
+from specproc.config.config_manager import ConfigManager
+from specproc.utils.fits_io import read_fits_image
+from specproc.plotting.spectra_plotter import plot_wavelength_calibration
 
 logger = logging.getLogger(__name__)
 

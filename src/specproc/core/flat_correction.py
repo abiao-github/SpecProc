@@ -22,9 +22,9 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import gaussian_filter1d
 from typing import Dict, Tuple, List
-from src.core.data_structures import FlatField, ApertureSet
-from src.utils.fits_io import write_fits_image
-from src.plotting.spectra_plotter import plot_2d_image_to_file
+from specproc.core.data_structures import FlatField, ApertureSet
+from specproc.utils.fits_io import write_fits_image
+from specproc.plotting.spectra_plotter import plot_2d_image_to_file
 
 logger = logging.getLogger(__name__)
 

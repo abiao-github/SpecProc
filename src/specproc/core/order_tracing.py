@@ -20,9 +20,9 @@ from numpy.polynomial import chebyshev as cheb
 from concurrent.futures import ThreadPoolExecutor
 import json
 
-from src.utils.fits_io import read_fits_image, write_fits_image
-from src.utils.image_processing import combine_images, find_bad_pixels, estimate_background_2d
-from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
+from specproc.utils.fits_io import read_fits_image, write_fits_image
+from specproc.utils.image_processing import combine_images, find_bad_pixels, estimate_background_2d
+from specproc.core.data_structures import ApertureSet, ApertureLocation, FlatField
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,7 @@ class FlatFieldProcessor:
 
         # Save diagnostic plots if enabled
         if save_plots:
-            from src.plotting.spectra_plotter import plot_2d_image_to_file
+            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
             out_dir = Path(output_path).parent
             plot_2d_image_to_file(self.flat_data, str(out_dir / f'MasterFlat.{fig_format}'), "Master Flat Field")
 
@@ -1366,7 +1366,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
     if save_plots and apertures.norders > 0:
         logger.info("Generating diagnostic plots...")
         out_dir = Path(base_output_path) / 'step2_trace'
-        from src.plotting.spectra_plotter import plot_2d_image_to_file
+        from specproc.plotting.spectra_plotter import plot_2d_image_to_file
         import matplotlib.pyplot as plt
         plt.figure(figsize=(12, 10))
         vmin, vmax = np.percentile(flat_data, [1, 99])

@@ -10,9 +10,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from src.config.config_manager import ConfigManager
-from src.core.data_structures import SpectraSet
-from src.plotting.spectra_plotter import plot_spectrum_to_file
+from specproc.config.config_manager import ConfigManager
+from specproc.core.data_structures import SpectraSet
+from specproc.plotting.spectra_plotter import plot_spectrum_to_file
 
 logger = logging.getLogger(__name__)
 

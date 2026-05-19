@@ -13,10 +13,10 @@ from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
 import matplotlib.cm as mcm
 from astropy.convolution import convolve_fft, Gaussian2DKernel
-from src.utils.image_processing import estimate_background_2d, estimate_background_region
-from src.config.config_manager import ConfigManager
-from src.core.data_structures import ApertureSet
-from src.utils.fits_io import write_fits_image
+from specproc.utils.image_processing import estimate_background_2d, estimate_background_region
+from specproc.config.config_manager import ConfigManager
+from specproc.core.data_structures import ApertureSet
+from specproc.utils.fits_io import write_fits_image
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
-from src.config.config_manager import ConfigManager
+from specproc.config.config_manager import ConfigManager
 
 
 class SettingsDialog(QDialog):

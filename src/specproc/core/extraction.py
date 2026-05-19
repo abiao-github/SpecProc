@@ -9,8 +9,8 @@ import logging
 from pathlib import Path
 from typing import Tuple, Optional
 from scipy.optimize import curve_fit
-from src.core.data_structures import Spectrum, SpectraSet, ApertureSet, WaveCalib, FlatField
-from src.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
+from specproc.core.data_structures import Spectrum, SpectraSet, ApertureSet, WaveCalib, FlatField
+from specproc.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +316,7 @@ def process_extraction_stage(science_image: np.ndarray,
 def load_extracted_spectra(filepath: str) -> SpectraSet:
     """Load extracted spectra from FITS file."""
     from astropy.io import fits
-    from src.core.data_structures import Spectrum, SpectraSet
+    from specproc.core.data_structures import Spectrum, SpectraSet
     
     spectra_set = SpectraSet()
     

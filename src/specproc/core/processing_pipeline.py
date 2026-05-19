@@ -9,22 +9,22 @@ import pickle
 from pathlib import Path
 from typing import List, Callable, Optional, Union, Dict
 import numpy as np
-from src.config.config_manager import ConfigManager
-from src.core.data_structures import ProcessingState, WaveCalib, SpectraSet
-from src.core.basic_reduction import (
+from specproc.config.config_manager import ConfigManager
+from specproc.core.data_structures import ProcessingState, WaveCalib, SpectraSet
+from specproc.core.basic_reduction import (
     process_overscan_stage,
     process_bias_stage,
     process_cosmic_stage,
 )
-from src.core.order_tracing import process_order_tracing_stage
-from src.core.flat_correction import process_flat_correction_stage
-from src.core.wave_calibration import WavelengthCalibrator, process_wavelength_stage
-from src.core.scattered_light import process_background_stage
-from src.core.extraction import process_extraction_stage
-from src.core.de_blazing import process_de_blazing_stage
-from src.core.order_stitching import process_order_stitching_stage
-from src.utils.fits_io import read_fits_image, write_fits_image
-from src.plotting.spectra_plotter import plot_2d_image_to_file
+from specproc.core.order_tracing import process_order_tracing_stage
+from specproc.core.flat_correction import process_flat_correction_stage
+from specproc.core.wave_calibration import WavelengthCalibrator, process_wavelength_stage
+from specproc.core.scattered_light import process_background_stage
+from specproc.core.extraction import process_extraction_stage
+from specproc.core.de_blazing import process_de_blazing_stage
+from specproc.core.order_stitching import process_order_stitching_stage
+from specproc.utils.fits_io import read_fits_image, write_fits_image
+from specproc.plotting.spectra_plotter import plot_2d_image_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -361,11 +361,11 @@ class ProcessingPipeline:
                 out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
                 out_dir.mkdir(parents=True, exist_ok=True)
                 
-                from src.core.de_blazing import save_deblazed_spectra
+                from specproc.core.de_blazing import save_deblazed_spectra
                 save_deblazed_spectra(str(out_dir / f'{science_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
                 
                 if self.config.get_bool('reduce', 'save_plots', True):
-                    from src.plotting.spectra_plotter import plot_spectra_to_pdf
+                    from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
                     pdf_path = out_dir / f"{science_name}_1D_{method}_wavecal.pdf"
                     plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
                                         title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
@@ -611,7 +611,7 @@ class ProcessingPipeline:
         """Delegate Step-4 flat-model persistence to flat_correction module."""
         if self.state.flat_field is None:
             return
-        from src.core.flat_correction import save_flat_correction_products
+        from specproc.core.flat_correction import save_flat_correction_products
         save_flat_correction_products(
             self.state.flat_field, self.state.apertures, out_dir,
             fig_format=self.config.get('reduce', 'fig_format', 'png'),
@@ -640,7 +640,7 @@ class ProcessingPipeline:
         out_dir = Path(output_dir_base) / 'step3_scatterlight'
         out_dir.mkdir(parents=True, exist_ok=True)
         
-        from src.core.scattered_light import create_widened_mask
+        from specproc.core.scattered_light import create_widened_mask
         h, w = self.state.flat_field.flat_data.shape
         
         step3_mask, lo_traces, hi_traces, full_ids = create_widened_mask(
@@ -803,7 +803,7 @@ class ProcessingPipeline:
         write_fits_image(str(out_path), corrected, header=header, dtype='float32')
         
         if self.config.get_bool('reduce', 'save_plots', True):
-            from src.plotting.spectra_plotter import plot_2d_image_to_file
+            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
             fig_format = self.config.get('reduce', 'fig_format', 'png')
             plot_2d_image_to_file(corrected, str(out_dir / f"{calib_name}_flat2d_corrected.{fig_format}"), "Calibration Frame After 2D Flat Correction")
             
@@ -902,7 +902,7 @@ class ProcessingPipeline:
             
             out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
             out_dir.mkdir(parents=True, exist_ok=True)
-            from src.core.scattered_light import create_widened_mask, process_background_stage
+            from specproc.core.scattered_light import create_widened_mask, process_background_stage
             
             mask_margin_pixels = self.config.get_int('reduce.background', 'mask_margin_pixels', 1)
             n_mask_below = self.config.get_int('reduce.trace', 'n_mask_below', 4)
@@ -1026,7 +1026,7 @@ class ProcessingPipeline:
             logger.info("STEP 6: DE-BLAZING")
             logger.info("=" * 50)
             def do_deblaze(target_name, spectra_obj=None):
-                from src.core.extraction import load_extracted_spectra
+                from specproc.core.extraction import load_extracted_spectra
                 db_opt = None
                 for method in ['sum', 'optimal']:
                     spectra = spectra_obj if (method == 'optimal' and spectra_obj is not None) else None
@@ -1099,7 +1099,7 @@ class ProcessingPipeline:
 
                 calib_opt = None
                 for method in ['sum', 'optimal']:
-                    from src.core.extraction import load_extracted_spectra
+                    from specproc.core.extraction import load_extracted_spectra
                     spectra = None
                     db_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_{method}_Deblaze.fits'
                     if db_path.exists():

@@ -572,12 +572,13 @@ SpecProc/
 │   ├── README.md
 │   ├── linelists/
 │   └── telescopes/
-├── src/                         # Source code
-│   ├── gui/                     # GUI modules
-│   ├── core/                    # Core processing
-│   ├── config/                  # Configuration management
-│   ├── utils/                   # Utility functions
-│   └── plotting/                # Plotting functions
+├── src/
+│   └── specproc/               # Source code
+│       ├── gui/                     # GUI modules
+│       ├── core/                    # Core processing
+│       ├── config/                  # Configuration management
+│       ├── utils/                   # Utility functions
+│       └── plotting/                # Plotting functions
 └── test_*.py                    # Test files
 ```
 

@@ -12,8 +12,8 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication
 
-from src.config.config_manager import ConfigManager
-from src.gui.main_window import MainWindow
+from specproc.config.config_manager import ConfigManager
+from specproc.gui.main_window import MainWindow
 
 
 def setup_logging(log_file: str = 'specproc.log'):

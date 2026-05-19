@@ -21,8 +21,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon, QFont
 
-from src.config.config_manager import ConfigManager
-from src.core.processing_pipeline import ProcessingPipeline
+from specproc.config.config_manager import ConfigManager
+from specproc.core.processing_pipeline import ProcessingPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -976,7 +976,7 @@ class MainWindow(QMainWindow):
             self.log_text.append("=" * 60)
             
             try:
-                from src.core.basic_reduction import process_overscan_stage
+                from specproc.core.basic_reduction import process_overscan_stage
                 
                 # Collect all files to process in the correct order
                 all_files_to_process = []
@@ -1023,7 +1023,7 @@ class MainWindow(QMainWindow):
             try:
                 self.log_text.append("\n============================================================")
                 self.log_text.append("STEP 1.2: BIAS SUBTRACTION")
-                from src.core.basic_reduction import process_bias_stage, BiasCorrector, read_fits_image, write_fits_image
+                from specproc.core.basic_reduction import process_bias_stage, BiasCorrector, read_fits_image, write_fits_image
                 
                 bias_kwargs = {
                     'combine_method': self.config.get('reduce.bias', 'combine_method', 'median'),
@@ -1061,7 +1061,7 @@ class MainWindow(QMainWindow):
 
                         # Manually save diagnostic plot for each corrected image
                         if bias_kwargs['save_plots']:
-                            from src.plotting.spectra_plotter import plot_2d_image_to_file
+                            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
                             plot_file = output_dir / f'{Path(f).stem}_bias_corrected.{bias_kwargs["fig_format"]}'
                             plot_2d_image_to_file(corrected_img, str(plot_file),
                                                   f"Bias Corrected {file_type.capitalize()} Image")
@@ -1088,7 +1088,7 @@ class MainWindow(QMainWindow):
             # Apply cosmic-ray removal in Step1 basic preprocessing (science only).
         if "stage_0" in selected_stages and step1_do_cosmic:
                 if self.config.get_bool('reduce', 'cosmic_enabled', True):
-                    from src.core.basic_reduction import process_cosmic_stage
+                    from specproc.core.basic_reduction import process_cosmic_stage
 
                     self.log_text.append("\n============================================================")
                     self.log_text.append("STEP 1.3: COSMIC RAY REMOVAL")
@@ -1140,7 +1140,7 @@ class MainWindow(QMainWindow):
         if "stage_1" in selected_stages and self.flat_files:
             self.log_text.append("\n============================================================")
             self.log_text.append("STEP 2: ORDER TRACING")
-            from src.core.order_tracing import process_order_tracing_stage
+            from specproc.core.order_tracing import process_order_tracing_stage
             self.log_text.append(f"  Using {len(current_flat_files)} flat frames as input...")
 
             trace_kwargs = {
@@ -1175,8 +1175,8 @@ class MainWindow(QMainWindow):
             if flat_field is None or apertures is None:
                 self.log_text.append("  Loading MasterFlat and Apertures from disk...")
                 try:
-                    from src.utils.fits_io import read_fits_image
-                    from src.core.data_structures import ApertureSet, ApertureLocation, FlatField
+                    from specproc.utils.fits_io import read_fits_image
+                    from specproc.core.data_structures import ApertureSet, ApertureLocation, FlatField
                     
                     output_dir = Path(self.config.get_output_path())
                     flat_path_step3 = output_dir / 'step3_scatterlight' / 'MasterFlat.fits'
@@ -1248,9 +1248,9 @@ class MainWindow(QMainWindow):
                 self.log_text.append("\n============================================================")
                 self.log_text.append("STEP 3: SCATTERED LIGHT SUBTRACTION (MASTER FLAT)")
                 try:
-                    from src.core.scattered_light import create_widened_mask
-                    from src.core.scattered_light import process_background_stage
-                    from src.utils.fits_io import write_fits_image
+                    from specproc.core.scattered_light import create_widened_mask
+                    from specproc.core.scattered_light import process_background_stage
+                    from specproc.utils.fits_io import write_fits_image
                     
                     out_dir = Path(self.config.get_output_path()) / 'step3_scatterlight'
                     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1330,7 +1330,7 @@ class MainWindow(QMainWindow):
                     self.pipeline.state.flat_field = flat_field
                     
                     master_flat_path = Path(self.config.get_output_path()) / 'step2_trace' / 'MasterFlat.fits'
-                    from src.utils.fits_io import read_fits_image
+                    from specproc.utils.fits_io import read_fits_image
                     _, flat_header = read_fits_image(str(master_flat_path)) if master_flat_path.exists() else (None, None)
                     if flat_header is not None:
                         flat_header['BKGSCAT'] = (True, 'Scattered light background subtracted')
@@ -1368,8 +1368,8 @@ class MainWindow(QMainWindow):
             self.log_text.append("STEP 3: SCATTERED LIGHT SUBTRACTION (Science Images)")
             self.log_text.append("=" * 60)
             
-            from src.core.scattered_light import process_background_stage
-            from src.utils.fits_io import read_fits_image, write_fits_image
+            from specproc.core.scattered_light import process_background_stage
+            from specproc.utils.fits_io import read_fits_image, write_fits_image
             
             new_science_files = []
             for sci_file in current_science_files:
@@ -1434,8 +1434,8 @@ class MainWindow(QMainWindow):
             self.log_text.append("STEP 4: 2D FLAT-FIELD CORRECTION")
             self.log_text.append("=" * 60)
             
-            from src.core.flat_correction import process_flat_correction_stage
-            from src.utils.fits_io import read_fits_image, write_fits_image
+            from specproc.core.flat_correction import process_flat_correction_stage
+            from specproc.utils.fits_io import read_fits_image, write_fits_image
 
             calib_files = self.calib_file if isinstance(self.calib_file, list) else [self.calib_file]
             new_calib_files = []
@@ -1507,8 +1507,8 @@ class MainWindow(QMainWindow):
                 self.log_text.append("STEP 5: 1D EXTRACTION")
                 self.log_text.append("=" * 60)
                 
-                from src.core.extraction import process_extraction_stage
-                from src.utils.fits_io import read_fits_image
+                from specproc.core.extraction import process_extraction_stage
+                from specproc.utils.fits_io import read_fits_image
                 extract_kwargs = {
                     'output_dir_base': self.config.get_output_path(),
                     'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
@@ -1568,8 +1568,8 @@ class MainWindow(QMainWindow):
                 self.log_text.append("STEP 6: DE-BLAZING")
                 self.log_text.append("=" * 60)
                 
-                from src.core.de_blazing import process_de_blazing_stage
-                from src.core.extraction import load_extracted_spectra
+                from specproc.core.de_blazing import process_de_blazing_stage
+                from specproc.core.extraction import load_extracted_spectra
                 
                 def do_deblaze(target_name, spectra_obj=None):
                     deblazed_opt = None
@@ -1624,9 +1624,9 @@ class MainWindow(QMainWindow):
                  self.log_text.append("STEP 7: WAVELENGTH CALIBRATION")
                  self.log_text.append("=" * 60)
                  
-                 from src.core.wave_calibration import process_wavelength_stage, WavelengthCalibrator
-                 from src.utils.fits_io import read_fits_image
-                 from src.core.extraction import process_extraction_stage, load_extracted_spectra
+                 from specproc.core.wave_calibration import process_wavelength_stage, WavelengthCalibrator
+                 from specproc.utils.fits_io import read_fits_image
+                 from specproc.core.extraction import process_extraction_stage, load_extracted_spectra
                  import os
                  from astropy.time import Time
                  
@@ -1719,7 +1719,7 @@ class MainWindow(QMainWindow):
                              calibrator = WavelengthCalibrator()
                              calibrator.wave_calib = wave_calib
                              
-                             from src.core.data_structures import SpectraSet
+                             from specproc.core.data_structures import SpectraSet
                              calibrated_spectra = SpectraSet()
                              
                              for spectrum in spectra.spectra.values():
@@ -1734,11 +1734,11 @@ class MainWindow(QMainWindow):
                                  
                              out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
                              out_dir.mkdir(parents=True, exist_ok=True)
-                             from src.core.de_blazing import save_deblazed_spectra
+                             from specproc.core.de_blazing import save_deblazed_spectra
                              save_deblazed_spectra(str(out_dir / f'{target_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
                              
                              if self.config.get_bool('reduce', 'save_plots', True):
-                                 from src.plotting.spectra_plotter import plot_spectra_to_pdf
+                                 from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
                                  pdf_path = out_dir / f"{target_name}_1D_{method}_wavecal.pdf"
                                  plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
                                                      title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
@@ -1761,8 +1761,8 @@ class MainWindow(QMainWindow):
             self.log_text.append("STEP 8: ORDER STITCHING")
             self.log_text.append("=" * 60)
             
-            from src.core.order_stitching import process_order_stitching_stage
-            from src.core.extraction import load_extracted_spectra
+            from specproc.core.de_blazing import process_de_blazing_stage
+            from specproc.core.extraction import load_extracted_spectra
             
             for sci_file in current_science_files:
                 sci_name = Path(sci_file).stem
@@ -1867,7 +1867,7 @@ class MainWindow(QMainWindow):
 
     def _show_settings(self):
         """Show settings dialog."""
-        from src.gui.settings_dialog import SettingsDialog
+        from specproc.gui.settings_dialog import SettingsDialog
         dialog = SettingsDialog(self.config, self)
         if dialog.exec_() == QDialog.Accepted:
             # Update overscan checkbox state after settings are saved
@@ -1972,7 +1972,7 @@ class MainWindow(QMainWindow):
                 self._refresh_step1_checkbox_text()
                 
                 # Open settings dialog to the Data Reduction tab (index 1) which contains overscan settings
-                from src.gui.settings_dialog import SettingsDialog
+                from specproc.gui.settings_dialog import SettingsDialog
                 dialog = SettingsDialog(self.config, self, initial_tab=1)
                 result = dialog.exec_()
                 

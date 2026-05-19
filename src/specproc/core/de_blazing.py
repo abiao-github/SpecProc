@@ -9,8 +9,8 @@ import numpy as np
 import logging
 from pathlib import Path
 from typing import Optional
-from src.core.data_structures import SpectraSet, FlatField
-from src.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
+from specproc.core.data_structures import SpectraSet, FlatField
+from specproc.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectra_to_pdf
 
 logger = logging.getLogger(__name__)
 

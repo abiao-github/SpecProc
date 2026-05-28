@@ -926,9 +926,9 @@ class FlatCorrectionModelBuilder:
         from matplotlib.cm import ScalarMappable
         from matplotlib.colors import Normalize
 
-        blaze_dir = out_dir / 'blaze_per_order'
-        profile_dir = out_dir / 'profile_per_order'
-        realspace_dir = out_dir / 'realspace_profile_per_order'
+        blaze_dir = out_dir / 'blaze_per_aperture'
+        profile_dir = out_dir / 'profile_per_aperture'
+        realspace_dir = out_dir / 'realspace_profile_per_aperture'
         blaze_dir.mkdir(parents=True, exist_ok=True)
         profile_dir.mkdir(parents=True, exist_ok=True)
         realspace_dir.mkdir(parents=True, exist_ok=True)
@@ -951,13 +951,13 @@ class FlatCorrectionModelBuilder:
 
             # Save numerical data
             np.savez(
-                blaze_dir / f'order_{aperture_id:03d}_blaze.npz',
+                blaze_dir / f'aperture_{aperture_id:03d}_blaze.npz',
                 raw_blaze=raw_blaze,
                 blaze_fit=blaze_fit,
                 width_smooth=diag.get('width_smooth'),
             )
             np.savez(
-                profile_dir / f'order_{aperture_id:03d}_profile.npz',
+                profile_dir / f'aperture_{aperture_id:03d}_profile.npz',
                 y_norm=profile_x,
                 profile_mean=profile_y,
                 seg_on_grid=seg_on_grid,
@@ -975,11 +975,11 @@ class FlatCorrectionModelBuilder:
                 plt.plot(x, blaze_fit, color='tab:red', linewidth=1.4, label=blaze_method)
                 plt.xlabel('X (column)')
                 plt.ylabel('Flux')
-                plt.title(f'Order {aperture_id} — Blaze (segments={n_seg}, valid={n_valid_seg})')
+                plt.title(f'Aperture {aperture_id} — Blaze (segments={n_seg}, valid={n_valid_seg})')
                 plt.legend()
                 plt.grid(alpha=0.2)
                 plt.tight_layout()
-                plt.savefig(blaze_dir / f'order_{aperture_id:03d}_blaze.{fig_format}', dpi=150)
+                plt.savefig(blaze_dir / f'aperture_{aperture_id:03d}_blaze.{fig_format}', dpi=150)
                 plt.close()
 
             # --- Per-order profile plot (2D heatmap + mean) ---
@@ -1017,13 +1017,13 @@ class FlatCorrectionModelBuilder:
                 ax2.plot(profile_x, profile_y, color='black', linewidth=1.8, label='Mean profile', zorder=10)
                 ax2.set_xlabel('Spatial y_norm')
                 ax2.set_ylabel('Normalized Flux')
-                ax2.set_title(f'Order {aperture_id} — Cross-Dispersion Profile')
+                ax2.set_title(f'Aperture {aperture_id} — Cross-Dispersion Profile')
                 ax2.grid(alpha=0.2)
                 ax2.legend()
                 
-                plt.suptitle(f'Order {aperture_id} — Cross-Dispersion Profile ({n_seg} segments)')
+                plt.suptitle(f'Aperture {aperture_id} — Cross-Dispersion Profile ({n_seg} segments)')
                 plt.tight_layout()
-                plt.savefig(profile_dir / f'order_{aperture_id:03d}_profile.{fig_format}', dpi=150)
+                plt.savefig(profile_dir / f'aperture_{aperture_id:03d}_profile.{fig_format}', dpi=150)
                 plt.close()
 
             # --- Per-order real-space profile plot ---
@@ -1064,12 +1064,12 @@ class FlatCorrectionModelBuilder:
                     
                 ax2.set_xlabel('Physical Y (pixel)')
                 ax2.set_ylabel('Model Flux')
-                ax2.set_title(f'Order {aperture_id} — Real-Space Profiles')
+                ax2.set_title(f'Aperture {aperture_id} — Real-Space Profiles')
                 ax2.grid(alpha=0.2)
                 
-                plt.suptitle(f'Order {aperture_id} — Real-Space Profiles')
+                plt.suptitle(f'Aperture {aperture_id} — Real-Space Profiles')
                 plt.tight_layout()
-                plt.savefig(realspace_dir / f'order_{aperture_id:03d}_realspace_profiles.{fig_format}', dpi=150)
+                plt.savefig(realspace_dir / f'aperture_{aperture_id:03d}_realspace_profiles.{fig_format}', dpi=150)
                 plt.close()
 
         # ================================================================
@@ -1097,7 +1097,7 @@ class FlatCorrectionModelBuilder:
                 ax.plot(x, bfit, color=clr, linewidth=0.6, alpha=0.8)
             ax.set_xlabel('X (column)')
             ax.set_ylabel('Heavy-Smooth Blaze')
-            ax.set_title(f'All Orders Blaze Overview ({n_orders} orders)')
+            ax.set_title(f'All Apertures Blaze Overview ({n_orders} apertures)')
             ax.grid(alpha=0.15)
             cmap_r = plt.cm.turbo_r
             sm = ScalarMappable(cmap=cmap_r, norm=norm_c)
@@ -1106,8 +1106,8 @@ class FlatCorrectionModelBuilder:
             order_ids_arr = np.array(all_order_ids)
             cbar.set_ticks(np.linspace(0, n_orders - 1, min(10, n_orders)))
             cbar.set_ticklabels([str(order_ids_arr[int(t)]) for t in np.linspace(0, n_orders - 1, min(10, n_orders))])
-            cbar.set_label('Order ID')
-            fig.savefig(out_dir / f'all_orders_blaze_overview.{fig_format}', dpi=150)
+            cbar.set_label('Aperture ID')
+            fig.savefig(out_dir / f'all_apertures_blaze_overview.{fig_format}', dpi=150)
             plt.close(fig)
 
             # --- All-orders profile overview ---
@@ -1122,20 +1122,20 @@ class FlatCorrectionModelBuilder:
                 ax.plot(px, py, color=clr, linewidth=0.7, alpha=0.8)
             ax.set_xlabel('y_norm')
             ax.set_ylabel('Normalized Flux')
-            ax.set_title(f'All Orders Cross-Dispersion Profile Overview ({n_orders} orders)')
+            ax.set_title(f'All Apertures Cross-Dispersion Profile Overview ({n_orders} apertures)')
             ax.grid(alpha=0.15)
             sm = ScalarMappable(cmap=cmap_r, norm=norm_c)
             sm.set_array([])
             cbar = fig.colorbar(sm, ax=ax, shrink=0.7, pad=0.02)
             cbar.set_ticks(np.linspace(0, n_orders - 1, min(10, n_orders)))
             cbar.set_ticklabels([str(order_ids_arr[int(t)]) for t in np.linspace(0, n_orders - 1, min(10, n_orders))])
-            cbar.set_label('Order ID')
+            cbar.set_label('Aperture ID')
             fig.tight_layout()
-            fig.savefig(out_dir / f'all_orders_profile_overview.{fig_format}', dpi=150)
+            fig.savefig(out_dir / f'all_apertures_profile_overview.{fig_format}', dpi=150)
             plt.close(fig)
 
             logger.info(f"Step 4 diagnostics saved to {out_dir} "
-                        f"({n_orders} orders, format={fig_format})")
+                        f"({n_orders} apertures, format={fig_format})")
 
 
 
@@ -1217,22 +1217,26 @@ def process_flat_correction_stage(science_image: np.ndarray,
     out_dir = Path(output_dir_base) / 'step4_flat_corrected'
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save all flat-model artefacts (passing processor if it was freshly built here to save its diagnostics).
+    # When building the model, save all flat-model artefacts.
+    # The processor object is only available during the model build step.
     save_flat_correction_products(flat_field, apertures, out_dir, processor=processor,
                                   fig_format=fig_format, save_plots=save_plots)
 
-    write_fits_image(
-        str(out_dir / f'{science_name}.fits'),
-        corrected,
-        dtype='float32',
-    )
-
-    if save_plots:
-        plot_2d_image_to_file(
+    # The corrected master flat is already saved as part of the diagnostics.
+    # Only save other science/calib images here to avoid redundancy.
+    if science_name != "MasterFlat":
+        write_fits_image(
+            str(out_dir / f'{science_name}.fits'),
             corrected,
-            str(out_dir / f'{science_name}_flat2d_corrected.{fig_format}'),
-            'Science After 2D Flat Correction',
+            dtype='float32',
         )
+
+        if save_plots:
+            plot_2d_image_to_file(
+                corrected,
+                str(out_dir / f'{science_name}_flat2d_corrected.{fig_format}'),
+                f'Image After 2D Flat Correction: {science_name}',
+            )
 
     logger.info(f"✓ 2D flat correction complete: {science_name}")
     return corrected

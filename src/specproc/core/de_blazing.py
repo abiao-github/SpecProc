@@ -43,15 +43,53 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
 
             # Ensure blaze profile matches spectrum length
             if len(blaze_profile) == len(spectrum.flux):
-                # Apply de-blazing: divide by blaze function
-                corrected_flux = spectrum.flux / (blaze_profile + 1e-10)  # Avoid division by zero
+                blaze_peak = np.nanmax(blaze_profile)
+                if not np.isfinite(blaze_peak) or blaze_peak <= 0:
+                    blaze_peak = 1.0
+                
+                blaze_threshold = 0.02 * blaze_peak
+
+                # --- FIX: Contiguous valid region ---
+                # Only keep the contiguous region around the peak that is above the threshold.
+                # This strictly ignores any artificial "up-swings" or polynomial ringing at the extreme edges.
+                bad_blaze_mask = np.ones_like(blaze_profile, dtype=bool)
+                peak_idx = int(np.nanargmax(blaze_profile))
+                
+                # Walk left from the peak
+                left_bound = peak_idx
+                while left_bound > 0 and blaze_profile[left_bound - 1] >= blaze_threshold:
+                    left_bound -= 1
+                    
+                # Walk right from the peak
+                right_bound = peak_idx
+                while right_bound < len(blaze_profile) - 1 and blaze_profile[right_bound + 1] >= blaze_threshold:
+                    right_bound += 1
+                    
+                # The contiguous region from left_bound to right_bound is good.
+                bad_blaze_mask[left_bound:right_bound + 1] = False
+
+                # Avoid division by zero or very small numbers by setting them to NaN
+                blaze_for_division = np.where(bad_blaze_mask, np.nan, blaze_profile)
+
+                # Apply de-blazing, ignoring division warnings for NaNs
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    corrected_flux = spectrum.flux / blaze_for_division
+                    corrected_error = spectrum.error / blaze_for_division if spectrum.error is not None else None
+
+                # In regions of low blaze, the result is unreliable. Set flux and error to NaN.
+                corrected_flux[bad_blaze_mask] = np.nan
+                if corrected_error is not None:
+                    corrected_error[bad_blaze_mask] = np.nan
+                
+                # Clean up any other non-finite values that might have resulted from the division
+                corrected_flux[~np.isfinite(corrected_flux)] = np.nan
+                if corrected_error is not None:
+                    corrected_error[~np.isfinite(corrected_error)] = np.nan
 
                 # Create corrected spectrum
                 corrected_spectrum = spectrum.copy()
                 corrected_spectrum.flux = corrected_flux
-                if spectrum.error is not None:
-                    corrected_spectrum.error = spectrum.error / (blaze_profile + 1e-10)
-
+                corrected_spectrum.error = corrected_error
                 corrected_spectra.add_spectrum(corrected_spectrum)
             else:
                 logger.warning(f"Blaze profile length mismatch for aperture {aperture_id}, skipping")
@@ -64,7 +102,9 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
     return corrected_spectra
 
 
-def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
+def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet, 
+                          content_desc: str = 'De-blazed calibrated spectra',
+                          log_desc: str = 'de-blazed'):
     """Save de-blazed spectra to FITS file."""
     if spectra_set is None:
         raise RuntimeError("No de-blazed spectra to save")
@@ -85,14 +125,14 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
         spec = spectra_set.get_spectrum(aperture_id)
 
         # Pad arrays to same length
-        wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)))
-        fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)))
+        wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)), constant_values=np.nan)
+        fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)), constant_values=np.nan)
 
         cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=wl))
         cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=fl))
 
         if spec.error is not None:
-            err = np.pad(spec.error, (0, max_pixels - len(spec.error)))
+            err = np.pad(spec.error, (0, max_pixels - len(spec.error)), constant_values=np.nan)
             cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=err))
 
     coldefs = fits.ColDefs(cols)
@@ -102,7 +142,7 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
     header = fits.Header()
     header['NORDERS'] = norders
     header['NPX'] = max_pixels
-    header['CONTENTS'] = 'De-blazed calibrated spectra'
+    header['CONTENTS'] = content_desc
     header['COMMENT'] = 'Wavelength in Angstroms, Flux in ADU'
 
     primary_hdu = fits.PrimaryHDU(header=header)
@@ -110,7 +150,7 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet):
     hdul = fits.HDUList([primary_hdu, table_hdu])
     hdul.writeto(str(output_path), overwrite=True)
 
-    logger.info(f"Saved {norders} de-blazed spectra to {output_path}")
+    logger.info(f"Saved {norders} {log_desc} spectra to {output_path}")
 
 
 def process_de_blazing_stage(spectra_set: SpectraSet,

@@ -67,7 +67,7 @@ class ConfigManager:
     def _load_defaults(self):
         """Load default configuration values."""
         # Load from default_config.cfg in the package directory
-        default_config_path = Path(__file__).parent.parent / "default_config.cfg"
+        default_config_path = Path(__file__).parent / "default_config.cfg"
         if default_config_path.exists():
             # Load default config without setting config_path
             self.config.read(default_config_path)
@@ -155,15 +155,13 @@ class ConfigManager:
         # Wavelength calibration section
         self.config['reduce.wlcalib'] = {
             'linelist': 'ThAr',
-            'search_database': 'yes',
-            'use_prev_fitpar': 'yes',
             'xorder': '4',
             'yorder': '4',
-            'window_size': '10',
             'clipping': '3.0',
-            'auto_selection': 'yes',
-            'rms_threshold': '0.1',
-            'time_diff': '600',  # seconds
+            'rms_threshold': '0.5',
+            'match_tolerance': '2.0',
+            'discard_highest_apertures': '20',
+            'discard_lowest_apertures': '10',
         }
 
         # Background section

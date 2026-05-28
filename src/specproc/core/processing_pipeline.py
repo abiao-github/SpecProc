@@ -362,13 +362,19 @@ class ProcessingPipeline:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 
                 from specproc.core.de_blazing import save_deblazed_spectra
-                save_deblazed_spectra(str(out_dir / f'{science_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
+                save_deblazed_spectra(
+                    str(out_dir / f'{science_name}_1D_{method}_wavecal.fits'), 
+                    calibrated_spectra,
+                    content_desc='Wavelength calibrated spectra',
+                    log_desc='wavelength-calibrated'
+                )
                 
                 if self.config.get_bool('reduce', 'save_plots', True):
                     from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
                     pdf_path = out_dir / f"{science_name}_1D_{method}_wavecal.pdf"
                     plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
-                                        title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
+                                        title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)", 
+                                        id_label="Order")
 
             self._report_progress(0.88, "Wavelength Calibration Complete")
             logger.info(f"✓ Wavelength calibration applied to {len(calibrated_spectra.spectra)} spectra")
@@ -729,86 +735,6 @@ class ProcessingPipeline:
         self._report_progress(0.60, "Science Scattered Light Subtraction Complete")
         return corrected
 
-    def stage_flat_fielding_science_2d(self, science_image: np.ndarray,
-                                       science_name: str = 'science') -> np.ndarray:
-        """Step 4: apply 2D pixel-flat correction map to science image."""
-        self._report_progress(0.62, "2D Flat Fielding")
-        # --- Extract config for flat correction stage ---
-        flat_corr_kwargs = {
-            'output_dir_base': self.config.get_output_path(),
-            'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
-            'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
-            'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
-            'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
-            'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
-            'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
-            'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
-            'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
-        }
-        corrected = process_flat_correction_stage(
-            science_image, self.state.flat_field,
-            apertures=self.state.apertures, science_name=science_name,
-            **flat_corr_kwargs,
-        )
-        self._report_progress(0.70, "2D Flat Fielding Complete")
-        return corrected
-
-    def stage_flat_fielding_calib_2d(self, calib_file: str) -> str:
-        """Apply 2D pixel-flat correction map to calibration image."""
-        self._report_progress(0.72, "2D Flat Fielding (Calibration)")
-        
-        calib_name = Path(calib_file).stem
-        orig_name = Path(calib_file).name
-        out_dir = Path(self.config.get_output_path()) / 'step4_flat_corrected'
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / orig_name
-        
-        # Priority: bias_subtracted -> overscan_corrected -> raw
-        input_calib = calib_file
-        bias_path = Path(self.config.get_output_path()) / 'step1_basic' / 'bias_subtracted' / orig_name
-        overscan_path = Path(self.config.get_output_path()) / 'step1_basic' / 'overscan_corrected' / orig_name
-        
-        if bias_path.exists():
-            input_calib = str(bias_path)
-        elif overscan_path.exists():
-            input_calib = str(overscan_path)
-            
-        logger.info(f"Applying 2D flat correction to calibration frame: {input_calib}")
-        
-        if self.state.flat_field is None:
-            logger.warning("No flat field available, skipping calib 2D flat correction")
-            return input_calib
-            
-        flat_corr = self.state.flat_field.pixel_flat
-        if flat_corr is None:
-            flat_corr = self.state.flat_field.flat_corr_2d
-            
-        if flat_corr is None:
-            logger.warning("No flat correction map available in flat_field. Skipping calib 2D flat correction.")
-            return input_calib
-            
-        calib_img, header = read_fits_image(input_calib)
-            
-        safe_flat = flat_corr.astype(np.float32)
-        bad = (~np.isfinite(safe_flat)) | (safe_flat <= 0.05)
-        if np.any(bad):
-            safe_flat = safe_flat.copy()
-            safe_flat[bad] = 1.0
-            
-        corrected = calib_img.astype(np.float32) / safe_flat
-        if header is not None:
-            header['FLATCOR'] = (True, '2D pixel flat correction applied')
-            
-        write_fits_image(str(out_path), corrected, header=header, dtype='float32')
-        
-        if self.config.get_bool('reduce', 'save_plots', True):
-            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
-            fig_format = self.config.get('reduce', 'fig_format', 'png')
-            plot_2d_image_to_file(corrected, str(out_dir / f"{calib_name}_flat2d_corrected.{fig_format}"), "Calibration Frame After 2D Flat Correction")
-            
-        return str(out_path)
-
     def get_best_calib_file(self, raw_calib_path: str) -> str:
         """Find the most processed version of the calibration file."""
         if not raw_calib_path:
@@ -967,26 +893,93 @@ class ProcessingPipeline:
                 write_fits_image(str(out_path), sci_clean, header=sci_header, dtype='float32')
                 science_scatter_files.append(str(out_path))
 
-            # Step 4: 2D flat-field correction
+            # Step 4: Build 2D flat-field model and apply it
             self._report_progress(0.60, "2D Flat Fielding")
-            
-            # Step 4: 2D flat correction for calib files
-            calib_filenames_final = []
-            for c_file in calib_filenames_corr:
-                calib_filenames_final.append(self.stage_flat_fielding_calib_2d(c_file))
+            logger.info("=" * 50)
+            logger.info("STEP 4: 2D FLAT-FIELD CORRECTION")
+            logger.info("=" * 50)
 
+            # --- Build the flat model ONCE using the cleaned master flat ---
+            logger.info("Building 2D flat-field model from MasterFlat...")
+            from specproc.core.flat_correction import process_flat_correction_stage
+            flat_corr_kwargs = {
+                'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
+                'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+                'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+                'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+                'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+                'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+                'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+                'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
+                'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            }
+            # This call builds the model and saves all diagnostics.
+            # The returned 'corrected_flat' is the pixel_flat map itself.
+            # The important part is that flat_field object is updated in-place.
+            _ = process_flat_correction_stage(
+                science_image=flat_clean,
+                flat_field=flat_field,
+                output_dir_base=self.config.get_output_path(),
+                apertures=apertures,
+                science_name="MasterFlat", # Use a specific name for diagnostics
+                **flat_corr_kwargs
+            )
+            logger.info("✓ 2D flat-field model built and diagnostics saved.")
+
+            # --- Apply the correction map to all science and calib frames ---
+            flat_corr_map = flat_field.pixel_flat
+            if flat_corr_map is None:
+                raise RuntimeError("Failed to build pixel_flat map in Step 4.")
+
+            safe_flat = flat_corr_map.astype(np.float32)
+            bad = (~np.isfinite(safe_flat)) | (safe_flat <= 0.05)
+            if np.any(bad):
+                safe_flat = safe_flat.copy()
+                safe_flat[bad] = 1.0
+
+            out_dir_f = Path(self.config.get_output_path()) / 'step4_flat_corrected'
+            out_dir_f.mkdir(parents=True, exist_ok=True)
+
+            # Apply to science files
             science_flat2d_files = []
+            logger.info("Applying 2D flat correction to science frames...")
             for sci_file in science_scatter_files:
                 sci_img, sci_header = read_fits_image(sci_file)
                 sci_name = Path(sci_file).stem
-                corr = self.stage_flat_fielding_science_2d(sci_img, science_name=sci_name)
+                corrected = sci_img.astype(np.float32) / safe_flat
                 
-                out_dir_f = Path(self.config.get_output_path()) / 'step4_flat_corrected'
                 out_path = out_dir_f / Path(sci_file).name
                 if sci_header is not None:
                     sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
-                write_fits_image(str(out_path), corr, header=sci_header, dtype='float32')
+                write_fits_image(str(out_path), corrected, header=sci_header, dtype='float32')
+                
+                if self.config.get_bool('reduce', 'save_plots', True):
+                    from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                    fig_format = self.config.get('reduce', 'fig_format', 'png')
+                    plot_2d_image_to_file(corrected, str(out_dir_f / f"{sci_name}_flat2d_corrected.{fig_format}"), f"Science After 2D Flat Correction: {sci_name}")
+
                 science_flat2d_files.append(str(out_path))
+
+            # Apply to calib files
+            calib_filenames_final = []
+            logger.info("Applying 2D flat correction to calibration frames...")
+            for c_file in calib_filenames_corr:
+                calib_img, calib_header = read_fits_image(c_file)
+                calib_name = Path(c_file).stem
+                corrected = calib_img.astype(np.float32) / safe_flat
+
+                out_path = out_dir_f / Path(c_file).name
+                if calib_header is not None:
+                    calib_header['FLATCOR'] = (True, '2D pixel flat correction applied')
+                write_fits_image(str(out_path), corrected, header=calib_header, dtype='float32')
+
+                if self.config.get_bool('reduce', 'save_plots', True):
+                    from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                    fig_format = self.config.get('reduce', 'fig_format', 'png')
+                    plot_2d_image_to_file(corrected, str(out_dir_f / f"{calib_name}_flat2d_corrected.{fig_format}"), f"Calibration Frame After 2D Flat Correction: {calib_name}")
+
+                calib_filenames_final.append(str(out_path))
 
             # Step 5: 1D Extraction
             self._report_progress(0.70, "Spectrum Extraction")

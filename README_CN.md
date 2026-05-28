@@ -85,7 +85,7 @@ cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
 # 4. 拷贝默认配置文件到当前目录并重命名 (可选)
-cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
+cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
 
 # 5. 在您的工作目录启动管线
 specproc --config ./specproc.cfg

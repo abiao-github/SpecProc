@@ -1438,64 +1438,90 @@ class MainWindow(QMainWindow):
             self.log_text.append("STEP 4: 2D FLAT-FIELD CORRECTION")
             self.log_text.append("=" * 60)
             
-            from specproc.core.flat_correction import process_flat_correction_stage
             from specproc.utils.fits_io import read_fits_image, write_fits_image
-
-            calib_files = self.calib_file if isinstance(self.calib_file, list) else [self.calib_file]
-            new_calib_files = []
-            if calib_files and flat_field is not None:
-                for calib_f in calib_files:
-                    if not calib_f: continue
-                    try:
-                        calib_corr_path = self.pipeline.stage_flat_fielding_calib_2d(calib_f)
-                        self.log_text.append(f"  ✓ Step 4 calib output: {Path(calib_corr_path).name}")
-                        new_calib_files.append(calib_corr_path)
-                    except Exception as e:
-                        self.log_text.append(f"  ! Step 4 calib correction skipped/failed: {e}")
-                        new_calib_files.append(calib_f)
-                current_calib_files = new_calib_files
             
             if flat_field is None:
                 self.log_text.append("  ! Step 4: no MasterFlat available – Step 2 must run first")
             else:
+                from specproc.core.flat_correction import process_flat_correction_stage
+                # --- Build the flat model ONCE using the cleaned master flat ---
+                self.log_text.append("  Building 2D flat-field model from MasterFlat...")
+                
+                # Get cleaned master flat
+                flat_clean = flat_field.flat_data
+                if flat_field.scattered_light is not None:
+                    flat_clean = np.clip(
+                        flat_field.flat_data.astype(np.float32) - flat_field.scattered_light.astype(np.float32),
+                        1e-6,
+                        None,
+                    )
+
+                flat_corr_kwargs = {
+                    'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
+                    'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+                    'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+                    'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+                    'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+                    'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+                    'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+                    'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
+                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                }
+                
+                # This call builds the model and saves all diagnostics.
+                # The flat_field object is updated in-place.
+                _ = process_flat_correction_stage(
+                    science_image=flat_clean,
+                    flat_field=flat_field,
+                    output_dir_base=self.config.get_output_path(),
+                    apertures=apertures,
+                    science_name="MasterFlat", # Use a specific name for diagnostics
+                    **flat_corr_kwargs
+                )
+                self.log_text.append("  ✓ 2D flat-field model built and diagnostics saved.")
+                self._flat_field = flat_field # Update cached version
+                self.pipeline.state.flat_field = flat_field
+
+                # --- Apply the correction map to all science and calib frames ---
+                flat_corr_map = flat_field.pixel_flat
+                if flat_corr_map is None:
+                    raise RuntimeError("Failed to build pixel_flat map in Step 4.")
+
+                safe_flat = flat_corr_map.astype(np.float32)
+                bad = (~np.isfinite(safe_flat)) | (safe_flat <= 0.05)
+                if np.any(bad):
+                    safe_flat = safe_flat.copy()
+                    safe_flat[bad] = 1.0
+
+                out_dir_f = Path(self.config.get_output_path()) / 'step4_flat_corrected'
+                out_dir_f.mkdir(parents=True, exist_ok=True)
+
+                # Apply to science files
                 new_science_files = []
+                self.log_text.append("  Applying 2D flat correction to science frames...")
                 for sci_file in current_science_files:
                     try:
                         sci_img, sci_header = read_fits_image(sci_file)
                         sci_name = Path(sci_file).stem
-                        flat_corr_kwargs = {
-                            'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
-                            'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
-                            'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
-                            'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
-                            'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
-                            'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
-                            'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
-                            'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
-                            'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
-                        }
-                        corrected = process_flat_correction_stage(
-                            science_image=sci_img,
-                            flat_field=flat_field,
-                            output_dir_base=self.config.get_output_path(),
-                            apertures=apertures,
-                            science_name=sci_name,
-                            **flat_corr_kwargs
-                        )
-                        out_dir = Path(self.config.get_output_path()) / 'step4_flat_corrected'
-                        corrected_path = out_dir / Path(sci_file).name
+                        corrected = sci_img.astype(np.float32) / safe_flat
+                        
+                        out_path = out_dir_f / Path(sci_file).name
                         if sci_header is not None:
                             sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
-                            write_fits_image(str(corrected_path), corrected, header=sci_header, dtype='float32')
-                        self.log_text.append(f"  ✓ Step 4 output for {sci_name}: {corrected_path.name}")
-                        new_science_files.append(str(corrected_path))
+                        write_fits_image(str(out_path), corrected, header=sci_header, dtype='float32')
+                        
+                        if self.config.get_bool('reduce', 'save_plots', True):
+                            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                            fig_format = self.config.get('reduce', 'fig_format', 'png')
+                            plot_2d_image_to_file(corrected, str(out_dir_f / f"{sci_name}_flat2d_corrected.{fig_format}"), f"Science After 2D Flat Correction: {sci_name}")
+
+                        new_science_files.append(str(out_path))
+                        self.log_text.append(f"    ✓ Corrected {sci_name}")
                     except Exception as e:
-                        self.log_text.append(f"  ✗ Step 4 failed for {Path(sci_file).name}: {e}")
-                        new_science_files.append(sci_file)
+                        self.log_text.append(f"    ✗ Failed to correct {Path(sci_file).name}: {e}")
+                        new_science_files.append(sci_file) # Keep original if failed
                 current_science_files = new_science_files
-                self._flat_field = flat_field
-                self.pipeline.state.flat_field = flat_field
 
         # STAGE 4: 1D Extraction
         if "stage_4" in selected_stages:
@@ -1740,13 +1766,19 @@ class MainWindow(QMainWindow):
                              out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
                              out_dir.mkdir(parents=True, exist_ok=True)
                              from specproc.core.de_blazing import save_deblazed_spectra
-                             save_deblazed_spectra(str(out_dir / f'{target_name}_1D_{method}_wavecal.fits'), calibrated_spectra)
+                             save_deblazed_spectra(
+                                 str(out_dir / f'{target_name}_1D_{method}_wavecal.fits'), 
+                                 calibrated_spectra,
+                                 content_desc='Wavelength calibrated spectra',
+                                 log_desc='wavelength-calibrated'
+                             )
                              
                              if self.config.get_bool('reduce', 'save_plots', True):
                                  from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
                                  pdf_path = out_dir / f"{target_name}_1D_{method}_wavecal.pdf"
                                  plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
-                                                     title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)")
+                                                     title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)",
+                                                     id_label="Order")
 
                              self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied for {target_name} ({method})")
                              if method == 'optimal':

@@ -507,13 +507,6 @@ class SettingsDialog(QDialog):
         calib_group.setLayout(calib_layout)
         layout.addRow(calib_group)
 
-        # Main calibration parameters
-        self.wlcalib_search_database_check = QCheckBox("Search calibration database")
-        layout.addRow(self.wlcalib_search_database_check)
-
-        self.wlcalib_use_prev_fitpar_check = QCheckBox("Use previous fitted parameters as initial guess")
-        layout.addRow(self.wlcalib_use_prev_fitpar_check)
-
         # Polynomial solution
         poly_group = QGroupBox("Polynomial Solution")
         poly_layout = QFormLayout()
@@ -533,10 +526,17 @@ class SettingsDialog(QDialog):
         quality_group = QGroupBox("Quality Control")
         quality_layout = QFormLayout()
 
+        self.wlcalib_match_tol_spin = QDoubleSpinBox()
+        self.wlcalib_match_tol_spin.setRange(0.1, 10.0)
+        self.wlcalib_match_tol_spin.setSingleStep(0.1)
+        self.wlcalib_match_tol_spin.setToolTip("Maximum allowed distance (in Angstroms) to match a detected peak to a catalog line.")
+        quality_layout.addRow("Catalog Match Tolerance (Å):", self.wlcalib_match_tol_spin)
+
         self.wlcalib_rms_threshold_spin = QDoubleSpinBox()
-        self.wlcalib_rms_threshold_spin.setRange(0.01, 1.0)
-        self.wlcalib_rms_threshold_spin.setSingleStep(0.01)
-        quality_layout.addRow("RMS Threshold (Angstrom):", self.wlcalib_rms_threshold_spin)
+        self.wlcalib_rms_threshold_spin.setRange(0.01, 5.0)
+        self.wlcalib_rms_threshold_spin.setSingleStep(0.05)
+        self.wlcalib_rms_threshold_spin.setToolTip("Absolute maximum residual (in Angstroms) for a line to be kept in the final 2D polynomial fit.")
+        quality_layout.addRow("Max Residual Limit (Å):", self.wlcalib_rms_threshold_spin)
 
         quality_group.setLayout(quality_layout)
         layout.addRow(quality_group)
@@ -545,36 +545,21 @@ class SettingsDialog(QDialog):
         adv_group = QGroupBox("Advanced Parameters")
         adv_layout = QFormLayout()
 
-        self.wlcalib_time_diff_spin = QSpinBox()
-        self.wlcalib_time_diff_spin.setRange(0, 3600)
-        adv_layout.addRow("Time Window (seconds):", self.wlcalib_time_diff_spin)
-
-        self.wlcalib_auto_selection_check = QCheckBox("Auto-select calibration reference")
-        adv_layout.addRow(self.wlcalib_auto_selection_check)
-
-        self.wlcalib_window_size_spin = QSpinBox()
-        self.wlcalib_window_size_spin.setRange(1, 50)
-        adv_layout.addRow("Fitting Window Size:", self.wlcalib_window_size_spin)
-
         self.wlcalib_clipping_spin = QDoubleSpinBox()
-        self.wlcalib_clipping_spin.setRange(1.0, 10.0)
-        self.wlcalib_clipping_spin.setSingleStep(0.1)
-        adv_layout.addRow("Sigma Clipping Threshold:", self.wlcalib_clipping_spin)
+        self.wlcalib_clipping_spin.setRange(1.0, 50.0)
+        self.wlcalib_clipping_spin.setSingleStep(0.5)
+        self.wlcalib_clipping_spin.setToolTip("SNR threshold for detecting emission line peaks in the 1D spectrum.")
+        adv_layout.addRow("Peak Detection SNR:", self.wlcalib_clipping_spin)
 
-        self.wlcalib_q_threshold_spin = QDoubleSpinBox()
-        self.wlcalib_q_threshold_spin.setRange(0.0, 1.0)
-        self.wlcalib_q_threshold_spin.setSingleStep(0.05)
-        adv_layout.addRow("Line Intensity Threshold:", self.wlcalib_q_threshold_spin)
+        self.wlcalib_discard_highest_spin = QSpinBox()
+        self.wlcalib_discard_highest_spin.setRange(0, 50)
+        self.wlcalib_discard_highest_spin.setToolTip("Number of apertures to discard at the highest aperture IDs during anchor matching.")
+        adv_layout.addRow("Discard Highest Aperture IDs:", self.wlcalib_discard_highest_spin)
 
-        self.wlcalib_discard_top_spin = QSpinBox()
-        self.wlcalib_discard_top_spin.setRange(0, 50)
-        self.wlcalib_discard_top_spin.setToolTip("Number of apertures to discard at the top edge during anchor matching.")
-        adv_layout.addRow("Discard Top Apertures:", self.wlcalib_discard_top_spin)
-
-        self.wlcalib_discard_bottom_spin = QSpinBox()
-        self.wlcalib_discard_bottom_spin.setRange(0, 50)
-        self.wlcalib_discard_bottom_spin.setToolTip("Number of apertures to discard at the bottom edge during anchor matching.")
-        adv_layout.addRow("Discard Bottom Apertures:", self.wlcalib_discard_bottom_spin)
+        self.wlcalib_discard_lowest_spin = QSpinBox()
+        self.wlcalib_discard_lowest_spin.setRange(0, 50)
+        self.wlcalib_discard_lowest_spin.setToolTip("Number of apertures to discard at the lowest aperture IDs during anchor matching.")
+        adv_layout.addRow("Discard Lowest Aperture IDs:", self.wlcalib_discard_lowest_spin)
 
         adv_group.setLayout(adv_layout)
         layout.addRow(adv_group)
@@ -822,18 +807,13 @@ class SettingsDialog(QDialog):
         self.full_linelist_edit.setText(self.config.get('telescope.linelist', 'full_linelist', 'calib_data/linelists/thar-noao.dat'))
         self.use_precomputed_calib_check.setChecked(self.config.get_bool('telescope.linelist', 'use_precomputed_calibration', False))
         self.precomputed_calib_file_edit.setText(self.config.get('telescope.linelist', 'precomputed_calib_file', 'calib_data/telescopes/xinglong216hrs/wlcalib_20211123011_A.fits'))
-        self.wlcalib_search_database_check.setChecked(self.config.get_bool('reduce.wlcalib', 'search_database', True))
-        self.wlcalib_use_prev_fitpar_check.setChecked(self.config.get_bool('reduce.wlcalib', 'use_prev_fitpar', True))
         self.wlcalib_xorder_spin.setValue(self.config.get_int('reduce.wlcalib', 'xorder', 4))
         self.wlcalib_yorder_spin.setValue(self.config.get_int('reduce.wlcalib', 'yorder', 4))
-        self.wlcalib_rms_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'rms_threshold', 0.1))
-        self.wlcalib_time_diff_spin.setValue(self.config.get_int('reduce.wlcalib', 'time_diff', 600))
-        self.wlcalib_auto_selection_check.setChecked(self.config.get_bool('reduce.wlcalib', 'auto_selection', True))
-        self.wlcalib_window_size_spin.setValue(self.config.get_int('reduce.wlcalib', 'window_size', 10))
+        self.wlcalib_match_tol_spin.setValue(self.config.get_float('reduce.wlcalib', 'match_tolerance', 2.0))
+        self.wlcalib_rms_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'rms_threshold', 0.5))
         self.wlcalib_clipping_spin.setValue(self.config.get_float('reduce.wlcalib', 'clipping', 3.0))
-        self.wlcalib_q_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'q_threshold', 0.5))
-        self.wlcalib_discard_top_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_top_apertures', 0))
-        self.wlcalib_discard_bottom_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_bottom_apertures', 0))
+        self.wlcalib_discard_highest_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_highest_apertures', 20))
+        self.wlcalib_discard_lowest_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_lowest_apertures', 10))
 
         # Orders Tracing tab
         self.trace_snr_threshold_spin.setValue(self.config.get_float('reduce.trace', 'snr_threshold', 5.0))
@@ -920,21 +900,13 @@ class SettingsDialog(QDialog):
             self.config.set('telescope.linelist', 'use_precomputed_calibration',
                            'yes' if self.use_precomputed_calib_check.isChecked() else 'no')
             self.config.set('telescope.linelist', 'precomputed_calib_file', self.precomputed_calib_file_edit.text())
-            self.config.set('reduce.wlcalib', 'search_database',
-                           'yes' if self.wlcalib_search_database_check.isChecked() else 'no')
-            self.config.set('reduce.wlcalib', 'use_prev_fitpar',
-                           'yes' if self.wlcalib_use_prev_fitpar_check.isChecked() else 'no')
             self.config.set('reduce.wlcalib', 'xorder', str(self.wlcalib_xorder_spin.value()))
             self.config.set('reduce.wlcalib', 'yorder', str(self.wlcalib_yorder_spin.value()))
+            self.config.set('reduce.wlcalib', 'match_tolerance', str(self.wlcalib_match_tol_spin.value()))
             self.config.set('reduce.wlcalib', 'rms_threshold', str(self.wlcalib_rms_threshold_spin.value()))
-            self.config.set('reduce.wlcalib', 'time_diff', str(self.wlcalib_time_diff_spin.value()))
-            self.config.set('reduce.wlcalib', 'auto_selection',
-                           'yes' if self.wlcalib_auto_selection_check.isChecked() else 'no')
-            self.config.set('reduce.wlcalib', 'window_size', str(self.wlcalib_window_size_spin.value()))
             self.config.set('reduce.wlcalib', 'clipping', str(self.wlcalib_clipping_spin.value()))
-            self.config.set('reduce.wlcalib', 'q_threshold', str(self.wlcalib_q_threshold_spin.value()))
-            self.config.set('reduce.wlcalib', 'discard_top_apertures', str(self.wlcalib_discard_top_spin.value()))
-            self.config.set('reduce.wlcalib', 'discard_bottom_apertures', str(self.wlcalib_discard_bottom_spin.value()))
+            self.config.set('reduce.wlcalib', 'discard_highest_apertures', str(self.wlcalib_discard_highest_spin.value()))
+            self.config.set('reduce.wlcalib', 'discard_lowest_apertures', str(self.wlcalib_discard_lowest_spin.value()))
 
             # Orders Tracing tab
             self.config.set('reduce.trace', 'snr_threshold', str(self.trace_snr_threshold_spin.value()))

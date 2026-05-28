@@ -150,7 +150,7 @@ cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
 # 4. Create user config file (optional)
-cp /path/to/SpecProc/src/specproc/default_config.cfg ./specproc.cfg
+cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
 
 # 5. Run SpecProc in your working directory
 specproc --config ./specproc.cfg
@@ -192,7 +192,7 @@ specproc --config ./specproc.cfg
 
 #### Default Configuration
 
-**Location**: `SpecProc/src/specproc/default_config.cfg`
+**Location**: `SpecProc/src/specproc/config/default_config.cfg`
 **Purpose**: Provides default parameter values
 **Modification**: Not recommended to modify directly
 
@@ -535,7 +535,7 @@ pip install -e .
 
 ```bash
 # Copy default config
-cp /path/to/SpecProc/default_config.cfg ./specproc.cfg
+cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
 ```
 
 ### Large file errors on GitHub

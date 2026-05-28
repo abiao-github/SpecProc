@@ -436,7 +436,8 @@ def plot_wavelength_calibration(line_pixels: np.ndarray, line_wavelengths: np.nd
 
     logger.info(f"Saved wavelength calibration plot to {output_path}")
 
-def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spectrum", xlabel: str = "Wavelength (Angstrom)"):
+def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spectrum", 
+                        xlabel: str = "Wavelength (Angstrom)", id_label: str = "Aperture"):
     """Save all spectra in a SpectraSet to a single multi-page PDF file."""
     from matplotlib.backends.backend_pdf import PdfPages
     
@@ -457,7 +458,7 @@ def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spec
 
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Flux")
-            ax.set_title(f"{title_prefix} - Aperture {aperture_id}")
+            ax.set_title(f"{title_prefix} - {id_label} {aperture_id}")
             ax.legend()
             ax.grid(True, alpha=0.3)
 

@@ -157,7 +157,6 @@ class ConfigManager:
             'linelist': 'ThAr',
             'xorder': '4',
             'yorder': '4',
-            'clipping': '3.0',
             'rms_threshold': '0.5',
             'match_tolerance': '2.0',
             'discard_highest_apertures': '20',

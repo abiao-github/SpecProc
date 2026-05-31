@@ -545,12 +545,6 @@ class SettingsDialog(QDialog):
         adv_group = QGroupBox("Advanced Parameters")
         adv_layout = QFormLayout()
 
-        self.wlcalib_clipping_spin = QDoubleSpinBox()
-        self.wlcalib_clipping_spin.setRange(1.0, 50.0)
-        self.wlcalib_clipping_spin.setSingleStep(0.5)
-        self.wlcalib_clipping_spin.setToolTip("SNR threshold for detecting emission line peaks in the 1D spectrum.")
-        adv_layout.addRow("Peak Detection SNR:", self.wlcalib_clipping_spin)
-
         self.wlcalib_discard_highest_spin = QSpinBox()
         self.wlcalib_discard_highest_spin.setRange(0, 50)
         self.wlcalib_discard_highest_spin.setToolTip("Number of apertures to discard at the highest aperture IDs during anchor matching.")
@@ -811,7 +805,6 @@ class SettingsDialog(QDialog):
         self.wlcalib_yorder_spin.setValue(self.config.get_int('reduce.wlcalib', 'yorder', 4))
         self.wlcalib_match_tol_spin.setValue(self.config.get_float('reduce.wlcalib', 'match_tolerance', 2.0))
         self.wlcalib_rms_threshold_spin.setValue(self.config.get_float('reduce.wlcalib', 'rms_threshold', 0.5))
-        self.wlcalib_clipping_spin.setValue(self.config.get_float('reduce.wlcalib', 'clipping', 3.0))
         self.wlcalib_discard_highest_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_highest_apertures', 20))
         self.wlcalib_discard_lowest_spin.setValue(self.config.get_int('reduce.wlcalib', 'discard_lowest_apertures', 10))
 
@@ -904,7 +897,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.wlcalib', 'yorder', str(self.wlcalib_yorder_spin.value()))
             self.config.set('reduce.wlcalib', 'match_tolerance', str(self.wlcalib_match_tol_spin.value()))
             self.config.set('reduce.wlcalib', 'rms_threshold', str(self.wlcalib_rms_threshold_spin.value()))
-            self.config.set('reduce.wlcalib', 'clipping', str(self.wlcalib_clipping_spin.value()))
             self.config.set('reduce.wlcalib', 'discard_highest_apertures', str(self.wlcalib_discard_highest_spin.value()))
             self.config.set('reduce.wlcalib', 'discard_lowest_apertures', str(self.wlcalib_discard_lowest_spin.value()))
 

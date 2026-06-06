@@ -50,21 +50,21 @@
 软件自动提取原始 FITS 文件的过扫区（Overscan）区域，使用指定的统计方法（如多项式拟合或均值平滑）计算并扣除读出电子学偏置，并自动裁剪图像。
 *产出路径: `output/step1_basic/overscan_corrected/`*
 
-![Overscan Profile](../../mywork/output/step1_basic/overscan_corrected/202411020012_overscan_profile.png)
+![Overscan Profile](../../SpecProc_testdata/output/step1_basic/overscan_corrected/202411020012_overscan_profile.png)
 *(图 2: 过扫区改正诊断图，展示了单帧图像过扫区一维轮廓的拟合与扣除效果)*
 
 #### 1.2 Bias 改正
 软件自动完成多帧本底（Bias）图像的合并（支持 Median 或结合 Sigma-clipping 的均值），生成高信噪比的主本底（Master Bias），并将其从后续所有的科学、平场和定标灯图像中自动扣除。
 *产出路径: `output/step1_basic/bias_subtracted/`*
 
-![Bias Profile](../../mywork/output/step1_basic/bias_subtracted/master_bias.png)
+![Bias Profile](../../SpecProc_testdata/output/step1_basic/bias_subtracted/master_bias.png)
 *(图 3: 本底校正诊断图，展示了探测器合成后的二维本底偏置水平与精细结构)*
 
 #### 1.3 Cosmic ray 剔除
 针对长曝光的科学图像（Science frames），软件自动调用 L.A.Cosmic 算法，进行宇宙线的智能识别与中值修复，避免了随机高能粒子对后续光谱提取的污染。
 *产出路径: `output/step1_basic/cosmic_corrected/`*
 
-![Cosmic Ray Marked](../../mywork/output/step1_basic/cosmic_corrected/202411020024_cosmic_marked.png)
+![Cosmic Ray Marked](../../SpecProc_testdata/output/step1_basic/cosmic_corrected/202411020024_cosmic_marked.png)
 *(图 4: 宇宙线剔除诊断图，红圈标记了算法自动识别的宇宙线撞击像素)*
 
 
@@ -72,37 +72,37 @@
 软件自动在主平场上识别了数十个弯曲的阶梯光栅衍射级次，并利用切比雪夫多项式自动拟合了级次中心与上下孔径边界。
 *产出路径: `output/step2_trace/`*
 
-![Order Tracing](../../mywork/output/step2_trace/order_traces.png)
+![Order Tracing](../../SpecProc_testdata/output/step2_trace/order_traces.png)
 *(图 5: 自动识别的光栅级次边界与中心多项式寻迹诊断)*
 
 ### Step 3: 散射光背景建模与扣除 (Scattered Light Subtraction)
 软件自动遮罩了所有光栅级次（包含拓宽安全边距），提取级次间的暗区，并使用二维高斯卷积自动建立了全局杂散光模型。
 *产出路径: `output/step3_scatterlight/`*
 
-![Scattered Light Mask](../../mywork/output/step3_scatterlight/MasterFlat_bkg_diagnostic.png)
+![Scattered Light Mask](../../SpecProc_testdata/output/step3_scatterlight/MasterFlat_bkg_diagnostic.png)
 *(图 6: 自动生成的级次遮罩掩膜，构建的背景杂散光以及残差)*
 
 ### Step 4: 二维平场校正 (2D Flat-Field Correction)
 软件将一维 Blaze 闪耀函数与交叉色散轮廓重建为无噪的 2D 物理模型，并提取出高频的 Pixel-to-pixel 平场校正矩阵。
 *产出路径: `output/step4_flat_corrected/`*
 
-![2D Pixel Flat](../../mywork/output/step4_flat_corrected/flat_pixel_2d.png)
+![2D Pixel Flat](../../SpecProc_testdata/output/step4_flat_corrected/flat_pixel_2d.png)
 *(图 7: 自动生成的二维像素平场校正矩阵，用于消除像元间的量子效率差异)*
 
 ### Step 5 & 6: 1D 最优提取与去闪耀 (1D Extraction & De-blazing)
 软件自动利用 Step 4 的 2D 空间模型作为高斯权重，对科学图像进行了最优提取（Optimal Extraction），并除以 Blaze 曲线拉平了光谱包络。
 *产出路径: `output/step5_extraction/` 与 `output/step6_deblazing/`*
 
-![Blaze Overview](../../mywork/output/step4_flat_corrected/all_orders_blaze_overview.png)
-![Profile Overview](../../mywork/output/step4_flat_corrected/all_orders_profile_overview.png)
+![Blaze Overview](../../SpecProc_testdata/output/step4_flat_corrected/all_apertures_blaze_overview.png)
+![Profile Overview](../../SpecProc_testdata/output/step4_flat_corrected/all_apertures_profile_overview.png)
 *(图 8: 各级次闪耀曲线与一维提取包络概览图)*
 
 ### Step 7: 波长定标 (Wavelength Calibration)
 **这是自动化程度极高的核心步骤**。软件基于盲配算法，自动计算出了光栅的物理偏移级次（`delta_m`），并从定标灯谱中自动交叉认证了上百根 ThAr 发射线，最终完成了二维切比雪夫色散曲面的自适应拟合。
 *产出路径: `output/step7_wavelength/`*
 
-![Wavelength Calibration Solution](../../mywork/output/step7_wavelength/wavelength_calibration.png)
-![Wavelength Calibration Solution](../../mywork/output/step7_wavelength/wavelength_calibration_surface.png)
+![Wavelength Calibration Solution](../../SpecProc_testdata/output/step7_wavelength/wcal_202411020021.png)
+![Wavelength Calibration Solution](../../SpecProc_testdata/output/step7_wavelength/wcal_202411020021_surface.png)
 *(图 9: 特征线后匹配情况和最终建立的 2D 波长色散曲面及极低的 RMS 拟合残差图)*
 
 
@@ -110,7 +110,7 @@
 
 经过完整的测试数据验证，**SpecProc 光谱处理软件表现出了卓越的自动化处理能力**。
 
-1. **流程自动化**: 软件能够将多达 8 个复杂的底层算法步骤无缝串联，用户只需一次性导入观测原始文件并点击执行，无需任何手动交互即可获得最终的科学级一维连续光谱。
+1. **流程自动化**: 软件一次性导入观测原始文件并点击执行，无需任何手动交能够将多达 8 个复杂的底层算法步骤无缝串联，用户只需互即可获得最终的科学级一维连续光谱。
 2. **异常鲁棒性**: 在寻迹断裂、干涉条纹、宇宙线密集以及波长谱线盲配等高难度环节，软件均内置了自适应的容错与参数推算机制，确保了流水线不会因局部瑕疵而中断。
 3. **过程可回溯**: 高度自动化的同时，软件在每一个子步骤都输出了直观的诊断图与日志，保证了数据处理过程的科学严谨性与“白盒”可追溯性。
 

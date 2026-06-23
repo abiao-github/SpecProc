@@ -46,7 +46,13 @@ echo ""
 
 echo "Step 2: Installing SpecProc (editable mode)..."
 echo "Current directory: $(pwd)"
-pip install -e .
+
+if [ ! -f "setup.py" ] && [ ! -f "pyproject.toml" ]; then
+    echo "Error: setup.py or pyproject.toml not found. Please run this script from the SpecProc root directory."
+    exit 1
+fi
+
+python -m pip install -e .
 echo "✓ SpecProc installed in development mode"
 echo ""
 

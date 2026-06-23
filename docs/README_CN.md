@@ -1,6 +1,6 @@
-# SpecProc: 阶梯光栅光谱 FITS 数据处理图形界面管线
+# 自动化光谱处理软件SpecProc使用手册
 
-![SpecProc GUI](docs/SpecProc.png)
+![SpecProc GUI](SpecProc.png)
 
 一个功能完整、基于 PyQt 的图形化交互式管线，专门用于处理阶梯光栅光谱仪（Echelle Spectrograph）的 FITS 数据。
 

@@ -1,4 +1,4 @@
-# SpecProc: PyQt GUI for Echelle Spectrograph FITS Data Reduction
+# SpecProc: PyQt GUI for Spectrograph Data Reduction
 
 ![SpecProc GUI](docs/SpecProc.png)
 

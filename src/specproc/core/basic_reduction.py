@@ -13,6 +13,7 @@ whichever of the three sub-steps are enabled in the configuration.
 
 import numpy as np
 import logging
+import time
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -521,6 +522,8 @@ def process_basic_reduction_stage(science_filenames: List[str],
     logger.info("STEP 1: BASIC PRE-PROCESSING")
     logger.info("=" * 60)
 
+    t_start_step1 = time.time()
+
     overscan_kwargs = overscan_kwargs or {}
     bias_kwargs = bias_kwargs or {}
     cosmic_kwargs = cosmic_kwargs or {}
@@ -529,9 +532,12 @@ def process_basic_reduction_stage(science_filenames: List[str],
     master_bias_path: Optional[str] = None
 
     if do_overscan:
+        t0_over = time.time()
         current_files = process_overscan_stage(current_files, output_dir_base, **overscan_kwargs)
+        logger.info(f"  [Timing] Overscan correction took {time.time() - t0_over:.2f} seconds.")
 
     if do_bias and bias_filenames:
+        t0_bias = time.time()
         # Apply bias correction to each science file individually.
         processed = []
         first = True
@@ -556,9 +562,32 @@ def process_basic_reduction_stage(science_filenames: List[str],
             out_dir = Path(output_dir_base) / 'step1_basic' / 'bias_subtracted'
             processed.append(str(out_dir / Path(sci_file).name))
         current_files = processed
+        logger.info(f"  [Timing] Bias correction took {time.time() - t0_bias:.2f} seconds.")
 
     if do_cosmic:
+        t0_cosmic = time.time()
         current_files = process_cosmic_stage(current_files, output_dir_base, **cosmic_kwargs)
+        logger.info(f"  [Timing] Cosmic ray removal took {time.time() - t0_cosmic:.2f} seconds.")
+
+    t_end_step1 = time.time()
+    total_time = t_end_step1 - t_start_step1
+
+    # Calculate total output file size
+    total_size_bytes = 0
+    for f in current_files:
+        p = Path(f)
+        if p.exists():
+            total_size_bytes += p.stat().st_size
+    if master_bias_path:
+        p_bias = Path(master_bias_path)
+        if p_bias.exists():
+            total_size_bytes += p_bias.stat().st_size
+
+    total_size_mb = total_size_bytes / (1024 * 1024)
+    speed_mb_s = total_size_mb / total_time if total_time > 0 else 0
 
     logger.info(f"✓ Step 1 basic reduction complete: {len(current_files)} science files")
+    logger.info(f"  [Stats] Total Output Size: {total_size_mb:.2f} MB")
+    logger.info(f"  [Stats] Total Duration: {total_time:.2f} s")
+    logger.info(f"  [Stats] Average Processing Speed: {speed_mb_s:.2f} MB/s")
     return current_files, master_bias_path

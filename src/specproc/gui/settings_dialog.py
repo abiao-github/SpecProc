@@ -74,7 +74,7 @@ class SettingsDialog(QDialog):
         self.setLayout(layout)
 
     def _create_data_tab(self) -> QWidget:
-        """Create data input and instrument settings tab."""
+        """Create data input and detector settings tab."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         widget = QWidget()
@@ -102,19 +102,6 @@ class SettingsDialog(QDialog):
 
         data_group.setLayout(data_layout)
         layout.addRow(data_group)
-
-        # Telescope configuration
-        telescope_group = QGroupBox("Telescope & Instrument")
-        telescope_layout = QFormLayout()
-
-        self.telescope_name_edit = QLineEdit()
-        telescope_layout.addRow("Telescope Name:", self.telescope_name_edit)
-
-        self.instrument_edit = QLineEdit()
-        telescope_layout.addRow("Instrument Name:", self.instrument_edit)
-
-        telescope_group.setLayout(telescope_layout)
-        layout.addRow(telescope_group)
 
         # Detector parameters
         detector_group = QGroupBox("Detector Parameters")
@@ -746,8 +733,6 @@ class SettingsDialog(QDialog):
         self.exptime_key_edit.setText(self.config.get('data', 'exptime_key', 'EXPTIME'))
         self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xrb'))
         self.output_path_edit.setText(self.config.get('reduce', 'output_path', 'output'))
-        self.telescope_name_edit.setText(self.config.get('telescope', 'name', 'xinglong216hrs'))
-        self.instrument_edit.setText(self.config.get('telescope', 'instrument', 'hrs'))
         self.detector_gain_spin.setValue(self.config.get_float('telescope.detector', 'gain', 1.0))
         self.detector_readnoise_spin.setValue(self.config.get_float('telescope.detector', 'readnoise', 5.0))
 
@@ -845,8 +830,6 @@ class SettingsDialog(QDialog):
             self.config.set('data', 'exptime_key', self.exptime_key_edit.text())
             self.config.set('data', 'direction', self.direction_combo.currentText())
             self.config.set('reduce', 'output_path', self.output_path_edit.text())
-            self.config.set('telescope', 'name', self.telescope_name_edit.text())
-            self.config.set('telescope', 'instrument', self.instrument_edit.text())
             self.config.set('telescope.detector', 'gain', str(self.detector_gain_spin.value()))
             self.config.set('telescope.detector', 'readnoise', str(self.detector_readnoise_spin.value()))
 

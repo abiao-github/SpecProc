@@ -124,15 +124,20 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet,
     for aperture_id in spectra_set.get_orders():
         spec = spectra_set.get_spectrum(aperture_id)
 
+        # Ensure arrays are floating-point so NaN padding is always valid.
+        wl_arr = np.asarray(spec.wavelength, dtype=np.float64)
+        fl_arr = np.asarray(spec.flux, dtype=np.float64)
+
         # Pad arrays to same length
-        wl = np.pad(spec.wavelength, (0, max_pixels - len(spec.wavelength)), constant_values=np.nan)
-        fl = np.pad(spec.flux, (0, max_pixels - len(spec.flux)), constant_values=np.nan)
+        wl = np.pad(wl_arr, (0, max_pixels - len(wl_arr)), constant_values=np.nan)
+        fl = np.pad(fl_arr, (0, max_pixels - len(fl_arr)), constant_values=np.nan)
 
         cols.append(fits.Column(name=f'WAV_{aperture_id:02d}', format='D', array=wl))
         cols.append(fits.Column(name=f'FLUX_{aperture_id:02d}', format='D', array=fl))
 
         if spec.error is not None:
-            err = np.pad(spec.error, (0, max_pixels - len(spec.error)), constant_values=np.nan)
+            err_arr = np.asarray(spec.error, dtype=np.float64)
+            err = np.pad(err_arr, (0, max_pixels - len(err_arr)), constant_values=np.nan)
             cols.append(fits.Column(name=f'ERR_{aperture_id:02d}', format='D', array=err))
 
     coldefs = fits.ColDefs(cols)

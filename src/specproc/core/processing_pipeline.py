@@ -71,7 +71,7 @@ class ProcessingPipeline:
             List of overscan-corrected image paths
         """
         logger.info("=" * 50)
-        logger.info("STEP 1: OVERSCAN CORRECTION")
+        logger.info("STEP 1: BASIC PRE-PROCESSING (OVERSCAN)")
         logger.info("=" * 50)
 
         self._report_progress(0.01, "Overscan Correction")
@@ -257,14 +257,10 @@ class ProcessingPipeline:
         Returns:
             WaveCalib object
         """
-        logger.info("=" * 50)
-        logger.info("STAGE 4: WAVELENGTH CALIBRATION (Calibration Frame)")
-        logger.info("=" * 50)
-
         self._report_progress(0.30, "Wavelength Calibration")
 
         try:
-            logger.info(f"Extracting ThAr lamp spectrum from {calib_filename} ...")
+            logger.info(f"Building wavelength solution from calibration frame: {Path(calib_filename).name}")
             lamp_img, _ = read_fits_image(calib_filename)
             calib_name = Path(calib_filename).stem
             
@@ -297,7 +293,7 @@ class ProcessingPipeline:
             self.state.wavelength_done = True
 
             self._report_progress(0.30, "Wavelength Calibration Complete")
-            logger.info("✓ Wavelength calibration stage complete")
+            logger.info(f"✓ Wavelength solution ready: {calib_name}")
 
             return wave_calib
 
@@ -322,10 +318,6 @@ class ProcessingPipeline:
         Returns:
             SpectraSet with wavelength-calibrated spectra
         """
-        logger.info("=" * 50)
-        logger.info(f"STEP 7: WAVELENGTH CALIBRATION ({science_name} - {method})")
-        logger.info("=" * 50)
-
         self._report_progress(0.82, "Applying Wavelength Calibration")
 
         try:
@@ -377,7 +369,10 @@ class ProcessingPipeline:
                                         id_label="Order")
 
             self._report_progress(0.88, "Wavelength Calibration Complete")
-            logger.info(f"✓ Wavelength calibration applied to {len(calibrated_spectra.spectra)} spectra")
+            logger.info(
+                f"Applied wavelength calibration: target={science_name}, method={method}, "
+                f"orders={len(calibrated_spectra.spectra)}"
+            )
 
             return calibrated_spectra
 
@@ -803,11 +798,36 @@ class ProcessingPipeline:
             # Step 2: Bias subtraction
             master_bias = self.stage_bias_correction(bias_filenames_corr)
 
-            # Apply bias to flat/calib first.
+            # Apply bias to science/flat/calib frames.
+            science_filenames_bias = self._apply_master_bias_to_files(
+                science_corrected_files, master_bias, 'science'
+            )
+            if science_filenames_bias:
+                science_corrected_files = science_filenames_bias
+
             flat_filenames_bias = self._apply_master_bias_to_files(flat_filenames_corr, master_bias, 'flat')
             calib_corrected = self._apply_master_bias_to_files(calib_filenames_corr, master_bias, 'calib')
             if calib_corrected:
                 calib_filenames_corr = calib_corrected
+
+            # Optional Step 1 sub-step: cosmic-ray removal on science frames.
+            science_pre_flat_files = science_corrected_files
+            if self.config.get_bool('reduce', 'cosmic_enabled', True):
+                self._report_progress(0.20, "Cosmic Ray Correction")
+                cosmic_kwargs = {
+                    'cosmic_sigclip': self.config.get_float('reduce', 'cosmic_sigclip', 5.0),
+                    'cosmic_objlim': self.config.get_float('reduce', 'cosmic_objlim', 5.0),
+                    'cosmic_gain': self.config.get_float('reduce', 'cosmic_gain', 1.0),
+                    'cosmic_readnoise': self.config.get_float('reduce', 'cosmic_readnoise', 5.0),
+                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
+                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                }
+                science_pre_flat_files = process_cosmic_stage(
+                    science_corrected_files,
+                    output_dir_base=self.config.get_output_path(),
+                    output_subdir='step1_basic/cosmic_corrected',
+                    **cosmic_kwargs,
+                )
 
             # Determine which flats to use for master flat:
             # If overscan/bias correction was run (i.e. flat_filenames_bias exists and is not empty), use those;
@@ -879,7 +899,7 @@ class ProcessingPipeline:
 
             self._report_progress(0.50, "Step 3: Science Scattered Light")
             science_scatter_files = []
-            for sci_file in science_corrected_files:
+            for sci_file in science_pre_flat_files:
                 sci_img, sci_header = read_fits_image(sci_file)
                 sci_name = Path(sci_file).stem
                 sci_bg = process_background_stage(
@@ -1050,6 +1070,9 @@ class ProcessingPipeline:
 
             # Step 7: Wavelength Calibration
             self._report_progress(0.90, "Wavelength Calibration")
+            logger.info("=" * 50)
+            logger.info("STEP 7: WAVELENGTH CALIBRATION")
+            logger.info("=" * 50)
             
             import os
             from astropy.time import Time
@@ -1088,7 +1111,7 @@ class ProcessingPipeline:
                 target_time = get_file_time(target_file)
                 closest_calib = min(calibrations, key=lambda x: abs(x[0] - target_time))
                 wave_calib = closest_calib[1]
-                logger.info(f"Using calibration {closest_calib[2]} for {target_name} (closest in time)")
+                logger.info(f"Using calibration {closest_calib[2]} for target {target_name} (closest in time)")
 
                 calib_opt = None
                 for method in ['sum', 'optimal']:

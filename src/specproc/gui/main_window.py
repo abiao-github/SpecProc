@@ -9,6 +9,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import List, Optional
+import time
 import json
 import numpy as np
 
@@ -752,6 +753,15 @@ class MainWindow(QMainWindow):
 
         # Total images that will be processed (all images go through overscan)
         total_imgs = len(science_files) + len(self.bias_files) + len(self.flat_files) + calib_count
+        
+        # Calculate total data size
+        self.processing_total_size_bytes = 0
+        all_files_to_process = science_files + self.bias_files + self.flat_files + calib_files
+        for f_path in all_files_to_process:
+            try:
+                self.processing_total_size_bytes += Path(f_path).stat().st_size
+            except Exception as e:
+                logger.warning(f"Could not get size of file {f_path}: {e}")
 
         # Process each science image
         self.log_text.append("=" * 60)
@@ -759,6 +769,7 @@ class MainWindow(QMainWindow):
         self.log_text.append(f"Total images to be processed: {total_imgs} (bias: {len(self.bias_files)}, flat: {len(self.flat_files)}, calib: {calib_count}, science: {len(science_files)})")
         self.log_text.append("=" * 60)
 
+        self.processing_start_time = time.time()
         self.worker_thread = ProcessingWorker(
             self.pipeline,
             science_files,
@@ -910,6 +921,17 @@ class MainWindow(QMainWindow):
             total_imgs = len(science_files) + len(self.bias_files) + len(self.flat_files) + calib_count
         else:
             total_imgs = len(science_files)
+
+        # Calculate total data size for processing statistics
+        calib_files_list = list(self.calib_file) if isinstance(self.calib_file, list) else ([self.calib_file] if self.calib_file else [])
+        all_input_files = science_files + self.bias_files + self.flat_files + calib_files_list
+        self.processing_total_size_bytes = 0
+        for f_path in all_input_files:
+            try:
+                self.processing_total_size_bytes += Path(f_path).stat().st_size
+            except Exception as e:
+                logger.warning(f"Could not get size of file {f_path}: {e}")
+        self.processing_start_time = time.time()
 
         # Disable controls
         self.run_all_btn.setEnabled(False)
@@ -1167,6 +1189,68 @@ class MainWindow(QMainWindow):
             self._apertures = apertures
             self.processing_state['stage_2_completed'] = True
 
+            # Decoupled model flow: only build flat profiles in Step 2 when Step 3 is not selected.
+            if "stage_2" not in selected_stages and flat_field is not None and apertures is not None:
+                try:
+                    from specproc.core.flat_correction import FlatCorrectionModelBuilder
+                    from specproc.utils.fits_io import write_fits_image
+                    from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                    import pickle
+
+                    self.log_text.append("  Step 3 not selected: building blaze/cross profiles from Step 2 MasterFlat...")
+
+                    flat_source = np.clip(flat_field.flat_data.astype(np.float32), 1e-6, None)
+                    processor = FlatCorrectionModelBuilder()
+                    processor.flat_data = flat_field.flat_data
+                    processor.flat_mask = flat_field.flat_mask
+
+                    flat_sens, blaze_profiles, cross_profiles, smoothed_model, pixel_flat, illum = (
+                        processor.build_order_response_map(
+                            apertures,
+                            source_image=flat_source,
+                            blaze_smooth_factor=self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
+                            width_smooth_window=self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+                            profile_bin_step=self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+                            n_profile_segments=self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+                            profile_smooth_sigma=self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+                            pixel_flat_min=self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+                            pixel_flat_max=self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+                            fringe_orders=self.config.get_int('reduce.flat', 'fringe_orders', 20),
+                        )
+                    )
+
+                    flat_field.flat_sens = flat_sens
+                    flat_field.blaze_profiles = blaze_profiles
+                    flat_field.cross_profiles = cross_profiles
+                    flat_field.smoothed_model = smoothed_model
+                    flat_field.pixel_flat = pixel_flat
+                    flat_field.illumination_flat = illum
+                    self._flat_field = flat_field
+                    self.pipeline.state.flat_field = flat_field
+
+                    step2_dir = Path(self.config.get_output_path()) / 'step2_trace'
+                    step2_dir.mkdir(parents=True, exist_ok=True)
+                    with open(step2_dir / 'blaze_profiles.pkl', 'wb') as fb:
+                        pickle.dump(blaze_profiles, fb)
+                    with open(step2_dir / 'cross_profiles.pkl', 'wb') as fc:
+                        pickle.dump(cross_profiles, fc)
+                    if smoothed_model is not None:
+                        write_fits_image(str(step2_dir / 'model_flat_2d.fits'), smoothed_model.astype('float32'), dtype='float32')
+                        write_fits_image(str(step2_dir / 'flat_smoothed_model.fits'), smoothed_model.astype('float32'), dtype='float32')
+                    if pixel_flat is not None:
+                        write_fits_image(str(step2_dir / 'flat_pixel_2d.fits'), pixel_flat.astype('float32'), dtype='float32')
+
+                    if self.config.get_bool('reduce', 'save_plots', True):
+                        fig_format = self.config.get('reduce', 'fig_format', 'png')
+                        if smoothed_model is not None:
+                            plot_2d_image_to_file(smoothed_model, str(step2_dir / f'flat_smoothed_model.{fig_format}'), 'Reconstructed 2D Flat Model (Step 2)')
+                        if pixel_flat is not None:
+                            plot_2d_image_to_file(pixel_flat, str(step2_dir / f'flat_pixel_2d.{fig_format}'), 'Pixel-to-Pixel Flat (Step 2)', vmin=0.85, vmax=1.15)
+
+                    self.log_text.append("  ✓ Saved flat model products to step2_trace (blaze/cross/model/pixel-flat + diagnostics)")
+                except Exception as e:
+                    self.log_text.append(f"  ! Failed to build Step 2 flat model products: {e}")
+
         # Attempt to load flat_field and apertures if needed by downstream stages
         needs_flat = any(s in selected_stages for s in ["stage_2", "stage_3", "stage_4", "stage_5"])
         if needs_flat:
@@ -1216,24 +1300,59 @@ class MainWindow(QMainWindow):
                         )
                         apertures = loaded_apertures
                         
-                        # Load blaze profiles from Step 4
-                        blaze_pkl = output_dir / 'step4_flat_corrected' / 'blaze_profiles.pkl'
-                        if blaze_pkl.exists():
-                            try:
-                                import pickle
-                                with open(blaze_pkl, 'rb') as fb:
-                                    flat_field.blaze_profiles = pickle.load(fb)
-                            except Exception as e:
-                                self.log_text.append(f"  ! Failed to load blaze_profiles.pkl: {e}")
+                        # Load decoupled flat-model products.
+                        # Priority: Step 3 -> Step 2 -> legacy Step 4 outputs.
+                        model_dirs = [
+                            output_dir / 'step3_scatterlight',
+                            output_dir / 'step2_trace',
+                            output_dir / 'step4_flat_corrected',
+                        ]
+                        loaded_model_dir = None
+                        for model_dir in model_dirs:
+                            blaze_pkl = model_dir / 'blaze_profiles.pkl'
+                            if blaze_pkl.exists():
+                                try:
+                                    import pickle
+                                    with open(blaze_pkl, 'rb') as fb:
+                                        flat_field.blaze_profiles = pickle.load(fb)
+                                    loaded_model_dir = model_dir.name
+                                    break
+                                except Exception as e:
+                                    self.log_text.append(f"  ! Failed to load {blaze_pkl.name} from {model_dir.name}: {e}")
 
-                        # Load 2D smoothed model from Step 4 for True Real-Space Optimal Extraction
-                        model_2d_path = output_dir / 'step4_flat_corrected' / 'model_flat_2d.fits'
-                        if model_2d_path.exists():
-                            try:
-                                model_img, _ = read_fits_image(str(model_2d_path))
-                                flat_field.smoothed_model = model_img
-                            except Exception as e:
-                                self.log_text.append(f"  ! Failed to load model_flat_2d.fits: {e}")
+                        for model_dir in model_dirs:
+                            cross_pkl = model_dir / 'cross_profiles.pkl'
+                            if cross_pkl.exists():
+                                try:
+                                    import pickle
+                                    with open(cross_pkl, 'rb') as fb:
+                                        flat_field.cross_profiles = pickle.load(fb)
+                                    break
+                                except Exception as e:
+                                    self.log_text.append(f"  ! Failed to load {cross_pkl.name} from {model_dir.name}: {e}")
+
+                        for model_dir in model_dirs:
+                            model_2d_path = model_dir / 'model_flat_2d.fits'
+                            if model_2d_path.exists():
+                                try:
+                                    model_img, _ = read_fits_image(str(model_2d_path))
+                                    flat_field.smoothed_model = model_img
+                                    break
+                                except Exception as e:
+                                    self.log_text.append(f"  ! Failed to load {model_2d_path.name} from {model_dir.name}: {e}")
+
+                        for model_dir in model_dirs:
+                            pixel_flat_path = model_dir / 'flat_pixel_2d.fits'
+                            if pixel_flat_path.exists():
+                                try:
+                                    pf_img, _ = read_fits_image(str(pixel_flat_path))
+                                    flat_field.pixel_flat = pf_img
+                                    break
+                                except Exception as e:
+                                    self.log_text.append(f"  ! Failed to load {pixel_flat_path.name} from {model_dir.name}: {e}")
+
+                        if loaded_model_dir is not None:
+                            self.log_text.append(f"  ✓ Loaded blaze profiles from {loaded_model_dir}")
 
                         self._flat_field = flat_field
                         self._apertures = apertures
@@ -1341,6 +1460,55 @@ class MainWindow(QMainWindow):
                         
                     write_fits_image(str(out_dir / 'MasterFlat.fits'), flat_clean.astype('float32'), header=flat_header, dtype='float32')
                     self.log_text.append(f"  ✓ Master Flat scattered light subtraction complete.")
+
+                    # Decoupled model flow: when Step 3 is selected, build profiles here (not in Step 2/4).
+                    from specproc.core.flat_correction import FlatCorrectionModelBuilder
+                    from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                    import pickle
+
+                    self.log_text.append("  Building blaze/cross profiles from Step 3 MasterFlat...")
+                    processor = FlatCorrectionModelBuilder()
+                    processor.flat_data = flat_field.flat_data
+                    processor.flat_mask = flat_field.flat_mask
+
+                    flat_sens, blaze_profiles, cross_profiles, smoothed_model, pixel_flat, illum = (
+                        processor.build_order_response_map(
+                            apertures,
+                            source_image=flat_clean,
+                            blaze_smooth_factor=self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
+                            width_smooth_window=self.config.get_int('reduce.flat', 'width_smooth_window', 41),
+                            profile_bin_step=self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
+                            n_profile_segments=self.config.get_int('reduce.flat', 'n_profile_segments', 100),
+                            profile_smooth_sigma=self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
+                            pixel_flat_min=self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
+                            pixel_flat_max=self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
+                            fringe_orders=self.config.get_int('reduce.flat', 'fringe_orders', 20),
+                        )
+                    )
+
+                    flat_field.flat_sens = flat_sens
+                    flat_field.blaze_profiles = blaze_profiles
+                    flat_field.cross_profiles = cross_profiles
+                    flat_field.smoothed_model = smoothed_model
+                    flat_field.pixel_flat = pixel_flat
+                    flat_field.illumination_flat = illum
+                    self._flat_field = flat_field
+                    self.pipeline.state.flat_field = flat_field
+
+                    with open(out_dir / 'blaze_profiles.pkl', 'wb') as fb:
+                        pickle.dump(blaze_profiles, fb)
+                    with open(out_dir / 'cross_profiles.pkl', 'wb') as fc:
+                        pickle.dump(cross_profiles, fc)
+                    write_fits_image(str(out_dir / 'model_flat_2d.fits'), smoothed_model.astype('float32'), dtype='float32')
+                    write_fits_image(str(out_dir / 'flat_smoothed_model.fits'), smoothed_model.astype('float32'), dtype='float32')
+                    write_fits_image(str(out_dir / 'flat_pixel_2d.fits'), pixel_flat.astype('float32'), dtype='float32')
+                    if self.config.get_bool('reduce', 'save_plots', True):
+                        fig_format = self.config.get('reduce', 'fig_format', 'png')
+                        plot_2d_image_to_file(smoothed_model, str(out_dir / f'flat_smoothed_model.{fig_format}'), 'Reconstructed 2D Flat Model (Step 3)')
+                        plot_2d_image_to_file(pixel_flat, str(out_dir / f'flat_pixel_2d.{fig_format}'), 'Pixel-to-Pixel Flat (Step 3)', vmin=0.85, vmax=1.15)
+
+                    self.log_text.append("  ✓ Saved flat model products to step3_scatterlight (blaze/cross/model/pixel-flat + diagnostics)")
+
                     self.processing_state['stage_3_completed'] = True
                     
                 except Exception as e:
@@ -1443,85 +1611,91 @@ class MainWindow(QMainWindow):
             if flat_field is None:
                 self.log_text.append("  ! Step 4: no MasterFlat available – Step 2 must run first")
             else:
-                from specproc.core.flat_correction import process_flat_correction_stage
-                # --- Build the flat model ONCE using the cleaned master flat ---
-                self.log_text.append("  Building 2D flat-field model from MasterFlat...")
-                
-                # Get cleaned master flat
-                flat_clean = flat_field.flat_data
-                if flat_field.scattered_light is not None:
-                    flat_clean = np.clip(
-                        flat_field.flat_data.astype(np.float32) - flat_field.scattered_light.astype(np.float32),
-                        1e-6,
-                        None,
-                    )
-
-                flat_corr_kwargs = {
-                    'blaze_smooth_factor': self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0),
-                    'width_smooth_window': self.config.get_int('reduce.flat', 'width_smooth_window', 41),
-                    'profile_bin_step': self.config.get_float('reduce.flat', 'profile_bin_step', 0.01),
-                    'n_profile_segments': self.config.get_int('reduce.flat', 'n_profile_segments', 100),
-                    'profile_smooth_sigma': self.config.get_float('reduce.flat', 'profile_smooth_sigma', 6.0),
-                    'pixel_flat_min': self.config.get_float('reduce.flat', 'pixel_flat_min', 0.5),
-                    'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
-                    'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
-                    'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
-                }
-                
-                # This call builds the model and saves all diagnostics.
-                # The flat_field object is updated in-place.
-                _ = process_flat_correction_stage(
-                    science_image=flat_clean,
-                    flat_field=flat_field,
-                    output_dir_base=self.config.get_output_path(),
-                    apertures=apertures,
-                    science_name="MasterFlat", # Use a specific name for diagnostics
-                    **flat_corr_kwargs
-                )
-                self.log_text.append("  ✓ 2D flat-field model built and diagnostics saved.")
-                self._flat_field = flat_field # Update cached version
-                self.pipeline.state.flat_field = flat_field
-
-                # --- Apply the correction map to all science and calib frames ---
                 flat_corr_map = flat_field.pixel_flat
                 if flat_corr_map is None:
-                    raise RuntimeError("Failed to build pixel_flat map in Step 4.")
+                    self.log_text.append("  ! Step 4: no prebuilt pixel-flat model found. Run Step 3 first, or run Step 2 when Step 3 is not selected.")
+                else:
+                    self.log_text.append("  Using prebuilt 2D flat-field model to correct science frames...")
 
-                safe_flat = flat_corr_map.astype(np.float32)
-                bad = (~np.isfinite(safe_flat)) | (safe_flat <= 0.05)
-                if np.any(bad):
-                    safe_flat = safe_flat.copy()
-                    safe_flat[bad] = 1.0
+                    safe_flat = flat_corr_map.astype(np.float32)
+                    bad = (~np.isfinite(safe_flat)) | (safe_flat <= 0.05)
+                    if np.any(bad):
+                        safe_flat = safe_flat.copy()
+                        safe_flat[bad] = 1.0
 
-                out_dir_f = Path(self.config.get_output_path()) / 'step4_flat_corrected'
-                out_dir_f.mkdir(parents=True, exist_ok=True)
+                    out_dir_f = Path(self.config.get_output_path()) / 'step4_flat_corrected'
+                    out_dir_f.mkdir(parents=True, exist_ok=True)
 
-                # Apply to science files
-                new_science_files = []
-                self.log_text.append("  Applying 2D flat correction to science frames...")
-                for sci_file in current_science_files:
+                    # Export flat-model artefacts to Step 4 output for compatibility with previous workflow.
                     try:
-                        sci_img, sci_header = read_fits_image(sci_file)
-                        sci_name = Path(sci_file).stem
-                        corrected = sci_img.astype(np.float32) / safe_flat
-                        
-                        out_path = out_dir_f / Path(sci_file).name
-                        if sci_header is not None:
-                            sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
-                        write_fits_image(str(out_path), corrected, header=sci_header, dtype='float32')
-                        
-                        if self.config.get_bool('reduce', 'save_plots', True):
-                            from specproc.plotting.spectra_plotter import plot_2d_image_to_file
-                            fig_format = self.config.get('reduce', 'fig_format', 'png')
-                            plot_2d_image_to_file(corrected, str(out_dir_f / f"{sci_name}_flat2d_corrected.{fig_format}"), f"Science After 2D Flat Correction: {sci_name}")
+                        import pickle
+                        from specproc.plotting.spectra_plotter import plot_2d_image_to_file
 
-                        new_science_files.append(str(out_path))
-                        self.log_text.append(f"    ✓ Corrected {sci_name}")
+                        if flat_field.blaze_profiles:
+                            with open(out_dir_f / 'blaze_profiles.pkl', 'wb') as fb:
+                                pickle.dump(flat_field.blaze_profiles, fb)
+                        if getattr(flat_field, 'cross_profiles', None):
+                            with open(out_dir_f / 'cross_profiles.pkl', 'wb') as fc:
+                                pickle.dump(flat_field.cross_profiles, fc)
+
+                        if getattr(flat_field, 'smoothed_model', None) is not None:
+                            write_fits_image(str(out_dir_f / 'model_flat_2d.fits'), flat_field.smoothed_model.astype('float32'), dtype='float32')
+                            write_fits_image(str(out_dir_f / 'flat_smoothed_model.fits'), flat_field.smoothed_model.astype('float32'), dtype='float32')
+                        write_fits_image(str(out_dir_f / 'flat_pixel_2d.fits'), safe_flat.astype('float32'), dtype='float32')
+
+                        # Save corrected MasterFlat for compatibility with earlier Step 4 outputs.
+                        mf_candidates = [
+                            Path(self.config.get_output_path()) / 'step3_scatterlight' / 'MasterFlat.fits',
+                            Path(self.config.get_output_path()) / 'step2_trace' / 'MasterFlat.fits',
+                        ]
+                        mf_source = next((p for p in mf_candidates if p.exists()), None)
+                        if mf_source is not None:
+                            mf_img, mf_header = read_fits_image(str(mf_source))
+                            mf_corr = mf_img.astype(np.float32) / safe_flat
+                            if mf_header is not None:
+                                mf_header['FLATCOR'] = (True, '2D pixel flat correction applied')
+                            write_fits_image(str(out_dir_f / 'MasterFlat.fits'), mf_corr, header=mf_header, dtype='float32')
+
+                        if self.config.get_bool('reduce', 'save_plots', True):
+                            fig_format = self.config.get('reduce', 'fig_format', 'png')
+                            if getattr(flat_field, 'smoothed_model', None) is not None:
+                                plot_2d_image_to_file(flat_field.smoothed_model, str(out_dir_f / f'flat_smoothed_model.{fig_format}'), 'Reconstructed 2D Flat Model')
+                            plot_2d_image_to_file(safe_flat, str(out_dir_f / f'flat_pixel_2d.{fig_format}'), 'Pixel-to-Pixel Flat', vmin=0.85, vmax=1.15)
+                            if mf_source is not None:
+                                plot_2d_image_to_file(mf_corr, str(out_dir_f / f'MasterFlat.{fig_format}'), 'Master Flat After 2D Flat Correction')
                     except Exception as e:
-                        self.log_text.append(f"    ✗ Failed to correct {Path(sci_file).name}: {e}")
-                        new_science_files.append(sci_file) # Keep original if failed
-                current_science_files = new_science_files
+                        self.log_text.append(f"  ! Failed to export Step 4 flat model diagnostics: {e}")
+
+                    # Apply to science files
+                    new_science_files = []
+                    self.log_text.append("  Applying 2D flat correction to science frames...")
+                    for sci_file in current_science_files:
+                        try:
+                            sci_img, sci_header = read_fits_image(sci_file)
+                            sci_name = Path(sci_file).stem
+                            corrected = sci_img.astype(np.float32) / safe_flat
+                            
+                            out_path = out_dir_f / Path(sci_file).name
+                            if sci_header is not None:
+                                sci_header['FLATCOR'] = (True, '2D pixel flat correction applied')
+                            write_fits_image(str(out_path), corrected, header=sci_header, dtype='float32')
+                            
+                            if self.config.get_bool('reduce', 'save_plots', True):
+                                from specproc.plotting.spectra_plotter import plot_2d_image_to_file
+                                fig_format = self.config.get('reduce', 'fig_format', 'png')
+                                plot_2d_image_to_file(corrected, str(out_dir_f / f"{sci_name}_flat2d_corrected.{fig_format}"), f"Science After 2D Flat Correction: {sci_name}")
+
+                            new_science_files.append(str(out_path))
+                            self.log_text.append(f"    ✓ Corrected {sci_name}")
+                        except Exception as e:
+                            self.log_text.append(f"    ✗ Failed to correct {Path(sci_file).name}: {e}")
+                            new_science_files.append(sci_file) # Keep original if failed
+                    current_science_files = new_science_files
+        else:
+            self.log_text.append("\n============================================================")
+            self.log_text.append("STEP 4: 2D FLAT-FIELD CORRECTION")
+            self.log_text.append("  Skipped (step not selected)")
+            self.log_text.append("============================================================")
 
         # STAGE 4: 1D Extraction
         if "stage_4" in selected_stages:
@@ -1546,17 +1720,25 @@ class MainWindow(QMainWindow):
                     'fig_format': self.config.get('reduce', 'fig_format', 'png'),
                 }
 
-                # Extract MasterFlat
-                mf_path = Path(self.config.get_output_path()) / 'step4_flat_corrected' / 'MasterFlat.fits'
-                if mf_path.exists():
+                # Extract MasterFlat (fallback to Step 3/2 outputs when Step 4 is skipped)
+                output_base = Path(self.config.get_output_path())
+                mf_candidates = [
+                    output_base / 'step4_flat_corrected' / 'MasterFlat.fits',
+                    output_base / 'step3_scatterlight' / 'MasterFlat.fits',
+                    output_base / 'step2_trace' / 'MasterFlat.fits',
+                ]
+                mf_path = next((p for p in mf_candidates if p.exists()), None)
+                if mf_path is not None:
                     try:
                         mf_img, _ = read_fits_image(str(mf_path))
                         mf_name = "MasterFlat"
                         process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{mf_name}_1D_sum.fits', plot_prefix=f'{mf_name}_1D_sum', **extract_kwargs)
                         process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{mf_name}_1D_optimal.fits', plot_prefix=f'{mf_name}_1D_optimal', **extract_kwargs)
-                        self.log_text.append(f"  ✓ Extracted MasterFlat 1D spectra (sum & optimal)")
+                        self.log_text.append(f"  ✓ Extracted MasterFlat 1D spectra (sum & optimal) from {mf_path.parent.name}")
                     except Exception as e:
                         self.log_text.append(f"  ! Failed to extract MasterFlat: {e}")
+                else:
+                    self.log_text.append("  ! MasterFlat not found in step4_flat_corrected/step3_scatterlight/step2_trace")
 
                 # Extract Calib
                 for calib_f in current_calib_files:
@@ -1590,9 +1772,32 @@ class MainWindow(QMainWindow):
             progress = (current_stage / total_stages) * 100
             self.progress_bar.setValue(int(progress))
             self.stage_label.setText("De-blazing")
-            
+
+            if flat_field is not None and not flat_field.blaze_profiles:
+                output_base = Path(self.config.get_output_path())
+
+                # Decoupled flow: prefer profiles generated in Step 3, then Step 2,
+                # with legacy Step 4 outputs as the last fallback.
+                model_dirs = [
+                    output_base / 'step3_scatterlight',
+                    output_base / 'step2_trace',
+                    output_base / 'step4_flat_corrected',
+                ]
+                for model_dir in model_dirs:
+                    blaze_pkl = model_dir / 'blaze_profiles.pkl'
+                    if not blaze_pkl.exists():
+                        continue
+                    try:
+                        import pickle
+                        with open(blaze_pkl, 'rb') as fb:
+                            flat_field.blaze_profiles = pickle.load(fb)
+                        self.log_text.append(f"  ✓ Loaded blaze profiles from {model_dir.name}")
+                        break
+                    except Exception as e:
+                        self.log_text.append(f"  ! Failed to load {blaze_pkl.name} from {model_dir.name}: {e}")
+
             if flat_field is None or not flat_field.blaze_profiles:
-                self.log_text.append("  ! Step 6: no blaze function available – Step 4 must run first")
+                self.log_text.append("  ! Step 6: no blaze function available (run Step 3, or run Step 2 when Step 3 is not selected)")
             else:
                 self.log_text.append("\n" + "=" * 60)
                 self.log_text.append("STEP 6: DE-BLAZING")
@@ -1828,7 +2033,23 @@ class MainWindow(QMainWindow):
         self.log_text.append("\n============================================================")
         self.log_text.append(f"✓ {len(current_science_files)} science images processed through selected steps.")
         self.log_text.append("============================================================")
-        
+
+        # Processing summary statistics
+        if hasattr(self, 'processing_start_time') and hasattr(self, 'processing_total_size_bytes'):
+            total_time = time.time() - self.processing_start_time
+            total_size_mb = self.processing_total_size_bytes / (1024 * 1024)
+            processing_speed_mb_per_min = (total_size_mb / total_time) * 60 if total_time > 0 else 0
+            summary_message = (
+                f"\nProcessing Summary\n"
+                f"------------------------------------------------------------\n"
+                f"  Total data processed: {total_size_mb:.2f} MB\n"
+                f"  Total processing time: {total_time:.2f} seconds\n"
+                f"  Average processing speed: {processing_speed_mb_per_min:.2f} MB/min\n"
+                f"------------------------------------------------------------"
+            )
+            self.log_text.append(summary_message)
+            logger.info(summary_message)
+
         self.progress_bar.setValue(100)
         self.stage_label.setText("Completed")
         self.run_all_btn.setEnabled(True)
@@ -1880,7 +2101,25 @@ class MainWindow(QMainWindow):
 
         if success:
             if img_idx == total_science - 1:
-                # Last science image processed
+                # Last science image processed, so log summary
+                end_time = time.time()
+                if hasattr(self, 'processing_start_time') and hasattr(self, 'processing_total_size_bytes'):
+                    total_time = end_time - self.processing_start_time
+                    total_size_mb = self.processing_total_size_bytes / (1024 * 1024)
+                    # User requested MB/min
+                    processing_speed_mb_per_min = (total_size_mb / total_time) * 60 if total_time > 0 else 0
+
+                    summary_message = (
+                        f"\nProcessing Summary\n"
+                        f"------------------------------------------------------------\n"
+                        f"  Total data processed: {total_size_mb:.2f} MB\n"
+                        f"  Total processing time: {total_time:.2f} seconds\n"
+                        f"  Average processing speed: {processing_speed_mb_per_min:.2f} MB/min\n"
+                        f"------------------------------------------------------------"
+                    )
+                    self.log_text.append(summary_message)
+                    logger.info(summary_message)
+                
                 self.progress_bar.setValue(100)
                 self.run_all_btn.setEnabled(True)
                 self.stop_btn.setEnabled(False)

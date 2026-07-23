@@ -76,6 +76,7 @@ class OverscanCorrectionStage:
         self.trim_y_end = trim_y_end
         self.save_plots = save_plots
         self.fig_format = fig_format
+        self.has_overscan_config = False
 
         self.corrector = self._create_corrector()
 
@@ -88,6 +89,7 @@ class OverscanCorrectionStage:
             overscan_config['left'] = None
             overscan_config['top'] = None
             overscan_config['bottom'] = None
+            self.has_overscan_config = True
             logger.info(f"Simplified overscan configuration: start_column={self.overscan_start_column} (1-based)")
         else:
             regions = {
@@ -99,6 +101,7 @@ class OverscanCorrectionStage:
             for region, (start, end) in regions.items():
                 if start >= 0 and end > start:
                     overscan_config[region] = (start, end)
+                    self.has_overscan_config = True
                 else:
                     overscan_config[region] = None
 
@@ -107,17 +110,12 @@ class OverscanCorrectionStage:
 
     def correct_image(self, image: np.ndarray, trim: bool = True) -> np.ndarray:
         """Correct single image for overscan."""
-        has_overscan = self.overscan_start_column > 0
-        logger.info(f"Overscan start column: {self.overscan_start_column}, has_overscan: {has_overscan}")
+        has_overscan = self.has_overscan_config
 
         if not has_overscan:
             logger.info("No overscan region configured, skipping overscan correction")
             return image
 
-        logger.info(
-            f"Overscan correction method: {self.overscan_method}, smooth_window: {self.overscan_smooth_window}, "
-            f"poly_type: {self.overscan_poly_type}, poly_order: {self.overscan_poly_order}"
-        )
         overscan_bias = self.corrector.estimate_overscan_bias(
             image, method=self.overscan_method,
             smooth_window=self.overscan_smooth_window if self.overscan_smooth_window > 0 else None,
@@ -223,10 +221,6 @@ def process_overscan_stage(image_filenames: List[str],
                            save_plots: bool = True,
                            fig_format: str = 'png') -> List[str]:
     """Execute overscan correction for multiple images."""
-    logger.info("=" * 60)
-    logger.info("STAGE 0: OVERSCAN CORRECTION")
-    logger.info("=" * 60)
-
     stage = OverscanCorrectionStage(
         overscan_start_column=overscan_start_column,
         overscan_left_start=overscan_left_start, overscan_left_end=overscan_left_end,
@@ -241,6 +235,17 @@ def process_overscan_stage(image_filenames: List[str],
         trim_y_start=trim_y_start, trim_y_end=trim_y_end,
         save_plots=save_plots,
         fig_format=fig_format
+    )
+
+    if not stage.has_overscan_config:
+        logger.info("No overscan region configured; skipping overscan stage and using original files.")
+        return list(image_filenames)
+
+    logger.info(
+        "Overscan configuration summary: "
+        f"start_column={stage.overscan_start_column}, method={stage.overscan_method}, "
+        f"smooth_window={stage.overscan_smooth_window}, poly_type={stage.overscan_poly_type}, "
+        f"poly_order={stage.overscan_poly_order}"
     )
 
     overscan_path = Path(output_dir_base) / 'step1_basic' / 'overscan_corrected'

@@ -124,7 +124,7 @@ class OverscanCorrector:
         Returns:
             2D overscan bias map
         """
-        logger.info(f"Estimating overscan bias using method: {method}, split_vertically={split_vertically}")
+        logger.debug(f"Estimating overscan bias using method: {method}, split_vertically={split_vertically}")
 
         # Calculate default window size if not provided (1/5 of image height)
         if smooth_window is None:
@@ -140,7 +140,7 @@ class OverscanCorrector:
             height = image.shape[0]
             mid_row = height // 2
             
-            logger.info(f"Splitting image at row {mid_row} (height={height})")
+            logger.debug(f"Splitting image at row {mid_row} (height={height})")
             
             # Process bottom half (numpy top = ds9 bottom)
             image_bottom = image[:mid_row, :]
@@ -316,7 +316,7 @@ class OverscanCorrector:
             'method': 'mean_only',
         }
         
-        logger.info(f"Mean only method: sigma-clipped mean without smoothing")
+        logger.debug("Mean only method: sigma-clipped mean without smoothing")
         return bias_map, overscan_profile
     
     def _mean_savgol_overscan(self, image: np.ndarray,
@@ -393,7 +393,7 @@ class OverscanCorrector:
             'polyorder': polyorder
         }
         
-        logger.info(f"Mean + Savitzky-Golay method: sigma-clipped mean + Savitzky-Golay smoothing (window={window_length}, order={polyorder})")
+        logger.debug(f"Mean + Savitzky-Golay method: sigma-clipped mean + Savitzky-Golay smoothing (window={window_length}, order={polyorder})")
         return bias_map, overscan_profile
     
     def _mean_polynomial_overscan(self, image: np.ndarray,
@@ -488,7 +488,7 @@ class OverscanCorrector:
             'coefficients': coeffs.tolist()
         }
         
-        logger.info(f"Mean + polynomial method: {poly_type} polynomial fitting (order={poly_order})")
+        logger.debug(f"Mean + polynomial method: {poly_type} polynomial fitting (order={poly_order})")
         return bias_map, overscan_profile
 
     def apply_overscan_correction(self, image: np.ndarray,
@@ -556,7 +556,7 @@ class OverscanCorrector:
             y1 = max(y1, y_overscan_end)
 
         trimmed = image[y1:y2, x1:x2]
-        logger.info(f"Image trimmed: {image.shape} → {trimmed.shape}")
+        logger.debug(f"Image trimmed: {image.shape} -> {trimmed.shape}")
 
         return trimmed
 

@@ -448,7 +448,54 @@ specproc --mode cli
 
 # Or with custom config file
 specproc --mode cli --config /path/to/config.cfg
+
+# Or select a packaged telescope profile by name, and process data with it
+specproc --mode cli --config XL216_hrs 20241102_hrs
+
+# Without input data, the named profile is copied to ./specproc.cfg instead
+# of being used directly, so it can be reviewed/customized first
+specproc --config MSTG193_slit
 ```
+
+**Telescope profiles**: SpecProc ships one `default_config_<profile>.cfg` file
+per supported telescope/instrument under `src/specproc/config/` (e.g.
+`XL216_hrs` for the Xinglong 2.16m HRS, `MSTG193_slit` for the Muztagh-Ata
+1.93m slit spectrograph). Passing the profile name to `--config` resolves it
+to that packaged file automatically — no need to type the full path. Run
+`specproc --help` to see the list of available profiles.
+
+**Slit mode** (`[telescope] instrument = slit`, used by `MSTG193_slit`): a
+separate single-aperture pipeline (`core/slit_pipeline.py`) replaces the echelle
+stages: overscan/bias → pixel flat → cosmic rays → star trace + sky subtraction →
+sum/optimal extraction → 1-D wavelength solution. Frame types are taken from file
+names (`frame_type_source = filename`; bias / flat / FeAr / dark, rest = science).
+Run the red and blue cameras separately (one directory each). Wavelength
+calibration needs `[slit] identification_file` (pixel, wavelength rows; candidate
+pixels are written to `step7_wavelength/<lamp frame>_peaks.csv`) or `wave_start`/`wave_end`
+hints; otherwise spectra are saved on a pixel axis.
+
+Slit-mode output layout (same numbering as HRS; steps not needed are omitted):
+`step1_basic/{overscan_corrected,bias_subtracted,cosmic_corrected}`, `step2_trace` (slit trace of the master flat: centre and both edges, plus each
+science frame's trace = flat centre line + a constant star offset; the same trace
+is applied to the science and lamp frames),
+`step4_flat_corrected` (master/pixel flat and flat-fielded images), `step5_extraction`
+(sky-subtracted images and 1-D spectra of the targets, every lamp frame and the master flat,
+all extracted along the master-flat trace), `step7_wavelength`. No scattered-light
+(step3) or de-blazing (step6) directories are created.
+
+**Extraction aperture (slit mode)**: with `[slit] aperture_mode = auto` the spatial FWHM of each
+science frame is measured from the profile stacked along the whole dispersion axis
+(usable for faint targets); the median over frames sets the extraction half-width
+(`aperture_fwhm_factor` × FWHM, default 1.7) and the start of the sky region
+(`sky_fwhm_factor` × FWHM, default 3). If the FWHM cannot be measured the fixed
+`extract_half_width` / `sky_inner_offset` are used; `aperture_mode = fixed` always uses them.
+
+**1-D SNR (slit mode)**: SNR is estimated at 25/50/75 % of the effective spectral
+range (window ±`snr_half_window` px; signal = median flux, noise = standard deviation
+of the residual to a quadratic fit). SNR is a dimensionless ratio, labelled
+`SNR=xx@position`: the position is in pixels before wavelength calibration
+(`step5_extraction/*_spec_pixel.pdf`) and in Å after it (`step7_wavelength/*_spec_wave.pdf`).
+Values are annotated on the plots and stored as `SNRPxx`/`SNRWxx` keywords in the `*_spec.fits` table.
 
 **CLI Workflow**:
 1. Follow prompts to select files

@@ -135,8 +135,13 @@ SpecProc 是一款功能强大、图形化、交互式的自动化光谱处理�
 3.  将您的 Bias、Flat、ThAr、Science 等 FITS 文件全部拷贝到 `raw_data` 目录中。
 4.  （可选但推荐）从 SpecProc 源码包中拷贝默认配置文件到当前工作目录。
     ```bash
-    cp /path/to/SpecProc/src/specproc/default_config.cfg ./specproc.cfg
+    cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
     ```
+    若已知观测数据来自某一特定望远镜/光谱仪（如兴隆 2.16 米 HRS 的 `XL216_hrs`，或慕士塔格 1.93 米狭缝光谱仪的 `MSTG193_slit`），也可以直接让命令行模式生成对应的望远镜配置文件，无需手动拷贝：
+    ```bash
+    specproc --config XL216_hrs
+    ```
+    该命令会将 `src/specproc/config/default_config_XL216_hrs.cfg` 复制为当前目录下的 `specproc.cfg`。可用的望远镜配置名称可通过 `specproc --help` 查看。
 
 ### **2.4 启动软件**
 

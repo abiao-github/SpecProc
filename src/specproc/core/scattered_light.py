@@ -4,6 +4,7 @@ Scattered light subtraction stage of spectral reduction pipeline.
 Estimates and removes inter-order scattered light (stray light) from
 echelle spectrograph CCD images.  Equivalent to IRAF's ``apscatter`` task.
 """
+# 估算并扣除光谱级次间的散射光背景。
 
 import numpy as np
 import logging
@@ -21,15 +22,18 @@ from specproc.utils.fits_io import write_fits_image
 logger = logging.getLogger(__name__)
 
 
+# 负责估算和移除散射光背景
 class BackgroundRemover:
     """Handles background/stray light estimation and correction."""
 
+    # 初始化对象状态
     def __init__(self):
         """
         Initialize background remover.
         """
         self.background_2d = None
 
+    # 通过二维卷积估算散射光背景
     @staticmethod
     def _estimate_background_convolution(image: np.ndarray, order_mask: np.ndarray,
                                          kernel_sigma_x: float = 15.0,
@@ -127,6 +131,7 @@ class BackgroundRemover:
 
         return model
 
+    # 按列样条拟合散射光背景
     @staticmethod
     def _estimate_background_column_spline(image: np.ndarray, order_mask: np.ndarray,
                                            spline_smooth_factor: float = 1.0,
@@ -261,6 +266,7 @@ class BackgroundRemover:
 
         return background
 
+    # 分区估算背景并组合模型
     def _estimate_background_split_halves(self, image: np.ndarray, order_mask: np.ndarray,
                                           order: int, method: str,
                                           smooth_sigma: float, sigma_clip: float,
@@ -370,6 +376,7 @@ class BackgroundRemover:
 
         return background, model_lower, model_upper
 
+# 构建加宽且保留级次谷值的掩膜
 def create_widened_mask(apertures: ApertureSet, flat_data: np.ndarray, margin: int,
                         n_mask_below: int = 0, n_mask_above: int = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list]:
     """
@@ -397,6 +404,7 @@ def create_widened_mask(apertures: ApertureSet, flat_data: np.ndarray, margin: i
         real_hi[i] = ap.get_upper(x_all) + margin
         
     # 2. Extrapolate virtual orders along columns
+    # 沿级次方向外推二维边界数据
     def extrapolate_2d(data_2d, n_extrap, direction='below'):
         if n_ap < 2 or n_extrap <= 0:
             return np.zeros((0, width))
@@ -467,6 +475,7 @@ def create_widened_mask(apertures: ApertureSet, flat_data: np.ndarray, margin: i
     return step3_mask, full_lo, full_hi, full_ids
 
 
+# 执行散射光背景估算与扣除
 def process_background_stage(science_image: np.ndarray,
                              output_dir_base: str,
                              output_subdir: str = 'step3_scatterlight',

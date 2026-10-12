@@ -4,6 +4,7 @@ Main PyQt GUI window for SpecProc application.
 Provides the primary user interface with file management, process control,
 and result visualization.
 """
+# 提供主界面、文件管理和处理流程控制。
 
 import sys
 import logging
@@ -28,12 +29,14 @@ from specproc.core.processing_pipeline import ProcessingPipeline
 logger = logging.getLogger(__name__)
 
 
+# 在线程中执行数据处理流程。
 class ProcessingWorker(QThread):
     """Worker thread for pipeline execution."""
 
     progress_updated = pyqtSignal(float, str)
     execution_complete = pyqtSignal(bool, str)
 
+    # 初始化工作线程。
     def __init__(self, pipeline: ProcessingPipeline, raw_images: List[str],
                  biases: List[str], flats: List[str], calibs: List[str]):
         """
@@ -53,6 +56,7 @@ class ProcessingWorker(QThread):
         self.flats = flats
         self.calibs = calibs
 
+    # 在线程中运行完整处理流程。
     def run(self):
         """Execute pipeline in worker thread."""
         try:
@@ -72,9 +76,11 @@ class ProcessingWorker(QThread):
             self.execution_complete.emit(False, f"Error: {str(e)}")
 
 
+# 管理主界面及数据处理流程。
 class MainWindow(QMainWindow):
     """Main application window."""
 
+    # 初始化工作线程。
     def __init__(self, config: Optional[ConfigManager] = None):
         """
         Initialize main window.
@@ -122,6 +128,7 @@ class MainWindow(QMainWindow):
         # Check overscan configuration and update UI accordingly
         self._update_overscan_checkbox_from_config()
 
+    # 构建主窗口界面。
     def init_ui(self):
         """Initialize user interface."""
         self.setWindowTitle("SpecProc - Spectral Data Reduction")
@@ -151,6 +158,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Ready")
 
+    # 构建文件选择面板。
     def _create_file_panel(self) -> QWidget:
         """Create file management panel."""
         panel = QWidget()
@@ -275,6 +283,7 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    # 构建处理控制面板。
     def _create_process_panel(self) -> QWidget:
         """Create processing control panel."""
         panel = QWidget()
@@ -401,6 +410,7 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    # 构建菜单栏。
     def _create_menu_bar(self):
         """Create menu bar."""
         menubar = self.menuBar()
@@ -420,6 +430,7 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction("About")
         about_action.triggered.connect(self._show_about)
 
+    # 选择偏置帧并加入列表。
     def _select_bias_files(self):
         """Select bias frame files."""
         files, _ = QFileDialog.getOpenFileNames(
@@ -433,6 +444,7 @@ class MainWindow(QMainWindow):
                 self.bias_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} bias frames")
 
+    # 移除选中的偏置帧。
     def _remove_bias_file(self):
         """Remove selected bias file from list."""
         for item in self.bias_list.selectedItems():
@@ -445,6 +457,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"Error removing bias file: {e}")
 
+    # 选择平场帧并加入列表。
     def _select_flat_files(self):
         """Select flat frame files."""
         files, _ = QFileDialog.getOpenFileNames(
@@ -458,6 +471,7 @@ class MainWindow(QMainWindow):
                 self.flat_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} flat frames")
 
+    # 移除选中的平场帧。
     def _remove_flat_file(self):
         """Remove selected flat file from list."""
         for item in self.flat_list.selectedItems():
@@ -470,6 +484,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"Error removing flat file: {e}")
 
+    # 选择波长标定帧并加入列表。
     def _select_calib_files(self):
         """Select wavelength calibration frame(s)."""
         files, _ = QFileDialog.getOpenFileNames(
@@ -487,6 +502,7 @@ class MainWindow(QMainWindow):
                 self.calib_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} calibration frame(s), total: {len(self.calib_file)}")
 
+    # 移除选中的标定帧。
     def _remove_calib_file(self):
         """Remove selected calibration file from list."""
         for item in self.calib_list.selectedItems():
@@ -499,6 +515,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"Error removing calibration file: {e}")
 
+    # 选择科学图像并加入列表。
     def _select_raw_files(self):
         """Select science image file(s)."""
         files, _ = QFileDialog.getOpenFileNames(
@@ -515,6 +532,7 @@ class MainWindow(QMainWindow):
                 self.raw_list.addItem(Path(f).name)
             self.statusBar.showMessage(f"Added {len(files)} science image(s), total: {len(self.raw_files)}")
 
+    # 移除选中的科学图像。
     def _remove_raw_file(self):
         """Remove selected science image from list."""
         for item in self.raw_list.selectedItems():
@@ -527,6 +545,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"Error removing science image: {e}")
     
+    # 重置各处理阶段状态。
     def _reset_processing_state(self):
         """Reset processing state when new files are selected or processing is restarted."""
         # Keep original file paths - don't reset them as they point to raw data
@@ -549,6 +568,7 @@ class MainWindow(QMainWindow):
         }
         self.statusBar.showMessage("Processing state reset")
     
+    # 检查过扫描输出文件状态。
     def _get_overscan_file_status(self) -> tuple:
         """
         Get the status of overscan processed files.
@@ -597,6 +617,7 @@ class MainWindow(QMainWindow):
         
         return existing_files, missing_files
     
+    # 检查指定阶段的输出文件。
     def _check_processed_files_exist(self, stage_id: str) -> bool:
         """
         Check if processed files for a given stage still exist.
@@ -666,6 +687,7 @@ class MainWindow(QMainWindow):
         
         return False  # Stage not completed or no path stored
     
+    # 判断处理阶段是否需要重跑。
     def _should_reprocess_stage(self, stage_id: str) -> tuple:
         """
         Determine if a stage should be reprocessed.
@@ -697,6 +719,7 @@ class MainWindow(QMainWindow):
         # All files exist - always reprocess (overwrite) without asking
         return True, False, True  # Reprocess, no user choice made, force_all
 
+    # 验证输入并启动完整处理流程。
     def _run_full_pipeline(self):
         """Execute full processing pipeline."""
         # Validate inputs
@@ -783,6 +806,7 @@ class MainWindow(QMainWindow):
         )
         self.worker_thread.start()
 
+    # 按所选阶段依次执行处理流程。
     def _run_selected_pipeline(self):
         """Execute only the selected processing steps."""
         # Reset run-scoped cache to avoid reusing stale paths from previous runs.
@@ -953,6 +977,7 @@ class MainWindow(QMainWindow):
         bias_dir = output_dir / 'step1_basic' / 'bias_subtracted'
         cosmic_dir = output_dir / 'step1_basic' / 'cosmic_corrected'
 
+        # 查找文件最新的已处理版本。
         def find_latest_input(raw_file_path, check_cosmic=False, check_bias=False, check_overscan=False):
             """Find the most processed version of a file."""
             raw_name = Path(raw_file_path).name
@@ -1806,6 +1831,7 @@ class MainWindow(QMainWindow):
                 from specproc.core.de_blazing import process_de_blazing_stage
                 from specproc.core.extraction import load_extracted_spectra
                 
+                # 为目标光谱生成去闪耀结果。
                 def do_deblaze(target_name, spectra_obj=None):
                     deblazed_opt = None
                     for method in ['sum', 'optimal']:
@@ -1866,6 +1892,7 @@ class MainWindow(QMainWindow):
                  from astropy.time import Time
                  
                  time_key = self.config.get('data', 'statime_key', 'DATE-OBS')
+                 # 读取文件观测时间或修改时间。
                  def get_file_time(filepath):
                      if not filepath or not Path(filepath).exists(): return 0
                      try:
@@ -2056,18 +2083,21 @@ class MainWindow(QMainWindow):
         self.run_selected_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
+    # 选中全部处理阶段。
     def _select_all_stages(self):
         """Select all processing stages."""
         for checkbox in self.stage_checkboxes.values():
             checkbox.setChecked(True)
         self.statusBar.showMessage("All processing steps selected")
 
+    # 取消选中全部处理阶段。
     def _clear_all_stages(self):
         """Clear all processing stage selections."""
         for checkbox in self.stage_checkboxes.values():
             checkbox.setChecked(False)
         self.statusBar.showMessage("All processing steps cleared")
 
+    # 停止当前处理任务。
     def _stop_processing(self):
         """Stop processing."""
         if self.worker_thread and self.worker_thread.isRunning():
@@ -2078,12 +2108,14 @@ class MainWindow(QMainWindow):
         self.run_all_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
+    # 更新处理进度显示。
     def _on_progress(self, progress: float, stage: str):
         """Handle progress update."""
         self.progress_bar.setValue(int(progress * 100))
         self.stage_label.setText(f"Current: {stage} ({progress*100:.1f}%)")
         self.log_text.append(f"[{progress*100:5.1f}%] {stage}")
 
+    # 处理完成后更新界面状态。
     def _on_execution_complete(self, success: bool, message: str,
                              img_idx: int = 0, total_science: int = 1, total_imgs: int = 1):
         """Handle pipeline completion.
@@ -2129,6 +2161,7 @@ class MainWindow(QMainWindow):
             self.run_all_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
 
+    # 打开当前配置文件。
     def _open_config(self):
         """Open configuration file."""
         file, _ = QFileDialog.getOpenFileName(
@@ -2141,6 +2174,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load config: {e}")
 
+    # 打开设置对话框。
     def _show_settings(self):
         """Show settings dialog."""
         from specproc.gui.settings_dialog import SettingsDialog
@@ -2150,6 +2184,7 @@ class MainWindow(QMainWindow):
             self._update_overscan_checkbox_from_config()
             self.statusBar.showMessage("Settings saved")
 
+    # 显示应用说明对话框。
     def _show_about(self):
         """Show about dialog."""
         QMessageBox.information(
@@ -2159,12 +2194,14 @@ class MainWindow(QMainWindow):
             "Inspired by the gamse package"
         )
 
+    # 配置日志输出到界面。
     def setup_logging(self):
         """Setup logging to GUI."""
         # 由于日志实时显示在GUI中难以实现，我们只保留终端和文件日志
         # 不再添加GUI日志处理器，避免性能问题
         pass
 
+    # 关闭窗口前停止并清理任务。
     def closeEvent(self, event):
         """Handle window close."""
         if self.worker_thread and self.worker_thread.isRunning():
@@ -2172,6 +2209,7 @@ class MainWindow(QMainWindow):
             self.worker_thread.wait()
         super().closeEvent(event)
 
+    # 更新第一步选项的显示文本。
     def _refresh_step1_checkbox_text(self):
         """Update Step1 display text so options are shown in parentheses."""
         stage_0_checkbox = self.stage_checkboxes.get('stage_0')
@@ -2191,6 +2229,7 @@ class MainWindow(QMainWindow):
         options_text = '/'.join(selected) if selected else 'None'
         stage_0_checkbox.setText(f"Step 1: Basic Pre-processing ({options_text})")
     
+    # 根据配置更新过扫描选项。
     def _update_overscan_checkbox_from_config(self):
         """Update overscan checkbox based on configuration."""
         overscan_start_col = self.config.get_int('data', 'overscan_start_column', -1)
@@ -2217,6 +2256,7 @@ class MainWindow(QMainWindow):
 
             self._refresh_step1_checkbox_text()
     
+    # 响应过扫描选项状态变化。
     def _on_overscan_checkbox_changed(self, state):
         """Handle overscan checkbox state change."""
         stage_0_checkbox = self.stage_checkboxes.get('stage_0')

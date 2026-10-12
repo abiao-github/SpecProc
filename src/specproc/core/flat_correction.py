@@ -7,6 +7,7 @@ directory.
 
 Main entry point: process_flat_correction_stage()
 """
+# 构建二维平场响应模型并校正科学图像。
 
 import logging
 import pickle
@@ -29,6 +30,7 @@ from specproc.plotting.spectra_plotter import plot_2d_image_to_file
 logger = logging.getLogger(__name__)
 
 
+# 保存平场校正模型及诊断产物
 def save_flat_correction_products(flat_field: FlatField,
                                   apertures: Optional[ApertureSet],
                                   out_dir: Path,
@@ -86,7 +88,9 @@ def save_flat_correction_products(flat_field: FlatField,
 
 
 
+# 构建二维平场响应模型
 class FlatCorrectionModelBuilder:
+    # 初始化对象状态
     def __init__(self):
         self.flat_data = None
         self.flat_mask = None
@@ -98,6 +102,7 @@ class FlatCorrectionModelBuilder:
         self.flat_sens = None
         self.order_diagnostics = {}
 
+    # 平滑单级次一维响应曲线
     def _smooth_order_response(self, flux_1d: np.ndarray, method: str = 'savgol',
                                window: int = 21, bspline_smooth: float = 0.5) -> np.ndarray:
         """Smooth per-order 1D blaze extraction with selectable method."""
@@ -149,6 +154,7 @@ class FlatCorrectionModelBuilder:
         fit = np.maximum(fit, 1e-6)
         return fit
 
+    # 自动拟合并平滑级次光栅响应
     def _smooth_blaze_auto_bspline(self, flux_1d: np.ndarray,
                                    smooth_factor: float = 1.0,
                                    prefilter_size: int = 15) -> np.ndarray:
@@ -255,6 +261,7 @@ class FlatCorrectionModelBuilder:
         # Safety: no negative or zero values
         return blaze_smooth
 
+    # 用切比雪夫多项式平滑光栅响应
     def _smooth_blaze_chebyshev(self, flux_1d: np.ndarray,
                                 degree: int = 5,
                                 prefilter_size: int = 51) -> np.ndarray:
@@ -328,6 +335,7 @@ class FlatCorrectionModelBuilder:
         
         return blaze_smooth
 
+    # 用上包络样条提取光栅响应
     def _smooth_blaze_upper_envelope_bspline(self, flux_1d: np.ndarray,
                                              knot_spacing: int = 200,
                                              edge_nknots: int = 6,
@@ -407,6 +415,7 @@ class FlatCorrectionModelBuilder:
         
         return np.maximum(blaze_smooth, 1.0)
 
+    # 用切比雪夫上包络提取响应
     def _smooth_blaze_upper_envelope_chebyshev(self, flux_1d: np.ndarray,
                                                degree: int = 4,
                                                prefilter_size: int = 21) -> np.ndarray:
@@ -476,6 +485,7 @@ class FlatCorrectionModelBuilder:
         
         return np.maximum(blaze_smooth, 1.0)
 
+    # 构建级次响应图与像素平场图
     def build_order_response_map(self, apertures: ApertureSet,
                                  source_image: Optional[np.ndarray] = None,
                                  blaze_smooth_factor: float = 1.0,
@@ -889,6 +899,7 @@ class FlatCorrectionModelBuilder:
         logger.info("Built Step4 flat model via 1D blaze + normalized-profile reconstruction")
         return None, blaze_profiles, cross_profiles, smoothed_model, pixel_flat, illumination_flat
 
+    # 保存二维平场模型与诊断图
     def save_step4_diagnostics(self, output_dir: Path,
                                clean_flat: Optional[np.ndarray] = None,
                                clean_flat_corrected: Optional[np.ndarray] = None,
@@ -1082,6 +1093,7 @@ class FlatCorrectionModelBuilder:
             #          high order IDs (top, short wavelength) → blue.
             norm_c = Normalize(vmin=0, vmax=max(1, n_orders - 1))
 
+            # 按级次索引返回绘图颜色
             def _order_color(i):
                 return cmap(norm_c(n_orders - 1 - i))
 
@@ -1139,6 +1151,7 @@ class FlatCorrectionModelBuilder:
 
 
 
+# 构建平场模型并校正科学图像
 def process_flat_correction_stage(science_image: np.ndarray,
                                    flat_field: FlatField,
                                    output_dir_base: str,

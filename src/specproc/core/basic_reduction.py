@@ -9,6 +9,7 @@ Combines three sub-steps that are applied before order tracing:
 The unified entry point is process_basic_reduction_stage(), which runs
 whichever of the three sub-steps are enabled in the configuration.
 """
+# 完成过扫描、偏置与宇宙射线等基础校正。
 
 
 import numpy as np
@@ -40,9 +41,11 @@ logger = logging.getLogger(__name__)
 # Sub-step 1: Overscan correction
 # ---------------------------------------------------------------------------
 
+# 负责原始图像的过扫描校正。
 class OverscanCorrectionStage:
     """Handles overscan correction for raw images."""
 
+    # 保存过扫描区域及图像裁剪参数。
     def __init__(self, 
                  overscan_start_column: int = -1,
                  overscan_left_start: int = -1, overscan_left_end: int = -1,
@@ -80,6 +83,7 @@ class OverscanCorrectionStage:
 
         self.corrector = self._create_corrector()
 
+    # 根据配置创建过扫描校正器。
     def _create_corrector(self) -> OverscanCorrector:
         """Create OverscanCorrector with configuration."""
         overscan_config = {}
@@ -108,6 +112,7 @@ class OverscanCorrectionStage:
         logger.info(f"Overscan configuration: {overscan_config}")
         return OverscanCorrector(overscan_config)
 
+    # 校正单幅图像的过扫描信号。
     def correct_image(self, image: np.ndarray, trim: bool = True) -> np.ndarray:
         """Correct single image for overscan."""
         has_overscan = self.has_overscan_config
@@ -131,6 +136,7 @@ class OverscanCorrectionStage:
         corrected = self._apply_user_crop(corrected)
         return corrected
 
+    # 按用户边界裁剪图像区域。
     def _apply_user_crop(self, image: np.ndarray) -> np.ndarray:
         """Apply optional crop bounds from config using DS9 1-based indexing."""
         rows, cols = image.shape
@@ -160,6 +166,7 @@ class OverscanCorrectionStage:
         )
         return cropped
 
+    # 校正FITS文件并保存图像与诊断图。
     def correct_file(self, input_path: str, output_path: Optional[str] = None) -> str:
         """Correct single FITS file for overscan."""
         logger.info(f"Reading raw image: {input_path}")
@@ -205,6 +212,7 @@ class OverscanCorrectionStage:
         return output_path
 
 
+# 批量执行图像过扫描校正。
 def process_overscan_stage(image_filenames: List[str],
                            output_dir_base: str,
                            overscan_start_column: int = -1,
@@ -270,9 +278,11 @@ def process_overscan_stage(image_filenames: List[str],
 # Sub-step 2: Bias correction
 # ---------------------------------------------------------------------------
 
+# 负责偏置帧合并与图像扣偏。
 class BiasCorrector:
     """Handles bias frame combination and correction."""
 
+    # 保存过扫描区域及图像裁剪参数。
     def __init__(self, 
                  combine_method: str = 'median',
                  combine_sigma: float = 3.0,
@@ -285,6 +295,7 @@ class BiasCorrector:
         self.master_bias = None
         self.bias_uncertainty = None
 
+    # 合并偏置帧并估算主偏置与误差。
     def combine_bias_frames(self, bias_filenames: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """Combine multiple bias frames to create master bias."""
         logger.info(f"Combining {len(bias_filenames)} bias frames...")
@@ -316,6 +327,7 @@ class BiasCorrector:
         logger.info(f"Master bias created: shape {master_bias.shape}, mean={np.mean(master_bias):.1f}")
         return master_bias, uncertainty
 
+    # 从图像中扣除主偏置图。
     def apply_bias_correction(self, science_image: np.ndarray,
                               master_bias: Optional[np.ndarray] = None) -> np.ndarray:
         """Apply bias correction to a science image."""
@@ -334,6 +346,7 @@ class BiasCorrector:
         logger.debug(f"Bias corrected image: mean={np.mean(corrected):.1f}")
         return corrected
 
+    # 保存主偏置图及可选诊断图。
     def save_master_bias(self, output_path: str):
         """Save master bias to FITS file."""
         if self.master_bias is None:
@@ -353,12 +366,14 @@ class BiasCorrector:
             plot_file = out_dir / f'master_bias.{self.fig_format}'
             plot_2d_image_to_file(self.master_bias, str(plot_file), "Master Bias Frame")
 
+    # 从文件载入预先计算的主偏置图。
     def load_master_bias(self, filepath: str):
         """Load pre-computed master bias from file."""
         self.master_bias, header = read_fits_image(filepath)
         logger.info(f"Loaded master bias from {filepath}")
 
 
+# 执行偏置合并与校正阶段。
 def process_bias_stage(bias_filenames: List[str],
                        output_dir_base: str,
                        science_file: str = None,
@@ -404,6 +419,7 @@ def process_bias_stage(bias_filenames: List[str],
 # Sub-step 3: Cosmic-ray removal
 # ---------------------------------------------------------------------------
 
+# 批量检测并去除图像宇宙射线。
 def process_cosmic_stage(image_filenames: List[str],
                          output_dir_base: str,
                          output_subdir: str = 'step1_basic/cosmic_corrected',
@@ -497,6 +513,7 @@ def process_cosmic_stage(image_filenames: List[str],
 # Unified Step-1 entry point
 # ---------------------------------------------------------------------------
 
+# 按配置依次执行启用的基础校正。
 def process_basic_reduction_stage(science_filenames: List[str],
                                   output_dir_base: str,
                                   bias_filenames: Optional[List[str]] = None,

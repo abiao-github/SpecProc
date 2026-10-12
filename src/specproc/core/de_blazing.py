@@ -4,6 +4,7 @@ De-blazing correction stage.
 Corrects for the blaze function of the spectrograph grating
 to flatten the spectral response.
 """
+# 根据平场闪耀轮廓校正提取光谱响应。
 
 import numpy as np
 import logging
@@ -15,6 +16,7 @@ from specproc.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectr
 logger = logging.getLogger(__name__)
 
 
+# 用平场闪耀轮廓校正光谱。
 def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraSet:
     """
     Apply de-blazing correction to extracted spectra.
@@ -102,6 +104,7 @@ def apply_de_blazing(spectra_set: SpectraSet, flat_field: FlatField) -> SpectraS
     return corrected_spectra
 
 
+# 将去闪耀光谱保存为FITS表格。
 def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet, 
                           content_desc: str = 'De-blazed calibrated spectra',
                           log_desc: str = 'de-blazed'):
@@ -158,6 +161,7 @@ def save_deblazed_spectra(output_path: str, spectra_set: SpectraSet,
     logger.info(f"Saved {norders} {log_desc} spectra to {output_path}")
 
 
+# 执行去闪耀校正并保存结果。
 def process_de_blazing_stage(spectra_set: SpectraSet,
                            output_dir_base: str,
                            flat_field: Optional[FlatField] = None,

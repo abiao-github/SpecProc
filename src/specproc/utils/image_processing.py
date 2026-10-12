@@ -4,6 +4,7 @@ Image processing utilities for spectral data.
 Provides functions for image operations like combining, filtering,
 and detecting bad pixels.
 """
+# 提供图像合并、滤波和背景处理工具。
 
 import numpy as np
 from typing import Optional, Tuple
@@ -15,6 +16,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# 合并多幅图像并估计不确定度。
 def combine_images(images: np.ndarray, method: str = 'median',
                    sigma: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -63,6 +65,7 @@ def combine_images(images: np.ndarray, method: str = 'median',
         raise ValueError(f"Unknown combine method: {method}")
 
 
+# 对二维图像应用 Savitzky-Golay 滤波。
 def savitzky_golay_2d(image: np.ndarray, window_size: int = 5,
                       order: int = 2) -> np.ndarray:
     """
@@ -89,6 +92,7 @@ def savitzky_golay_2d(image: np.ndarray, window_size: int = 5,
     return filtered
 
 
+# 按阈值检测图像中的异常像素。
 def find_bad_pixels(image: np.ndarray, threshold: float = 3.0,
                     method: str = 'sigma') -> np.ndarray:
     """
@@ -118,6 +122,7 @@ def find_bad_pixels(image: np.ndarray, threshold: float = 3.0,
         raise ValueError(f"Unknown method: {method}")
 
 
+# 构建多项式或切比雪夫基矩阵。
 def _build_design_matrix(x: np.ndarray, y: np.ndarray, order: int,
                          method: str) -> np.ndarray:
     """Build 2D basis matrix for polynomial or Chebyshev fitting."""
@@ -136,6 +141,7 @@ def _build_design_matrix(x: np.ndarray, y: np.ndarray, order: int,
     return A
 
 
+# 使用中位绝对偏差估计稳健标准差。
 def _robust_sigma(values: np.ndarray) -> float:
     """Robust sigma estimate via MAD; returns 0 for empty arrays."""
     if values.size == 0:
@@ -148,6 +154,7 @@ def _robust_sigma(values: np.ndarray) -> float:
     return float(1.4826 * mad)
 
 
+# 为单幅图像拟合平滑二维背景。
 def _estimate_single_background(image: np.ndarray, order: int = 2,
                                 valid_mask: Optional[np.ndarray] = None,
                                 method: str = 'chebyshev',
@@ -287,6 +294,7 @@ def _estimate_single_background(image: np.ndarray, order: int = 2,
 # Public alias: estimate a single region without any internal splitting.
 # Use this when the caller handles detector-half splitting externally.
 estimate_background_region = _estimate_single_background
+# 估计二维背景并可按区域分别拟合。
 def estimate_background_2d(image: np.ndarray, order: int = 2,
                            split_vertically: bool = True,
                            valid_mask: Optional[np.ndarray] = None,
@@ -371,6 +379,7 @@ def estimate_background_2d(image: np.ndarray, order: int = 2,
         )
 
 
+# 归一化平场图像至单位响应。
 def normalize_flat(flat_image: np.ndarray, mask: Optional[np.ndarray] = None) -> np.ndarray:
     """
     Normalize flat field to unity using sigma clipping.
@@ -402,12 +411,14 @@ def normalize_flat(flat_image: np.ndarray, mask: Optional[np.ndarray] = None) ->
     return normalized
 
 
+# 从图像中截取指定矩形区域。
 def extract_subimage(image: np.ndarray, x_start: int, x_end: int,
                     y_start: int, y_end: int) -> np.ndarray:
     """Extract rectangular sub-image."""
     return image[y_start:y_end, x_start:x_end]
 
 
+# 按边缘宽度裁剪图像。
 def trim_image(image: np.ndarray, trim_left: int = 0, trim_right: int = 0,
               trim_top: int = 0, trim_bottom: int = 0) -> np.ndarray:
     """Trim edges of image."""

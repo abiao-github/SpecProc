@@ -3,6 +3,7 @@ Overscan correction for CCD images.
 
 Handles removal of overscan regions and associated bias estimation.
 """
+# 负责 CCD 图像过扫描区域提取与偏置校正。
 
 import numpy as np
 import logging
@@ -14,9 +15,11 @@ from astropy.stats import sigma_clipped_stats
 logger = logging.getLogger(__name__)
 
 
+# 提取过扫描区域并估计偏置图。
 class OverscanCorrector:
     """Handles overscan bias correction."""
 
+    # 初始化过扫描校正器。
     def __init__(self, overscan_regions: Optional[dict] = None):
         """
         Initialize overscan corrector.
@@ -35,6 +38,7 @@ class OverscanCorrector:
         }
         self.overscan_bias = None
 
+    # 从图像中提取配置的过扫描区域。
     def extract_overscan_regions(self, image: np.ndarray) -> dict:
         """
         Extract overscan regions from image.
@@ -95,6 +99,7 @@ class OverscanCorrector:
         logger.debug(f"Extracted regions: {list(regions.keys())}")
         return regions
 
+    # 估计图像的二维过扫描偏置。
     def estimate_overscan_bias(self, image: np.ndarray,
                               method: str = 'mean_savgol',
                               poly_order: int = 3,
@@ -179,6 +184,7 @@ class OverscanCorrector:
         self.overscan_bias = bias_map
         return bias_map
     
+    # 估计单个图像区域的过扫描偏置。
     def _estimate_single_bias(self, image: np.ndarray, regions: dict,
                               method: str, smooth_window: int,
                               poly_order: int, poly_type: str) -> np.ndarray:
@@ -219,6 +225,7 @@ class OverscanCorrector:
         self._current_profile = profile
         return bias_map
 
+    # 沿图像行拟合过扫描多项式。
     def _fit_polynomial_overscan(self, image: np.ndarray,
                                 regions: dict,
                                 poly_order: int = 3) -> np.ndarray:
@@ -259,6 +266,7 @@ class OverscanCorrector:
 
         return bias_map
     
+    # 用逐行裁剪均值构建偏置图。
     def _mean_only_overscan(self, image: np.ndarray,
                            regions: dict) -> tuple:
         """
@@ -319,6 +327,7 @@ class OverscanCorrector:
         logger.debug("Mean only method: sigma-clipped mean without smoothing")
         return bias_map, overscan_profile
     
+    # 平滑逐行过扫描均值并构建偏置图。
     def _mean_savgol_overscan(self, image: np.ndarray,
                             regions: dict,
                             window_length: int = None,
@@ -396,6 +405,7 @@ class OverscanCorrector:
         logger.debug(f"Mean + Savitzky-Golay method: sigma-clipped mean + Savitzky-Golay smoothing (window={window_length}, order={polyorder})")
         return bias_map, overscan_profile
     
+    # 拟合逐行过扫描均值并构建偏置图。
     def _mean_polynomial_overscan(self, image: np.ndarray,
                                regions: dict,
                                poly_order: int = 3,
@@ -491,6 +501,7 @@ class OverscanCorrector:
         logger.debug(f"Mean + polynomial method: {poly_type} polynomial fitting (order={poly_order})")
         return bias_map, overscan_profile
 
+    # 从图像中扣除估计的过扫描偏置。
     def apply_overscan_correction(self, image: np.ndarray,
                                  bias_map: Optional[np.ndarray] = None) -> np.ndarray:
         """
@@ -522,6 +533,7 @@ class OverscanCorrector:
 
         return corrected
 
+    # 根据配置裁剪图像过扫描边缘。
     def trim_image(self, image: np.ndarray) -> np.ndarray:
         """
         Trim overscan regions from image.
@@ -561,6 +573,7 @@ class OverscanCorrector:
         return trimmed
 
 
+# 执行过扫描校正并返回处理结果。
 def process_overscan_correction(image: np.ndarray,
                                overscan_config: Optional[dict] = None,
                                trim: bool = True) -> np.ndarray:

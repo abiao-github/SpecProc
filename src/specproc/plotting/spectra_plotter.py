@@ -3,6 +3,7 @@ Plotting and visualization utilities for spectral data.
 
 Provides functions for creating diagnostic plots and result visualization.
 """
+# 提供光谱、图像及处理诊断图的绘制功能。
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,9 +15,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# 在界面中绘制光谱和二维图像。
 class MatplotlibCanvas(FigureCanvas):
     """Matplotlib canvas widget for PyQt5."""
 
+    # 初始化绘图画布及坐标轴。
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         """Initialize canvas."""
         self.fig = Figure(figsize=(width, height), dpi=dpi)
@@ -24,6 +27,7 @@ class MatplotlibCanvas(FigureCanvas):
         super().__init__(self.fig)
         self.setParent(parent)
 
+    # 在画布上绘制一维光谱。
     def plot_spectrum(self, wavelength: np.ndarray, flux: np.ndarray,
                      error: Optional[np.ndarray] = None, title: str = ""):
         """Plot 1D spectrum."""
@@ -42,6 +46,7 @@ class MatplotlibCanvas(FigureCanvas):
         self.fig.tight_layout()
         self.draw()
 
+    # 在画布上绘制带色标的二维图像。
     def plot_2d_image(self, image: np.ndarray, title: str = "",
                      vmin: Optional[float] = None, vmax: Optional[float] = None):
         """Plot 2D image with colorbar."""
@@ -64,6 +69,7 @@ class MatplotlibCanvas(FigureCanvas):
         self.fig.tight_layout()
         self.draw()
 
+    # 绘制图像并叠加孔径追踪边界。
     def plot_aperture_traces(self, image: np.ndarray, apertures: dict,
                             title: str = ""):
         """Plot 2D image with aperture traces overlaid."""
@@ -95,6 +101,7 @@ class MatplotlibCanvas(FigureCanvas):
         self.draw()
 
 
+# 绘制并保存一维光谱图。
 def plot_spectrum_to_file(wavelength: np.ndarray, flux: np.ndarray,
                          output_path: str, error: Optional[np.ndarray] = None,
                          title: str = ""):
@@ -120,6 +127,7 @@ def plot_spectrum_to_file(wavelength: np.ndarray, flux: np.ndarray,
     logger.info(f"Saved spectrum plot to {output_path}")
 
 
+# 绘制并保存二维图像。
 def plot_2d_image_to_file(image: np.ndarray, output_path: str,
                          title: str = "", cmap: str = 'viridis',
                          vmin=None, vmax=None):
@@ -146,6 +154,7 @@ def plot_2d_image_to_file(image: np.ndarray, output_path: str,
     logger.info(f"Saved 2D image plot to {output_path}")
 
 
+# 绘制并保存过扫描校正图像。
 def plot_overscan_corrected_image(image: np.ndarray, output_path: str,
                                  title: str = "", cmap: str = 'viridis',
                                  overscan_start_col: int = -1,
@@ -185,6 +194,7 @@ def plot_overscan_corrected_image(image: np.ndarray, output_path: str,
     logger.info(f"Saved overscan-corrected image plot to {output_path}")
 
 
+# 绘制过扫描剖面及拟合残差。
 def plot_overscan_profile(overscan_profile: dict, output_path: str,
                          title: str = "Overscan Profile"):
     """Plot overscan profile (smoothed or fitted curve).
@@ -223,6 +233,7 @@ def plot_overscan_profile(overscan_profile: dict, output_path: str,
         fig, ax = plt.subplots(figsize=(10, 6))
         ax_res = None
 
+    # 生成过扫描方法的图标题。
     def _get_method_title(profile: dict, method_name: str) -> str:
         display_method = 'mean_savgol' if method_name == 'iraf_savgol' else method_name
         if display_method == 'mean_polynomial':
@@ -377,6 +388,7 @@ def plot_overscan_profile(overscan_profile: dict, output_path: str,
     logger.info(f"Saved overscan profile plot to {output_path}")
 
 
+# 绘制背景模型及其残差。
 def plot_background_residuals(science_image: np.ndarray, background: np.ndarray,
                              output_path: str):
     """Plot background estimation and residuals."""
@@ -405,6 +417,7 @@ def plot_background_residuals(science_image: np.ndarray, background: np.ndarray,
     logger.info(f"Saved background residuals plot to {output_path}")
 
 
+# 绘制波长标定拟合结果。
 def plot_wavelength_calibration(line_pixels: np.ndarray, line_wavelengths: np.ndarray,
                                fitted_wavelengths: np.ndarray,
                                output_path: str):
@@ -436,6 +449,7 @@ def plot_wavelength_calibration(line_pixels: np.ndarray, line_wavelengths: np.nd
 
     logger.info(f"Saved wavelength calibration plot to {output_path}")
 
+# 将多条光谱绘制到同一 PDF。
 def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spectrum", 
                         xlabel: str = "Wavelength (Angstrom)", id_label: str = "Aperture"):
     """Save all spectra in a SpectraSet to a single multi-page PDF file."""

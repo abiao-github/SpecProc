@@ -4,6 +4,7 @@ FITS file I/O utilities for reading and writing spectral data.
 Provides functions for loading raw FITS images, writing intermediate
 results, and managing FITS headers.
 """
+# 负责光谱数据 FITS 文件的读取与写入。
 
 import numpy as np
 from astropy.io import fits
@@ -14,6 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# 读取 FITS 图像及其头信息。
 def read_fits_image(filepath: str) -> Tuple[np.ndarray, dict]:
     """
     Read a FITS image file.
@@ -47,6 +49,7 @@ def read_fits_image(filepath: str) -> Tuple[np.ndarray, dict]:
         raise
 
 
+# 读取 FITS 表格及其头信息。
 def read_fits_table(filepath: str, hdu: int = 1) -> Tuple[np.ndarray, dict]:
     """
     Read structured table from FITS file.
@@ -73,6 +76,7 @@ def read_fits_table(filepath: str, hdu: int = 1) -> Tuple[np.ndarray, dict]:
         raise
 
 
+# 将图像数据写入 FITS 文件。
 def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = None,
                      overwrite: bool = True, dtype: Optional[str] = None):
     """
@@ -138,6 +142,7 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
         raise
 
 
+# 将结构化数组写入 FITS 表格。
 def write_fits_table(filepath: str, data: np.ndarray, header: Optional[Dict] = None,
                      overwrite: bool = True):
     """
@@ -184,6 +189,7 @@ def write_fits_table(filepath: str, data: np.ndarray, header: Optional[Dict] = N
         raise
 
 
+# 忽略大小写查找头关键字。
 def get_header_value(header: dict, keyword: str, default: any = None) -> any:
     """
     Get header value with case-insensitive lookup.
@@ -208,6 +214,7 @@ def get_header_value(header: dict, keyword: str, default: any = None) -> any:
     return default
 
 
+# 获取 FITS 图像的基本信息。
 def get_image_info(filepath: str) -> Dict:
     """
     Get basic information about a FITS image.
@@ -233,6 +240,7 @@ def get_image_info(filepath: str) -> Dict:
         return {}
 
 
+# 按指定方法合并多个 FITS 图像。
 def combine_fits_images(*filepaths: str, method: str = 'mean') -> np.ndarray:
     """
     Combine multiple FITS images.

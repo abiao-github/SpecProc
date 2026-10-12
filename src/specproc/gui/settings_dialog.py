@@ -4,6 +4,7 @@ Settings dialog for SpecProc configuration.
 
 Provides a GUI for editing configuration parameters organized by tabs.
 """
+# 提供按类别编辑处理配置的设置界面。
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -16,9 +17,11 @@ from PyQt5.QtCore import Qt
 from specproc.config.config_manager import ConfigManager
 
 
+# 提供处理配置的分项编辑界面。
 class SettingsDialog(QDialog):
     """Settings dialog for configuration editing."""
 
+    # 初始化设置对话框。
     def __init__(self, config: ConfigManager, parent=None, initial_tab: int = 0):
         """
         Initialize settings dialog.
@@ -44,6 +47,7 @@ class SettingsDialog(QDialog):
         if self.tab_widget:
             self.tab_widget.setCurrentIndex(initial_tab)
 
+    # 构建设置界面及选项卡。
     def init_ui(self):
         """Initialize user interface."""
         layout = QVBoxLayout()
@@ -73,6 +77,7 @@ class SettingsDialog(QDialog):
 
         self.setLayout(layout)
 
+    # 创建数据输入与探测器设置页。
     def _create_data_tab(self) -> QWidget:
         """Create data input and detector settings tab."""
         scroll = QScrollArea()
@@ -125,6 +130,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    # 创建数据预处理设置页。
     def _create_reduction_tab(self) -> QWidget:
         """Create bias, flat, background and cosmic ray correction settings tab."""
         scroll = QScrollArea()
@@ -402,6 +408,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    # 按过扫描方法启用对应参数。
     def _update_overscan_params_enabled(self):
         """Enable/disable overscan parameters based on selected method."""
         method = self.overscan_method_combo.currentText()
@@ -422,6 +429,7 @@ class SettingsDialog(QDialog):
             self.overscan_poly_type_combo.setEnabled(True)
             self.overscan_poly_order_spin.setEnabled(True)
 
+    # 按背景方法启用对应参数。
     def _update_bg_params_enabled(self):
         """Enable/disable background parameters based on selected method."""
         method = self.bg_method_combo.currentText()
@@ -440,6 +448,7 @@ class SettingsDialog(QDialog):
 
         # Common params always enabled: sigma_clip, clip_iterations, clip_mode, mask_margin
 
+    # 创建波长标定设置页。
     def _create_wlcalib_tab(self) -> QWidget:
         """Create wavelength calibration settings tab."""
         scroll = QScrollArea()
@@ -549,6 +558,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    # 创建孔径追踪与光谱提取设置页。
     def _create_extraction_tab(self) -> QWidget:
         """Create aperture tracing and spectrum extraction settings tab."""
         scroll = QScrollArea()
@@ -634,10 +644,12 @@ class SettingsDialog(QDialog):
         self._update_trace_param_interactions()
         return scroll
 
+    # 更新追踪参数间的启用状态。
     def _update_trace_param_interactions(self):
         """Enable/disable parameters (Placeholder, logic simplified)."""
         pass
 
+    # 创建处理与输出设置页。
     def _create_processing_tab(self) -> QWidget:
         """Create general processing and output settings tab."""
         scroll = QScrollArea()
@@ -701,6 +713,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    # 选择已标识谱线的锚点文件。
     def _select_anchor_file(self):
         """Open file dialog to select anchor file."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -709,6 +722,7 @@ class SettingsDialog(QDialog):
         if file_path:
             self.anchor_file_edit.setText(file_path)
 
+    # 选择完整谱线目录文件。
     def _select_full_linelist_file(self):
         """Open file dialog to select full linelist catalog."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -717,6 +731,7 @@ class SettingsDialog(QDialog):
         if file_path:
             self.full_linelist_edit.setText(file_path)
 
+    # 选择预先标定结果文件。
     def _select_precomputed_calib_file(self):
         """Open file dialog to select precomputed calibration FITS file."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -725,6 +740,7 @@ class SettingsDialog(QDialog):
         if file_path:
             self.precomputed_calib_file_edit.setText(file_path)
 
+    # 将当前配置载入界面控件。
     def load_current_values(self):
         """Load current configuration values into UI."""
         # Data & Instruments tab
@@ -821,6 +837,7 @@ class SettingsDialog(QDialog):
         self.save_wlcalib_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_wlcalib', True))
         self.save_deblaze_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True))
 
+    # 保存界面中的配置项。
     def _save_settings(self):
         """Save settings to configuration."""
         try:

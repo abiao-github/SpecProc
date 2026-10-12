@@ -8,6 +8,7 @@ pipeline stages. The main entry point is `process_order_tracing_stage`.
 The main entry point is process_order_tracing_stage().  FlatFieldProcessor is the
 class that wraps all processing state.
 """
+# 合并平场、追踪光谱级次并确定孔径边界。
 
 import numpy as np
 import logging
@@ -27,9 +28,11 @@ from specproc.core.data_structures import ApertureSet, ApertureLocation, FlatFie
 logger = logging.getLogger(__name__)
 
 
+# 处理平场并追踪光谱级次
 class FlatFieldProcessor:
     """Handles flat field processing and order tracing."""
 
+    # 初始化对象状态
     def __init__(self):
         """
         Initialize flat field processor.
@@ -41,6 +44,7 @@ class FlatFieldProcessor:
         self.order_diagnostics = {}
         self.base_header = None
 
+    # 合并平场帧并生成主平场
     def combine_flat_frames(self, flat_filenames: List[str],
                             combine_method: str = 'median',
                             combine_sigma: float = 3.0,
@@ -128,6 +132,7 @@ class FlatFieldProcessor:
 
         return combined, self.flat_mask
 
+    # 检测并追踪平场中的级次
     def detect_orders(self, snr_threshold: float = 5.0,
                       min_trace_coverage: float = 0.2,
                       trace_degree: int = 4,
@@ -166,6 +171,7 @@ class FlatFieldProcessor:
 
         return apertures
 
+    # 保存主平场与诊断图
     def save_flat_field(self, output_path: str,
                         save_plots: bool = True,
                         fig_format: str = 'png'):
@@ -212,10 +218,12 @@ class FlatFieldProcessor:
             plot_2d_image_to_file(self.flat_data, str(out_dir / f'MasterFlat.{fig_format}'), "Master Flat Field")
 
 
+# 检测并追踪光栅级次
 class GratingOrderTracer:
     """
     Detects and traces orders for grating spectrographs.
     """
+    # 初始化对象状态
     def __init__(self, data: np.ndarray, mask: Optional[np.ndarray] = None, **kwargs):
         self.data = np.asarray(data, dtype=np.float64)
         self.mask = mask if mask is not None else np.zeros_like(data, dtype=bool)
@@ -228,6 +236,7 @@ class GratingOrderTracer:
         self.params.update(kwargs)
         self.diagnostics = {}
 
+    # 提取级次种子剖面并估算间距
     def _get_seed_profile(self) -> Tuple[np.ndarray, dict]:
         """Extracts and analyzes a 1D cross-section to find order seeds."""
         x_center = self.w // 2
@@ -272,6 +281,7 @@ class GratingOrderTracer:
                  'local_sep_func': local_sep_func, 'med_sep': med_sep, 'x1': x1, 'x2': x2}
         return seed_pure, diags
 
+    # 检测峰值并补入缺失种子
     def _find_seeds(self, seed_profile: np.ndarray, diags: dict) -> np.ndarray:
         """Finds initial peak locations (seeds) in the 1D profile."""
         det_threshold = diags['baseline'] + self.params['snr_threshold'] * diags['noise']
@@ -328,10 +338,12 @@ class GratingOrderTracer:
         logger.info(f"Found {len(peaks)} initial peaks, {len(final_seeds)} seeds after gap filling.")
         return final_seeds
 
+    # 从种子沿列追踪单个级次
     def _trace_one_order(self, seed_y: float, diags: dict) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Traces a single order starting from a seed."""
         xs, ys = [], []
 
+        # 在指定列精修级次峰位
         def refine_peak(x, y_guess, search_half):
             y0 = int(round(y_guess))
             y1, y2 = max(0, y0 - search_half), min(self.h, y0 + search_half + 1)
@@ -451,6 +463,7 @@ class GratingOrderTracer:
         order = np.argsort(xs)
         return xs[order], ys[order]
 
+    # 检测并拟合全部级次轨迹
     def trace_orders(self) -> ApertureSet:
         """Main method to perform order tracing."""
         seed_profile, diags = self._get_seed_profile()
@@ -491,10 +504,12 @@ class GratingOrderTracer:
         logger.info(f"Successfully traced {aperture_set.norders} orders.")
         return aperture_set
 
+    # 返回级次追踪诊断数据
     def get_diagnostics(self) -> dict:
         return self.diagnostics
 
 
+# 根据级次间隙分配物理序号
 def assign_order_indices(apertures: ApertureSet, gap_fill_factor: float = 1.35) -> dict:
     """
     Assign integer order indices *m* to detected apertures, detecting gaps.
@@ -572,6 +587,7 @@ def assign_order_indices(apertures: ApertureSet, gap_fill_factor: float = 1.35) 
     return mapping
 
 
+# 按缺失级次重编号孔径
 def renumber_apertures_with_gaps(apertures: ApertureSet, gap_fill_factor: float = 1.35) -> ApertureSet:
     """
     Renumber aperture IDs to reflect physical order indices, including gaps.
@@ -623,6 +639,7 @@ def renumber_apertures_with_gaps(apertures: ApertureSet, gap_fill_factor: float 
     return new_set
 
 
+# 根据平场峰值精修预测轨迹
 def _refine_predicted_trace(
     flat_data: np.ndarray,
     pred_center: np.ndarray,
@@ -708,6 +725,7 @@ def _refine_predicted_trace(
     return np.polyval(final_coef, np.arange(w, dtype=float))
 
 
+# 插值补齐并外推缺失级次
 def fill_missing_orders_by_interpolation(
     apertures: ApertureSet,
     image_width: int,
@@ -818,6 +836,7 @@ def fill_missing_orders_by_interpolation(
     return filled_set
 
 
+# 沿探测器边缘外推虚拟级次
 def _extrapolate_edge_orders(
     apertures: ApertureSet,
     side: str,
@@ -887,6 +906,7 @@ def _extrapolate_edge_orders(
         logger.info(f"  Extrapolated virtual order (ID={new_id}) at y~{new_center[image_width//2]:.1f}")
 
 
+# 由级次间谷值拟合背景包络
 def _fit_background_envelope_1d(cross_section, order_centers_y, half_win=4):
     """Fit a smooth background baseline envelope using inter-order valley samples.
 
@@ -909,6 +929,7 @@ def _fit_background_envelope_1d(cross_section, order_centers_y, half_win=4):
     cs = cross_section.astype(float)
     centers = sorted(float(c) for c in order_centers_y)
 
+    # 求指定位置窗口内的局部最小值
     def _local_min(pos):
         i0 = max(0, int(round(pos)) - half_win)
         i1 = min(n, int(round(pos)) + half_win + 1)
@@ -953,6 +974,7 @@ def _fit_background_envelope_1d(cross_section, order_centers_y, half_win=4):
     return np.clip(envelope, np.nanmin(cs), np.nanmax(cs))
 
 
+# 求级次轮廓与背景的交点
 def _find_profile_roots_1d(cross_section, center_idx, search_lo, search_hi,
                            threshold_frac=0.05, bg_envelope=None,
                            noise_floor=None):
@@ -1002,6 +1024,7 @@ def _find_profile_roots_1d(cross_section, center_idx, search_lo, search_hi,
     # Keep threshold physically meaningful for this order.
     excess_thresh = float(np.clip(excess_thresh, 0.0, 0.9 * amp_at_peak))
 
+    # 计算像素相对背景包络的超额信号
     def _excess(j):
         return cs[j] - float(bg_envelope[int(np.clip(j, 0, n - 1))])
 
@@ -1035,6 +1058,7 @@ def _find_profile_roots_1d(cross_section, center_idx, search_lo, search_hi,
     return root_lo, root_hi, bg_at_peak, threshold
 
 
+# 执行平场合并与级次追踪流程
 def process_order_tracing_stage(flat_filenames: List[str],
                       output_dir_base: str = './midpath',
                       # Flat combination parameters
@@ -1107,6 +1131,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
     x_coords_all = np.arange(width)
     center_col = width // 2
 
+    # 估算背景噪声阈值
     def _estimate_noise_floor(cross_section_1d, bg_envelope_1d, centers_y):
         """Estimate background noise via iterative MAD sigma-clipping.""" 
         residual = cross_section_1d - bg_envelope_1d
@@ -1160,6 +1185,7 @@ def process_order_tracing_stage(flat_filenames: List[str],
     y_lo_all = np.full((len(valid_orders), width), np.nan, dtype=float)
     y_hi_all = np.full((len(valid_orders), width), np.nan, dtype=float)
     if len(valid_orders) >= 1:
+        # 计算单列级次边界
         def process_column(xi):
             x = x_coords_all[xi]
             cross_section_col = flat_data[:, x].astype(float)

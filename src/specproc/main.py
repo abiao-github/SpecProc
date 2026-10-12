@@ -3,6 +3,7 @@ SpecProc: Main application entry point.
 
 PyQt-based GUI for echelle spectrograph FITS data reduction.
 """
+# 提供图形界面与命令行程序入口。
 
 import sys
 import argparse
@@ -15,13 +16,18 @@ from typing import Dict, List, Optional, Tuple
 
 from astropy.io import fits
 
-from specproc.config.config_manager import ConfigManager
+from specproc.config.config_manager import (
+    ConfigManager,
+    list_telescope_profiles,
+    resolve_telescope_profile,
+)
 from specproc.core.processing_pipeline import ProcessingPipeline
 
 
 COPY_DEFAULT_CONFIG_SENTINEL = '__COPY_DEFAULT_CONFIG__'
 
 
+# 设置文件与控制台日志输出。
 def setup_logging(log_file: str = 'specproc.log'):
     """Setup application logging."""
     logger = logging.getLogger()
@@ -65,6 +71,7 @@ def setup_logging(log_file: str = 'specproc.log'):
     logger.info("=" * 60)
 
 
+# 从输入文件或目录收集FITS图像。
 def _collect_input_fits_files(inputs: List[str]) -> List[str]:
     """Collect FITS files from positional CLI inputs (files and/or directories)."""
     paths = inputs if inputs else ['.']
@@ -91,6 +98,7 @@ def _collect_input_fits_files(inputs: List[str]) -> List[str]:
     return unique_files
 
 
+# 读取FITS头中的帧类型与曝光时间。
 def _read_frame_type_hint(fits_path: str) -> Tuple[str, Optional[float]]:
     """Read frame-type hints and exposure time from FITS headers."""
     collected: List[str] = []
@@ -139,6 +147,7 @@ def _read_frame_type_hint(fits_path: str) -> Tuple[str, Optional[float]]:
     return ' | '.join(unique_values), exposure_value
 
 
+# 根据头信息判断观测帧类别。
 def _classify_obstype(obstype: str) -> Optional[str]:
     """Map header type hints to one of: bias, flat, calib, science."""
     normalized = obstype.strip().lower().replace('_', ' ')
@@ -162,6 +171,7 @@ def _classify_obstype(obstype: str) -> Optional[str]:
     return None
 
 
+# 分类输入图像并运行命令行归约流程。
 def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
     """Run full pipeline in CLI mode using OBSTYPE-based FITS classification."""
     logger = logging.getLogger(__name__)
@@ -173,6 +183,7 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
             'specproc --mode cli 20241102_hrs'
         )
 
+    config = ConfigManager(config_path)
     grouped: Dict[str, List[str]] = {
         'bias': [],
         'flat': [],
@@ -180,9 +191,35 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
         'science': [],
     }
     unknown: List[Tuple[str, str]] = []
+    by_filename = config.get('data', 'frame_type_source', 'header').strip().lower() == 'filename'
+    is_slit = config.get('telescope', 'instrument', '').strip().lower() == 'slit'
+
+    # 读取并规范化帧类型匹配关键词。
+    def _keywords(key: str, default: str) -> List[str]:
+        return [k.strip().lower() for k in config.get('data', key, default).split(',') if k.strip()]
+
+    kw = {
+        'bias': _keywords('bias_keywords', 'bias'),
+        'flat': _keywords('flat_keywords', 'flat'),
+        'calib': _keywords('lamp_keywords', 'fear'),
+        'dark': _keywords('dark_keywords', 'dark'),
+    }
 
     for file_path in fits_files:
         try:
+            if by_filename:
+                fname = Path(file_path).name.lower()
+                category = 'science'
+                for cat in ('bias', 'flat', 'calib', 'dark'):
+                    if any(k in fname for k in kw[cat]):
+                        category = cat
+                        break
+                if category == 'dark':
+                    logger.info(f"Dark frame not used: {Path(file_path).name}")
+                    continue
+                grouped[category].append(file_path)
+                continue
+
             obstype, exposure_value = _read_frame_type_hint(file_path)
             category = _classify_obstype(obstype)
             if category is None and exposure_value is not None and exposure_value > 0:
@@ -201,11 +238,12 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
                 f"Unrecognized frame type for {Path(file_path).name}: '{obstype}'. File is skipped."
             )
 
-    missing = [name for name in ('bias', 'flat', 'calib', 'science') if not grouped[name]]
+    required = ('bias', 'science') if is_slit else ('bias', 'flat', 'calib', 'science')
+    missing = [name for name in required if not grouped[name]]
     if missing:
         counts = ', '.join([f"{key}={len(val)}" for key, val in grouped.items()])
         raise RuntimeError(
-            f"OBSTYPE classification incomplete ({counts}). Missing: {', '.join(missing)}."
+            f"Frame classification incomplete ({counts}). Missing: {', '.join(missing)}."
         )
 
     logger.info(
@@ -218,7 +256,6 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
     total_bytes = sum(Path(file_path).stat().st_size for file_path in processed_files if Path(file_path).exists())
     total_mb = total_bytes / (1024.0 * 1024.0)
 
-    config = ConfigManager(config_path)
     pipeline = ProcessingPipeline(config)
     result = pipeline.run_full_pipeline(
         raw_image_paths=grouped['science'],
@@ -237,11 +274,28 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
     return result
 
 
-def copy_default_config_to_cwd(target_filename: str = 'specproc.cfg') -> Path:
-    """Copy packaged default config into current working directory."""
-    default_config = Path(__file__).parent / 'config' / 'default_config.cfg'
-    if not default_config.exists():
-        raise FileNotFoundError(f'Default config file not found: {default_config}')
+# 将所选默认配置复制到当前目录。
+def copy_default_config_to_cwd(target_filename: str = 'specproc.cfg',
+                                profile: Optional[str] = None) -> Path:
+    """Copy a packaged default config into the current working directory.
+
+    Args:
+        target_filename: Name of the file to create in the current directory.
+        profile: Optional telescope profile name (e.g. 'XL216_hrs' for the
+            Xinglong 2.16m HRS, 'MSTG193_slit' for the Muztagh-Ata 1.93m slit
+            spectrograph). If omitted, the generic default_config.cfg is used.
+    """
+    if profile:
+        default_config = resolve_telescope_profile(profile)
+        if default_config is None:
+            available = ', '.join(sorted(list_telescope_profiles())) or '(none)'
+            raise FileNotFoundError(
+                f"Unknown telescope profile '{profile}'. Available profiles: {available}"
+            )
+    else:
+        default_config = Path(__file__).parent / 'config' / 'default_config.cfg'
+        if not default_config.exists():
+            raise FileNotFoundError(f'Default config file not found: {default_config}')
 
     target_path = Path.cwd() / target_filename
     if target_path.exists():
@@ -249,10 +303,12 @@ def copy_default_config_to_cwd(target_filename: str = 'specproc.cfg') -> Path:
         return target_path
 
     shutil.copyfile(default_config, target_path)
-    print(f'Default config copied to: {target_path}')
+    suffix = f' (telescope profile: {profile})' if profile else ''
+    print(f'Default config copied to: {target_path}{suffix}')
     return target_path
 
 
+# 解析启动参数并选择程序运行模式。
 def main(config_path: Optional[str] = None, mode: Optional[str] = None):
     """Main application entry point.
     
@@ -261,15 +317,21 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None):
         mode: Run mode ('gui' or 'cli')
     """
     # Parse command line arguments first (before QApplication)
+    telescope_profiles = sorted(list_telescope_profiles())
+    profiles_hint = ', '.join(telescope_profiles) if telescope_profiles else '(none packaged)'
     parser = argparse.ArgumentParser(
         description='SpecProc - Spectral Processing Tool for Echelle Spectrographs',
-        epilog='Examples:\n  specproc                        # Start GUI mode\n  specproc 20241102_hrs           # Auto CLI mode with directory input\n  specproc --config               # Copy default config to current directory\n  specproc --mode cli 20241102_hrs\n  specproc --mode cli --config custom.cfg ./raw_data',
+        epilog='Examples:\n  specproc                        # Start GUI mode\n  specproc 20241102_hrs           # Auto CLI mode with directory input\n  specproc --config               # Copy default config to current directory\n  specproc --mode cli 20241102_hrs\n  specproc --mode cli --config custom.cfg ./raw_data\n  specproc --mode cli --config XL216_hrs 20241102_hrs      # Process with a packaged telescope profile\n  specproc --config MSTG193_slit  # Copy a packaged telescope profile to ./specproc.cfg\n\n'
+               f'Available telescope profiles: {profiles_hint}',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('--mode', choices=['gui', 'cli'], default=None,
                         help='Run mode: gui or cli (auto: cli when inputs are provided, otherwise gui)')
     parser.add_argument('--config', nargs='?', const=COPY_DEFAULT_CONFIG_SENTINEL, default=None,
-                        help='Path to configuration file; pass without value to copy default config')
+                        help='Path to configuration file, or the name of a packaged telescope '
+                             f'profile ({profiles_hint}). With inputs, the profile/config is used '
+                             'directly for processing; without inputs, it is copied to ./specproc.cfg. '
+                             'Pass --config without a value to copy the generic default config.')
     parser.add_argument('inputs', nargs='*',
                         help='FITS files or directories (CLI mode). If omitted, current directory is used.')
     parser.add_argument('--version', action='version', version='SpecProc 1.0.0')
@@ -284,6 +346,20 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None):
     if args.config == COPY_DEFAULT_CONFIG_SENTINEL:
         copy_default_config_to_cwd()
         return
+
+    # If --config was given a value that is not an existing file path, try
+    # resolving it as a packaged telescope profile name (e.g. 'XL216_hrs',
+    # 'MSTG193_slit'). With inputs provided, use the profile directly for
+    # processing; without inputs, bootstrap ./specproc.cfg from it (mirrors
+    # the no-value --config behavior above, but for a specific telescope).
+    if args.config and not Path(args.config).expanduser().exists():
+        profile_path = resolve_telescope_profile(args.config)
+        if profile_path is not None:
+            if args.inputs:
+                args.config = str(profile_path)
+            else:
+                copy_default_config_to_cwd(profile=args.config)
+                return
 
     # Auto mode selection:
     # - If positional inputs are provided, default to CLI

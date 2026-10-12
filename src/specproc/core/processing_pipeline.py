@@ -3,6 +3,7 @@ Main processing pipeline orchestrator.
 
 Coordinates all processing stages and manages workflow execution.
 """
+# 负责协调各阶段并跟踪光谱归约流程。
 
 import logging
 import pickle
@@ -29,9 +30,11 @@ from specproc.plotting.spectra_plotter import plot_2d_image_to_file
 logger = logging.getLogger(__name__)
 
 
+# 管理光谱数据归约的各处理阶段。
 class ProcessingPipeline:
     """Main spectral reduction pipeline."""
 
+    # 初始化配置、状态与进度回调。
     def __init__(self, config: ConfigManager):
         """
         Initialize processing pipeline.
@@ -43,6 +46,7 @@ class ProcessingPipeline:
         self.state = ProcessingState()
         self.progress_callback = None
 
+    # 设置流程进度通知回调。
     def set_progress_callback(self, callback: Callable[[float, str], None]):
         """
         Set callback for progress updates.
@@ -52,6 +56,7 @@ class ProcessingPipeline:
         """
         self.progress_callback = callback
 
+    # 更新并通知当前处理进度。
     def _report_progress(self, progress: float, stage: str):
         """Report progress to callback."""
         self.state.progress = progress
@@ -60,6 +65,7 @@ class ProcessingPipeline:
             self.progress_callback(progress, stage)
             logger.info(f"{stage}: {progress*100:.1f}%")
 
+    # 执行原始图像过扫描校正。
     def stage_overscan_correction(self, raw_filenames: List[str]) -> List[str]:
         """
         Execute overscan correction stage (STAGE 0 - must be first!).
@@ -105,6 +111,7 @@ class ProcessingPipeline:
             # Return original files if overscan correction fails
             return raw_filenames
 
+    # 合并偏置帧并生成主偏置图。
     def stage_bias_correction(self, bias_filenames: List[str]) -> np.ndarray:
         """
         Execute bias correction stage.
@@ -148,6 +155,7 @@ class ProcessingPipeline:
             logger.error(f"Error in bias correction: {e}")
             raise
 
+    # 用主偏置图校正并保存图像。
     def _apply_master_bias_to_files(self, input_files: List[str], master_bias: np.ndarray,
                                     output_subdir: str) -> List[str]:
         """Apply master bias to a list of files and save corrected copies."""
@@ -191,6 +199,7 @@ class ProcessingPipeline:
         )
         return corrected_files
 
+    # 处理平场并建立光谱孔径。
     def stage_flat_fielding(self, flat_filenames: List[str]) -> tuple:
         """
         Execute flat fielding stage.
@@ -247,6 +256,7 @@ class ProcessingPipeline:
             logger.error(f"Error in flat fielding: {e}")
             raise
 
+    # 从标定帧建立波长定标模型。
     def stage_wavelength_calibration(self, calib_filename: str) -> WaveCalib:
         """
         Execute wavelength calibration stage on calibration frame.
@@ -301,6 +311,7 @@ class ProcessingPipeline:
             logger.error(f"Error in wavelength calibration: {e}")
             raise
 
+    # 为提取光谱应用波长定标。
     def stage_wavelength_calibration_on_spectra(self, spectra_set: SpectraSet,
                                                 wave_calib: WaveCalib,
                                                 science_name: str = 'science',
@@ -380,6 +391,7 @@ class ProcessingPipeline:
             logger.error(f"Error in wavelength calibration of spectra: {e}")
             raise
 
+    # 去除科学图像中的宇宙射线。
     def stage_cosmic_correction_science(self, science_image: np.ndarray,
                                        science_name: str = 'science') -> np.ndarray:
         """
@@ -450,6 +462,7 @@ class ProcessingPipeline:
             logger.error(f"Error in cosmic ray correction: {e}")
             raise
 
+    # 从科学图像提取一维光谱。
     def stage_extraction(self, science_image: np.ndarray, science_name: str = 'science',
                          calib_image_paths: Optional[List[str]] = None,
                          master_flat_path: Optional[str] = None) -> SpectraSet:
@@ -566,6 +579,7 @@ class ProcessingPipeline:
             logger.error(f"Error in spectrum extraction: {e}")
             raise
 
+    # 校正提取光谱的闪耀响应。
     def stage_de_blazing(self, spectra_set: SpectraSet, science_name: str = 'science') -> SpectraSet:
         """
         Execute de-blazing correction stage.
@@ -608,6 +622,7 @@ class ProcessingPipeline:
             logger.error(f"Error in de-blazing: {e}")
             raise
 
+    # 保存平场模型及校正产物。
     def _save_step4_flat_products(self, out_dir: Path):
         """Delegate Step-4 flat-model persistence to flat_correction module."""
         if self.state.flat_field is None:
@@ -619,6 +634,7 @@ class ProcessingPipeline:
             save_plots=self.config.get_bool('reduce', 'save_plots', True),
         )
 
+    # 建模并扣除平场与科学图像的散射光。
     def stage_scattered_light_subtraction_science(self, science_image: np.ndarray,
                                                   science_name: str = 'science') -> np.ndarray:
         """Step 3: build/subtract scattered-light models for master flat and current science frame."""
@@ -730,6 +746,7 @@ class ProcessingPipeline:
         self._report_progress(0.60, "Science Scattered Light Subtraction Complete")
         return corrected
 
+    # 选择已完成校正的标定文件。
     def get_best_calib_file(self, raw_calib_path: str) -> str:
         """Find the most processed version of the calibration file."""
         if not raw_calib_path:
@@ -752,6 +769,7 @@ class ProcessingPipeline:
             
         return raw_calib_path
 
+    # 依次执行完整光谱归约流程。
     def run_full_pipeline(self, raw_image_paths: Union[str, List[str]],
                          bias_filenames: List[str],
                          flat_filenames: List[str],
@@ -770,6 +788,11 @@ class ProcessingPipeline:
         """
         if isinstance(raw_image_paths, str):
             raw_image_paths = [raw_image_paths]
+
+        if self.config.get('telescope', 'instrument', '').strip().lower() == 'slit':
+            from specproc.core.slit_pipeline import SlitPipeline
+            return SlitPipeline(self.config).run(
+                raw_image_paths, bias_filenames, flat_filenames, calib_filenames)
 
         logger.info("=" * 60)
         logger.info("STARTING FULL SPECTRAL REDUCTION PIPELINE")
@@ -1149,10 +1172,12 @@ class ProcessingPipeline:
             logger.error("=" * 60)
             raise
 
+    # 返回当前流程处理状态。
     def get_state(self) -> ProcessingState:
         """Get current processing state."""
         return self.state
 
+    # 重置所有流程状态。
     def reset(self):
         """Reset pipeline state."""
         self.state.reset()

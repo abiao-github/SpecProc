@@ -3,6 +3,7 @@ Core data structures for spectral data representation.
 
 Defines classes for storing and managing spectral data throughout the reduction pipeline.
 """
+# 定义光谱、孔径、标定及流程状态数据结构。
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ import json
 from numpy.polynomial.chebyshev import chebval
 
 
+# 保存单个光谱孔径的位置与边界。
 @dataclass
 class ApertureLocation:
     """Single aperture (order) location and properties.
@@ -59,6 +61,7 @@ class ApertureLocation:
     is_interpolated: bool = False # True if the entire order was mathematically interpolated
     
     # ------------------------------------------------------------------
+    # 按稠密数组或切比雪夫系数计算位置。
     def _eval(self, coef, arr, x):
         """Return values at column positions *x*.
 
@@ -86,10 +89,12 @@ class ApertureLocation:
             return chebval(x, coef)
         return np.full_like(x, np.nan)
 
+    # 计算指定列坐标处的孔径中心。
     def get_position(self, y: np.ndarray) -> np.ndarray:
         """Get aperture center position at column coordinates *y*."""
         return self._eval(self.center_coef, self.center_arr, y)
 
+    # 计算指定列坐标处的孔径下边界。
     def get_lower(self, y: np.ndarray) -> np.ndarray:
         """Get lower boundary at column coordinates *y*."""
         if self.w_low_cheb_coef is not None:
@@ -100,6 +105,7 @@ class ApertureLocation:
             return center - w_low
         return self._eval(self.lower_coef, self.lower_arr, y)
 
+    # 计算指定列坐标处的孔径上边界。
     def get_upper(self, y: np.ndarray) -> np.ndarray:
         """Get upper boundary at column coordinates *y*."""
         if self.w_up_cheb_coef is not None:
@@ -111,6 +117,7 @@ class ApertureLocation:
         return self._eval(self.upper_coef, self.upper_arr, y)
 
 
+# 管理探测器上的全部光谱孔径。
 @dataclass
 class ApertureSet:
     """Collection of apertures (orders) for entire detector."""
@@ -119,15 +126,18 @@ class ApertureSet:
     norders: int = 0
     direct_axis: int = 0  # 0 for Y-direction, 1 for X-direction
 
+    # 将孔径加入集合并更新数量。
     def add_aperture(self, aperture: ApertureLocation):
         """Add aperture to set."""
         self.apertures[aperture.aperture] = aperture
         self.norders = len(self.apertures)
 
+    # 按编号查找孔径。
     def get_aperture(self, aperture_id: int) -> Optional[ApertureLocation]:
         """Retrieve aperture by ID."""
         return self.apertures.get(aperture_id)
 
+    # 返回排序后的孔径编号。
     def get_orders(self) -> list:
         """Return list of order numbers."""
         return sorted(self.apertures.keys())
@@ -136,6 +146,7 @@ class ApertureSet:
         """Return number of apertures (orders) in the set."""
         return len(self.apertures)
 
+    # 按偏移量更新孔径与阶次编号。
     def shift_orders(self, delta_m: int):
         """Shift all aperture IDs and order numbers by a constant offset."""
         if delta_m == 0:
@@ -148,6 +159,7 @@ class ApertureSet:
             new_apertures[new_id] = ap
         self.apertures = new_apertures
 
+    # 从标记图像重建孔径边界集合。
     @staticmethod
     def from_labeled_mask(order_labels: np.ndarray) -> 'ApertureSet':
         """Build an ApertureSet from a labeled order mask image.
@@ -191,6 +203,7 @@ class ApertureSet:
 
         return aps
 
+    # 载入轨迹中心及切比雪夫宽度系数。
     def load_trace_coefs(self, coefs_path: str):
         """Load trace centers and Chebyshev width coefficients from a companion JSON file.
 
@@ -220,6 +233,7 @@ class ApertureSet:
                 ap.w_low_cheb_coef = np.array(entry['w_low_cheb'], dtype=np.float64)
 
 
+# 保存单个光谱阶次的一维数据。
 @dataclass
 class Spectrum:
     """1D spectrum data for a single order."""
@@ -240,16 +254,19 @@ class Spectrum:
     ra: float = 0.0           # Right Ascension
     dec: float = 0.0          # Declination
 
+    # 返回光谱包含的像素数量。
     def npixel(self) -> int:
         """Number of pixels in spectrum."""
         return len(self.flux)
 
+    # 返回标记为有效的像素掩码。
     def get_good_pixels(self) -> np.ndarray:
         """Get mask of good pixels."""
         if self.mask is None:
             return np.ones(len(self.flux), dtype=bool)
         return self.mask == 0
 
+    # 将光谱数据转换为可存储字典。
     def to_dict(self) -> dict:
         """Convert to dictionary for storage."""
         return {
@@ -264,6 +281,7 @@ class Spectrum:
             'bjd': self.bjd,
         }
 
+    # 深拷贝光谱及其数组数据。
     def copy(self):
         """Return a deep copy of this Spectrum instance.
 
@@ -284,6 +302,7 @@ class Spectrum:
         )
 
 
+# 管理全部阶次的一维光谱集合。
 @dataclass
 class SpectraSet:
     """Collection of 1D spectra for all orders."""
@@ -291,19 +310,23 @@ class SpectraSet:
     spectra: Dict[int, Spectrum] = field(default_factory=dict)
     norders: int = 0
 
+    # 将光谱加入集合并更新数量。
     def add_spectrum(self, spec: Spectrum):
         """Add spectrum to set."""
         self.spectra[spec.aperture] = spec
         self.norders = len(self.spectra)
 
+    # 按孔径编号查找光谱。
     def get_spectrum(self, aperture_id: int) -> Optional[Spectrum]:
         """Retrieve spectrum by aperture ID."""
         return self.spectra.get(aperture_id)
 
+    # 返回排序后的孔径编号。
     def get_orders(self) -> list:
         """Return list of aperture numbers."""
         return sorted(self.spectra.keys())
 
+    # 按偏移量更新孔径与阶次编号。
     def shift_orders(self, delta_m: int):
         """Shift all aperture IDs and order numbers by a constant offset."""
         if delta_m == 0:
@@ -316,6 +339,7 @@ class SpectraSet:
             new_spectra[new_id] = spec
         self.spectra = new_spectra
 
+# 保存平场图像、校正图及相关数据。
 @dataclass
 class FlatField:
     """Flat field calibration data."""
@@ -362,6 +386,7 @@ class FlatField:
     # Metadata
     exptime: float = 1.0
 
+    # 按偏移量更新孔径与阶次编号。
     def shift_orders(self, delta_m: int):
         """Shift all order-keyed dictionaries by a constant offset."""
         if delta_m == 0:
@@ -374,6 +399,7 @@ class FlatField:
             self.flat_spec.shift_orders(delta_m)
         # aperture_set 统一在外部进行 shift，这里不重复处理
 
+# 保存二维波长定标模型及质量信息。
 @dataclass
 class WaveCalib:
     """Wavelength calibration solution."""
@@ -401,6 +427,7 @@ class WaveCalib:
     calib_type: str = "ThAr"  # Calibration lamp type
     delta_m: int = 0          # Order offset applied to match references
 
+    # 将二维像素与阶次坐标映射为波长。
     def apply_to_pixel(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Apply wavelength calibration to pixel coordinates.
 
@@ -433,6 +460,7 @@ class WaveCalib:
         return m_lambda / y
 
 
+# 保存单个处理阶段的配置参数。
 @dataclass
 class ProcessingConfig:
     """Configuration for a single processing stage."""
@@ -441,15 +469,18 @@ class ProcessingConfig:
     params: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
 
+    # 读取阶段参数并提供默认值。
     def get_param(self, key: str, default: Any = None) -> Any:
         """Get parameter value."""
         return self.params.get(key, default)
 
+    # 设置阶段配置参数。
     def set_param(self, key: str, value: Any):
         """Set parameter value."""
         self.params[key] = value
 
 
+# 记录光谱归约各阶段的执行状态。
 @dataclass
 class ProcessingState:
     """State tracking for reduction pipeline."""
@@ -480,6 +511,7 @@ class ProcessingState:
     current_stage: str = ""
     progress: float = 0.0  # 0.0 to 1.0
 
+    # 清除处理结果并重置阶段标记。
     def reset(self):
         """Reset pipeline state."""
         self.bias_done = False

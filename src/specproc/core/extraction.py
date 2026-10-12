@@ -3,6 +3,7 @@ Spectrum extraction stage of spectral reduction pipeline.
 
 Handles 1D spectrum extraction using sum or optimal (Gaussian) methods.
 """
+# 从二维图像中提取求和或最优一维光谱。
 
 import numpy as np
 import logging
@@ -15,9 +16,11 @@ from specproc.plotting.spectra_plotter import plot_spectrum_to_file, plot_spectr
 logger = logging.getLogger(__name__)
 
 
+# 负责从二维图像提取一维光谱。
 class SpectrumExtractor:
     """Handles 1D spectrum extraction from 2D images."""
 
+    # 设置最优提取阈值与默认方法。
     def __init__(self, optimal_sigma: float = 3.0, method: str = 'optimal'):
         """
         Initialize spectrum extractor.
@@ -30,6 +33,7 @@ class SpectrumExtractor:
         self.method = method
         self.extracted_spectra = None
 
+    # 对孔径内像素求和提取光谱。
     def sum_extraction(self, image: np.ndarray, aperture_positions: np.ndarray,
                       lower_bounds: np.ndarray = None, upper_bounds: np.ndarray = None) -> np.ndarray:
         """
@@ -71,6 +75,7 @@ class SpectrumExtractor:
 
         return spectrum
 
+    # 按空间光强剖面最优提取光谱。
     def optimal_extraction(self, image: np.ndarray, aperture_positions: np.ndarray,
                           spatial_profile_2d: Optional[np.ndarray] = None,
                           lower_bounds: np.ndarray = None,
@@ -138,6 +143,7 @@ class SpectrumExtractor:
 
         return spectrum, error
 
+    # 对全部孔径执行光谱提取。
     def extract_aperture_set(self, image: np.ndarray, apertures: ApertureSet,
                            wavelength_calib: Optional[WaveCalib] = None,
                            flat_field: Optional[FlatField] = None,
@@ -212,6 +218,7 @@ class SpectrumExtractor:
 
         return spectra_set
 
+    # 将提取的光谱集合写入FITS。
     def save_spectra(self, output_path: str, spectra_set: SpectraSet):
         """Save extracted spectra to FITS file."""
         if spectra_set is None:
@@ -255,6 +262,7 @@ class SpectrumExtractor:
         logger.info(f"Saved {norders} spectra to {output_path}")
 
 
+# 执行光谱提取并保存相关产物。
 def process_extraction_stage(science_image: np.ndarray,
                             apertures: ApertureSet,
                             output_dir_base: str,
@@ -313,6 +321,7 @@ def process_extraction_stage(science_image: np.ndarray,
 
     return spectra_set
 
+# 从FITS文件载入提取光谱。
 def load_extracted_spectra(filepath: str) -> SpectraSet:
     """Load extracted spectra from FITS file."""
     from astropy.io import fits

@@ -3,6 +3,7 @@ Order stitching stage.
 
 Merge overlapping neighboring echelle orders into one continuous 1D spectrum.
 """
+# 对重叠的相邻光谱阶次进行拼接。
 
 import logging
 from pathlib import Path
@@ -17,6 +18,7 @@ from specproc.plotting.spectra_plotter import plot_spectrum_to_file
 logger = logging.getLogger(__name__)
 
 
+# 筛除无效数据并按波长排序。
 def _clean_order_arrays(wavelength: np.ndarray, flux: np.ndarray,
                         error: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """Clean and sort one order by wavelength."""
@@ -39,6 +41,7 @@ def _clean_order_arrays(wavelength: np.ndarray, flux: np.ndarray,
     return wl, fl, er
 
 
+# 缩放并合并重叠阶次的光谱。
 def stitch_orders(spectra_set: SpectraSet,
                  min_overlap_points: int = 20) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """
@@ -133,6 +136,7 @@ def stitch_orders(spectra_set: SpectraSet,
     return stitched_wl, stitched_fl, stitched_er
 
 
+# 将拼接光谱保存为FITS表格。
 def save_stitched_spectrum(output_path: str, wavelength: np.ndarray,
                           flux: np.ndarray, error: Optional[np.ndarray] = None):
     """Save stitched 1D spectrum as FITS table."""
@@ -157,6 +161,7 @@ def save_stitched_spectrum(output_path: str, wavelength: np.ndarray,
     logger.info(f"Saved stitched spectrum to {out}")
 
 
+# 执行阶次拼接并保存结果。
 def process_order_stitching_stage(spectra_set: SpectraSet,
                                  output_dir_base: str,
                                  output_subdir: str = 'step8_stitching',

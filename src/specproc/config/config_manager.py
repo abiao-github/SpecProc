@@ -4,6 +4,7 @@ Configuration management for SpecProc.
 Handles reading and writing INI-format configuration files,
 with support for multiple telescope profiles and processing parameters.
 """
+# 读取、查询并保存处理配置与望远镜配置档。
 
 import configparser
 from pathlib import Path
@@ -13,22 +14,101 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Directory containing the packaged configuration files: the generic
+# default_config.cfg (used when no config is specified) plus one
+# default_config_<profile>.cfg file per supported telescope/instrument.
+PACKAGE_CONFIG_DIR = Path(__file__).parent
 
+
+# 列出已打包的望远镜配置档。
+def list_telescope_profiles() -> Dict[str, Path]:
+    """List packaged telescope configuration profiles.
+
+    Scans the package config directory for files named
+    ``default_config_<profile>.cfg`` (e.g. ``default_config_XL216_hrs.cfg``
+    for the Xinglong 2.16m telescope HRS, ``default_config_MSTG193_slit.cfg``
+    for the Muztagh-Ata 1.93m telescope slit spectrograph). The generic
+    ``default_config.cfg`` used as the fallback when no config is specified
+    is not included.
+
+    Returns:
+        Dict mapping profile name (e.g. 'XL216_hrs') to its config file path.
+    """
+    profiles: Dict[str, Path] = {}
+    for cfg_file in sorted(PACKAGE_CONFIG_DIR.glob("default_config_*.cfg")):
+        profile_name = cfg_file.stem[len("default_config_"):]
+        if profile_name:
+            profiles[profile_name] = cfg_file
+    return profiles
+
+
+# 按名称查找对应的配置档文件。
+def resolve_telescope_profile(name: str) -> Optional[Path]:
+    """Resolve a telescope profile name to its packaged config file path.
+
+    Accepts the bare profile name (e.g. ``XL216_hrs``), the packaged config
+    file name (``default_config_XL216_hrs.cfg``), or that file name without
+    its extension. Matching is case-insensitive.
+
+    Args:
+        name: Telescope profile name or packaged config file name.
+
+    Returns:
+        Path to the matching packaged config file, or None if no profile
+        matches.
+    """
+    if not name:
+        return None
+
+    candidates = {name, name.lower()}
+    stem = Path(name).stem
+    if stem.startswith("default_config_"):
+        suffix = stem[len("default_config_"):]
+        candidates.add(suffix)
+        candidates.add(suffix.lower())
+
+    for profile_name, path in list_telescope_profiles().items():
+        if profile_name in candidates or profile_name.lower() in candidates:
+            return path
+    return None
+
+
+# 管理望远镜与数据处理配置。
 class ConfigManager:
     """Management of telescope and processing configuration."""
 
+    # 读取指定配置或载入默认配置。
     def __init__(self, config_path: Optional[str] = None):
         """
         Initialize configuration manager.
 
         Args:
-            config_path: Path to config file. If None, auto-detects latest .cfg file.
+            config_path: Path to config file, or the name of a packaged
+                telescope profile (e.g. 'XL216_hrs', 'MSTG193_slit') as
+                returned by list_telescope_profiles(). If None, auto-detects
+                the latest .cfg file in the current directory.
         """
         self.config = configparser.ConfigParser()
-        self.config_path = Path(config_path) if config_path else None
 
-        if config_path and Path(config_path).exists():
-            self.load(config_path)
+        resolved_config_path: Optional[Path] = None
+        if config_path:
+            candidate = Path(config_path).expanduser()
+            if candidate.exists():
+                resolved_config_path = candidate
+            else:
+                # Not a literal path: try resolving it as a packaged
+                # telescope profile name (e.g. 'XL216_hrs').
+                profile_path = resolve_telescope_profile(config_path)
+                if profile_path is not None:
+                    logger.info(
+                        f"Resolved telescope profile '{config_path}' to {profile_path}"
+                    )
+                    resolved_config_path = profile_path
+
+        self.config_path = resolved_config_path
+
+        if resolved_config_path is not None:
+            self.load(resolved_config_path)
         else:
             # Auto-detect latest .cfg file in current directory
             detected_config = self._find_latest_config()
@@ -48,6 +128,7 @@ class ConfigManager:
                     except Exception as e:
                         logger.warning(f"Failed to create default user config at {default_user_config_path}: {e}")
 
+    # 查找当前目录中最新的配置文件。
     def _find_latest_config(self) -> Optional[Path]:
         """
         Find the latest .cfg file in current directory (excluding default_config.cfg).
@@ -64,6 +145,7 @@ class ConfigManager:
         # Return the most recently modified .cfg file
         return max(cfg_files, key=lambda f: f.stat().st_mtime)
 
+    # 载入配置目录中的默认参数。
     def _load_defaults(self):
         """Load default configuration values."""
         # Load from default_config.cfg in the package directory
@@ -75,6 +157,7 @@ class ConfigManager:
             # Fallback to hardcoded defaults if file not found
             self._load_hardcoded_defaults()
 
+    # 设置内置的默认配置参数。
     def _load_hardcoded_defaults(self):
         """Load hardcoded default configuration values."""
         # Data section
@@ -189,6 +272,7 @@ class ConfigManager:
             'readnoise': '5.0',
         }
 
+    # 从配置文件载入参数。
     def load(self, config_path: str):
         """Load configuration from file."""
         try:
@@ -199,6 +283,7 @@ class ConfigManager:
             logger.error(f"Error loading config from {config_path}: {e}")
             raise
 
+    # 将当前配置写入文件。
     def save(self, config_path: Optional[str] = None):
         """Save configuration to file."""
         path = config_path or self.config_path
@@ -219,6 +304,7 @@ class ConfigManager:
             logger.error(f"Error saving config to {path}: {e}")
             raise
 
+    # 获取指定配置节的全部参数。
     def get_section(self, section: str) -> Dict[str, str]:
         """Get all values in a section."""
         if section not in self.config:
@@ -226,6 +312,7 @@ class ConfigManager:
             return {}
         return dict(self.config[section])
 
+    # 读取配置值并按类型转换。
     def get(self, section: str, key: str, fallback: Any = None) -> Any:
         """
         Get configuration value with type conversion.
@@ -246,6 +333,7 @@ class ConfigManager:
         except Exception:
             return fallback
 
+    # 读取整数配置值。
     def get_int(self, section: str, key: str, fallback: int = 0) -> int:
         """Get integer configuration value."""
         try:
@@ -256,6 +344,7 @@ class ConfigManager:
         except Exception:
             return fallback
 
+    # 读取浮点数配置值。
     def get_float(self, section: str, key: str, fallback: float = 0.0) -> float:
         """Get float configuration value."""
         try:
@@ -266,6 +355,7 @@ class ConfigManager:
         except Exception:
             return fallback
 
+    # 读取布尔配置值。
     def get_bool(self, section: str, key: str, fallback: bool = False) -> bool:
         """Get boolean configuration value."""
         try:
@@ -276,12 +366,14 @@ class ConfigManager:
         except Exception:
             return fallback
 
+    # 设置指定配置项的值。
     def set(self, section: str, key: str, value: Any):
         """Set configuration value."""
         if section not in self.config:
             self.config[section] = {}
         self.config[section][key] = str(value)
 
+    # 解析并返回原始数据目录。
     def get_rawdata_path(self) -> str:
         """
         Get raw data directory path with proper expansion.
@@ -298,6 +390,7 @@ class ConfigManager:
             path = Path.cwd() / path
         return path.as_posix()
 
+    # 解析并返回结果输出目录。
     def get_output_path(self) -> str:
         """
         Get output directory path with proper expansion.
@@ -311,6 +404,7 @@ class ConfigManager:
             path = Path.cwd() / path
         return path.as_posix()
 
+    # 创建配置指定的输出目录。
     def create_directories(self):
         """Create output directories specified in config."""
         output_path = self.get_output_path()
@@ -329,6 +423,7 @@ class ConfigManager:
         return f"ConfigManager(path={self.config_path})"
 
 
+# 生成并保存默认配置文件。
 def create_default_config(output_path: str):
     """Create a default configuration file."""
     manager = ConfigManager()

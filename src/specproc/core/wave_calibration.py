@@ -4,6 +4,7 @@ Wavelength calibration stage of spectral reduction pipeline.
 Handles ThAr line identification, polynomial fitting,
 and wavelength solution computation.
 """
+# 匹配参考发射线并拟合二维波长定标模型。
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,14 +22,17 @@ from specproc.plotting.spectra_plotter import plot_wavelength_calibration
 logger = logging.getLogger(__name__)
 
 
+# 负责建立并应用波长定标模型
 class WavelengthCalibrator:
     """Handles wavelength calibration from reference lines."""
 
+    # 初始化对象状态
     def __init__(self):
         """Initialize wavelength calibrator."""
         self.wave_calib = None
         self.reference_lines = {}
 
+    # 读取灯谱参考波长列表
     def load_line_list(self, filepath: str) -> np.ndarray:
         """
         Load reference line list for calibration lamps from a file.
@@ -56,6 +60,7 @@ class WavelengthCalibrator:
             logger.error(f"Failed to load linelist from {filepath}: {e}")
             return np.array([])
 
+    # 检测光谱中的发射线峰
     def detect_lines_in_spectrum(self, spectrum: np.ndarray,
                                 wavelength: Optional[np.ndarray] = None,
                                 threshold: float = 10.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -93,6 +98,7 @@ class WavelengthCalibrator:
         snrs = properties['prominences'] / mad_noise if mad_noise > 0 else np.zeros_like(peaks, dtype=float)
         return peaks, spectrum[peaks], snrs
 
+    # 读取级次与波长锚点
     def load_anchor_file(self, anchor_file: str) -> Dict[int, np.ndarray]:
         """
         读取灯谱证认的发射线锚点文件。
@@ -123,6 +129,7 @@ class WavelengthCalibrator:
             raise
         return anchors
 
+    # 从文件恢复波长定标模型
     def load_calibration(self, filepath: str) -> WaveCalib:
         """
         从先前保存的 FITS 文件中加载波长定标模型 (Pre-computed Calibration File).
@@ -150,6 +157,7 @@ class WavelengthCalibrator:
         self.wave_calib = wave_calib
         return wave_calib
 
+    # 搜索级次偏移并匹配锚点
     def find_order_offset_and_match(self, detected_peaks: Dict[int, np.ndarray], anchors: Dict[int, np.ndarray]) -> Tuple[int, List[Tuple[float, int, float]]]:
         """
         寻找最佳偏移 (delta_m = True_Order - Aperture_Number) 并返回成功匹配的锚点 (X_obs, True_Order, wavelength)。
@@ -311,6 +319,7 @@ class WavelengthCalibrator:
             
         return best_offset, best_global_matched_points
 
+    # 用粗定标匹配完整谱线目录
     def match_full_catalog(self, detected_peaks: Dict[int, np.ndarray], rough_calib: WaveCalib, delta_m: int, full_linelist: np.ndarray, tolerance: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
         """
         利用拟合的 2D 粗校准模型，预测所有 detected_peaks 的波长并匹配全量线库。
@@ -339,6 +348,7 @@ class WavelengthCalibrator:
                     
         return np.array(pix_pos), np.array(matched_wave)
 
+    # 拟合像素与级次的二维波长关系
     def fit_wavelength_polynomial(self, pixel_positions: np.ndarray,
                                  wavelengths: np.ndarray,
                                  xorder: int = 4, yorder: int = 4,
@@ -492,6 +502,7 @@ class WavelengthCalibrator:
             logger.error(f"Error fitting wavelength polynomial: {e}")
             raise
 
+    # 将波长定标应用于一维光谱
     def apply_wavelength_calibration(self, spectrum: np.ndarray,
                                     pixel_array: np.ndarray,
                                     aperture_y: float = 0.0) -> np.ndarray:
@@ -514,6 +525,7 @@ class WavelengthCalibrator:
 
         return wavelength
 
+    # 保存波长定标系数和元数据
     def save_calibration(self, output_path: str):
         """Save wavelength calibration to FITS file."""
         if self.wave_calib is None:
@@ -545,6 +557,7 @@ class WavelengthCalibrator:
         logger.info(f"Saved wavelength calibration to {output_path}")
 
 
+# 绘制定标散点与残差诊断图
 def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str, max_residual: float = 0.5):
     """生成波长定标诊断图（散点图及拟合残差）。"""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
@@ -606,6 +619,7 @@ def _plot_calib_diagnostic(wave_calib: WaveCalib, plot_file: str, max_residual: 
     plt.savefig(plot_file, dpi=150)
     plt.close(fig)
 
+# 绘制二维定标曲面与残差图
 def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str, max_residual: float = 0.5):
     """生成二维波长定标拟合曲面和残差诊断图。"""
     fig = plt.figure(figsize=(14, 6))
@@ -664,6 +678,7 @@ def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str, max_re
     plt.savefig(plot_file, dpi=150)
     plt.close(fig)
 
+# 绘制各级次锚点匹配并保存为 PDF
 def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray], 
                               matched_anchors: List[Tuple[float, int, float]], 
                               delta_m: int, 
@@ -730,6 +745,7 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
             pdf.savefig(fig)
             plt.close(fig)
 
+# 查找配置数据文件的实际路径
 def _resolve_data_path(filepath: str) -> str:
     """Resolve calibration data path (supports running from arbitrary working directories)."""
     if not filepath:
@@ -753,6 +769,7 @@ def _resolve_data_path(filepath: str) -> str:
         
     return filepath
 
+# 完成灯谱识别、拟合与定标验证
 def process_wavelength_stage(lamp_spectra: SpectraSet,
                              config: ConfigManager,
                              output_dir_base: str,

@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
     # 构建主窗口界面。
     def init_ui(self):
         """Initialize user interface."""
-        self.setWindowTitle("SpecProc - Spectral Data Reduction")
+        self.setWindowTitle("自动化光谱处理软件SpecProc")
         self.setGeometry(100, 100, 1400, 900)
 
         # Create main widget

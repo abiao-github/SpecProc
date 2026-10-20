@@ -13,9 +13,9 @@ jobs:
       contents: read             # checkout 代码所需
       id-token: write            # 关键：Trusted Publishing (OIDC) 必需
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -26,3 +26,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true   # 让重跑变成“幂等”操作，已存在的文件自动跳过

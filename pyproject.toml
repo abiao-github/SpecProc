@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "A spectral processing tool"
 readme = "README.md"
 requires-python = ">=3.6"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Niu, Hubiao", email = "niuhubiao@xao.ac.cn"}
 ]

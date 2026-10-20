@@ -32,6 +32,9 @@ Repository = "https://github.com/yourusername/specproc"
 
 [project.scripts]
 specproc = "specproc.main:main"
+specproc-air2vac = "specproc.utils.airvac:air2vac_main"
+specproc-vac2air = "specproc.utils.airvac:vac2air_main"
+specproc-identify = "specproc.gui.line_identifier:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

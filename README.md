@@ -2,7 +2,7 @@
 
 ![SpecProc GUI](docs/SpecProc.png)
 
-A complete PyQt-based graphical interface for reducing echelle spectrograph FITS data.
+A complete PyQt-based graphical interface for reducing slit/chelle spectrograph FITS data.
 
 ## Table of Contents
 

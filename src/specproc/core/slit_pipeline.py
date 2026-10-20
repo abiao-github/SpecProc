@@ -24,6 +24,7 @@ from astropy.io import fits
 from scipy import ndimage
 
 from specproc.core.data_structures import Spectrum, SpectraSet
+from specproc.core.line_identification import find_arc_peaks, refine_with_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class SlitPipeline:
         self.wave_order = c.get_int('slit', 'wave_poly_order', 3)
         self.wave_hint = (c.get_float('slit', 'wave_start', 0.0), c.get_float('slit', 'wave_end', 0.0))
         self.match_tol = c.get_float('slit', 'match_tolerance', 3.0)
+        self.peak_snr = c.get_float('slit', 'peak_snr', 8.0)
         self.snr_half_window = c.get_int('slit', 'snr_half_window', 50)
         self.snr_flux_frac = c.get_float('slit', 'snr_effective_fraction', 0.1)
         self.cosmic = c.get_bool('reduce', 'cosmic_enabled', True)
@@ -393,18 +395,8 @@ class SlitPipeline:
     # --------------------------------------------------------------- stage 6
     # 检测并定位标定光谱的发射峰。
     @staticmethod
-    def _find_peaks(spec: np.ndarray):
-        s = spec - ndimage.minimum_filter1d(ndimage.gaussian_filter1d(spec, 3), 61)
-        s = ndimage.gaussian_filter1d(s, 1.0)
-        noise = 1.4826 * np.median(np.abs(s - np.median(s))) + 1e-9
-        pk = [i for i in range(2, len(s) - 2)
-              if s[i] > s[i - 1] and s[i] >= s[i + 1] and s[i] > 8 * noise and s[i] > s[i - 2]]
-        out = []
-        for i in pk:
-            lo, hi = max(i - 3, 0), min(i + 4, len(s))
-            w = np.clip(s[lo:hi], 0, None)
-            out.append((float((np.arange(lo, hi) * w).sum() / w.sum()), float(s[i])))
-        return out
+    def _find_peaks(spec: np.ndarray, snr: float = 8.0):
+        return find_arc_peaks(spec, snr)
 
     # 读取并排序参考波长目录。
     def _load_catalog(self) -> np.ndarray:
@@ -437,10 +429,10 @@ class SlitPipeline:
                 rows.append((float(parts[0]), float(parts[1])))
             except (ValueError, IndexError):
                 continue
-        if len(rows) < self.wave_order + 1:
+        if len(rows) < 2:
             logger.warning(f"Identification file {path} has too few lines")
             return None
-        logger.info(f"Using {len(rows)} identified lines from {path}")
+        logger.info(f"Using {len(rows)} identified (anchor) lines from {path}")
         return np.array(rows)
 
     # 依据波长提示匹配谱线与目录。
@@ -473,7 +465,7 @@ class SlitPipeline:
     def _wavelength_solution(self, arc_flux: np.ndarray, d: Path, tag: str = 'arc'):
         npix = len(arc_flux)
         d.mkdir(parents=True, exist_ok=True)
-        peaks = self._find_peaks(arc_flux)
+        peaks = self._find_peaks(arc_flux, self.peak_snr)
         with open(d / f'{tag}_peaks.csv', 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(['pixel', 'flux'])
@@ -482,6 +474,14 @@ class SlitPipeline:
 
         pairs = self._load_id_file()
         source = 'identification_file'
+        if pairs is not None:
+            catalog = self._load_catalog()
+            if len(catalog):
+                n_anchor = len(pairs)
+                pairs, _ = refine_with_catalog([p[0] for p in peaks], pairs, catalog,
+                                               self.wave_order, self.match_tol)
+                logger.info(f"Anchors {n_anchor} -> {len(pairs)} lines after full-catalogue matching")
+                source = 'anchors+catalog'
         if pairs is None:
             pairs = self._auto_identify(peaks, npix, self._load_catalog())
             source = 'auto_match'

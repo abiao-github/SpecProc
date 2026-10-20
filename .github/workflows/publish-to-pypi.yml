@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi            # 与 PyPI 上填写的 Environment name 保持一致
     permissions:
+      contents: read             # checkout 代码所需
       id-token: write            # 关键：Trusted Publishing (OIDC) 必需
     steps:
       - uses: actions/checkout@v4

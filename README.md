@@ -470,9 +470,10 @@ stages: overscan/bias → pixel flat → cosmic rays → star trace + sky subtra
 sum/optimal extraction → 1-D wavelength solution. Frame types are taken from file
 names (`frame_type_source = filename`; bias / flat / FeAr / dark, rest = science).
 Run the red and blue cameras separately (one directory each). Wavelength
-calibration needs `[slit] identification_file` (pixel, wavelength rows; candidate
-pixels are written to `step7_wavelength/<lamp frame>_peaks.csv`) or `wave_start`/`wave_end`
-hints; otherwise spectra are saved on a pixel axis.
+calibration needs `[slit] identification_file` (pixel, wavelength rows; generate it
+with `specproc-match-anchors`, candidate pixels are also written to
+`step7_wavelength/<lamp frame>_peaks.csv`) or `wave_start`/`wave_end` hints; otherwise
+spectra are saved on a pixel axis.
 
 Slit-mode output layout (same numbering as HRS; steps not needed are omitted):
 `step1_basic/{overscan_corrected,bias_subtracted,cosmic_corrected}`, `step2_trace` (slit trace of the master flat: centre and both edges, plus each
@@ -497,6 +498,38 @@ of the residual to a quadratic fit). SNR is a dimensionless ratio, labelled
 (`step5_extraction/*_spec_pixel.pdf`) and in Å after it (`step7_wavelength/*_spec_wave.pdf`).
 Values are annotated on the plots and stored as `SNRPxx`/`SNRWxx` keywords in the `*_spec.fits` table.
 
+**Automatic anchor lines (slit mode)**: `specproc-match-anchors` detects the strong
+peaks in an extracted lamp spectrum, matches them against a high-resolution reference
+lamp spectrum (the NOIRLAB/KPNO FeAr atlas `calib_data/linelists/fear.fits` is
+bundled), fits a low-order pixel → wavelength polynomial and writes a clean anchor
+CSV plus a diagnostic figure. The first two columns (0-based pixel, wavelength in Å)
+are exactly the `[slit] identification_file` format; the pipeline then extends these
+anchors to the full `full_linelist` catalogue for the final wavelength solution.
+
+```bash
+# Muztagh-Ata 1.93 m / RR2000V example
+specproc-match-anchors \
+    --lamp output/step5_extraction/RR2000V_FeAr_0.8silt_0.2s_1_spec.fits \
+    --reference src/specproc/calib_data/linelists/fear.fits \
+    --linelist  src/specproc/calib_data/linelists/fear.txt \
+    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_R_ids.csv \
+    --plot      docs/mstg193slit_R_anchor_match.png
+```
+
+The search scans the dispersion curvature and matches the strongest reference lines,
+so it works without manual pairs and without a `wave_start`/`wave_end` hint.  Supplying
+`--config` or `--wave-range` only adds a soft preference for that range; it never cuts the
+reference catalogue, so a slightly wrong hint cannot force a wrong alias. For a
+typical RR2000V frame the cubic extrapolates to ≈3976–11677 Å, while the anchors
+themselves span ≈5912–9784 Å; the selected anchors leave ≈0.3 Å residuals. The blue
+extrapolation has been checked against the night-sky spectrum ([OI] 5577/6300/6363,
+Na I and Hα agree within 0.4 Å); the red end beyond 9800 Å remains approximate.
+Always inspect the diagnostic figure (spectrum, zoomed observed/reference overlay and
+residuals) before using the file, and re-run the tool if the grating, slit or camera
+focus changes. If a frame yields too few anchors, lower `--catalog-frac` (e.g. 0.005)
+or `--catalog-min-snr` to keep more reference lines, then check the extra lines in
+the figure.
+
 **CLI Workflow**:
 1. Follow prompts to select files
 2. Select processing stages (0-7, or Enter for all)
@@ -512,8 +545,8 @@ calib_data/
 ├── linelists/              # Lamp emission line catalogs
 │   ├── thar-noao.dat      # ThAr lamp lines (Xinglong 2.16m HRS recommended)
 │   ├── thar.dat           # Standard ThAr lamp lines
-│   ├── FeAr.dat           # FeAr lamp lines
-└── ...
+│   ├── fear.txt           # FeAr lamp line list (Willmarth)
+│   └── fear.fits          # FeAr atlas spectrum (NOIRLAB/KPNO)
 └── telescopes/             # Telescope-specific calibration files
     ├── generic/           # Generic configuration template
     └── xinglong216hrs/    # Xinglong 2.16m telescope
@@ -528,7 +561,8 @@ calib_data/
 **Available linelist files**:
 - `thar-noao.dat` - ThAr lamp lines (Xinglong 2.16m HRS recommended)
 - `thar.dat` - Standard ThAr lamp lines
-- `FeAr.dat` - FeAr lamp lines
+- `fear.txt` - FeAr lamp lines (Willmarth 3000-10,000 Å)
+- `fear.fits` - NOIRLAB/KPNO FeAr atlas spectrum used by `specproc-match-anchors`
 
 **Supported lamp types**:
 - `ThAr` - Thorium-Argon (most common for echelle spectrographs)

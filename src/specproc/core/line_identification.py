@@ -202,7 +202,10 @@ def pattern_match_linear(peak_pix, catalog, peak_amp=None, wave_range=None, pixe
     order_ = np.argsort(cr)
     ca, cc, cr = ca[order_], cc[order_], cr[order_]
 
-    best, best_key = None, (0, 0.0)
+    # Collect the hypotheses first and score them in blocks.  Scoring one
+    # triple at a time needs one searchsorted call per hypothesis; with a dense
+    # catalogue that is tens of thousands of tiny calls and dominates run time.
+    scales, offsets = [], []
     min_span = 0.15 * span
     for i, j, k in itertools.combinations(range(len(key)), 3):
         p1, p2, p3 = key[i], key[j], key[k]
@@ -226,17 +229,32 @@ def pattern_match_linear(peak_pix, catalog, peak_amp=None, wave_range=None, pixe
                 scale, offset = scale[ok], offset[ok]
                 if len(scale) == 0:
                     continue
-            wl = scale[:, None] * pix[None, :] + offset[:, None]
-            idx = np.clip(np.searchsorted(cat, wl), 1, len(cat) - 1)
-            dist = np.minimum(np.abs(cat[idx] - wl), np.abs(cat[idx - 1] - wl))
-            tol_w = np.maximum(1.5 * np.abs(scale), 1e-3)[:, None]
-            hit = dist < tol_w
-            score = hit.sum(axis=1)
-            rms = np.sqrt((np.where(hit, dist, 0) ** 2).sum(axis=1) / np.maximum(score, 1))
-            n = int(np.argmax(score - 1e-6 * rms))
-            cand = (int(score[n]), -float(rms[n]))
-            if cand > best_key:
-                best_key, best = cand, np.array([scale[n], offset[n]])
+            scales.append(scale)
+            offsets.append(offset)
+
+    if not scales:
+        return None
+    scale_all = np.concatenate(scales)
+    offset_all = np.concatenate(offsets)
+    best, best_key = None, (0, 0.0)
+    block = 4096
+    for start in range(0, len(scale_all), block):
+        scale = scale_all[start:start + block]
+        offset = offset_all[start:start + block]
+        wl = scale[:, None] * pix[None, :] + offset[:, None]
+        idx = np.searchsorted(cat, wl.ravel())
+        idx = np.clip(idx, 1, len(cat) - 1).reshape(wl.shape)
+        dist = np.minimum(np.abs(cat[idx] - wl), np.abs(cat[idx - 1] - wl))
+        tol_w = np.maximum(1.5 * np.abs(scale), 1e-3)[:, None]
+        hit = dist < tol_w
+        score = hit.sum(axis=1)
+        rms = np.sqrt((np.where(hit, dist, 0) ** 2).sum(axis=1) / np.maximum(score, 1))
+        # np.argmax keeps the first maximum, so ties favour the earlier triple
+        # exactly as the old per-hypothesis loop did.
+        n = int(np.argmax(score - 1e-6 * rms))
+        cand = (int(score[n]), -float(rms[n]))
+        if cand > best_key:
+            best_key, best = cand, np.array([scale[n], offset[n]])
     if best is None or best_key[0] < 4:
         return None
     return best

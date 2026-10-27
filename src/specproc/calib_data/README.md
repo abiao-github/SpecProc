@@ -9,7 +9,7 @@ calib_data/
 ├── linelists/              # Lamp emission line catalogs
 │   ├── thar-noao.dat      # ThAr lamp lines (Xinglong 2.16m HRS)
 │   ├── thar.dat           # Standard ThAr lamp lines
-│   ├── FeAr.dat           # FeAr lamp lines
+│   ├── fear.txt           # FeAr lamp lines (Willmarth)
 │   └── ...
 └── telescopes/             # Telescope-specific calibration files
     ├── generic/           # Generic configuration template
@@ -28,7 +28,8 @@ Lamp linelist files are stored in `linelists/` directory.
 - `thar-noao.dat` - Th-Ar line list; recommended for Xinglong 2.16m HRS.
 - `thar.dat` - Th-Ar line list (3180-9665 Å).
 - `vacthar.dat` - `thar.dat` converted to vacuum wavelengths.
-- `FeAr.dat` - Fe-Ar hollow-cathode line list (3000-10,000 Å).
+- `fear.txt` - Fe-Ar hollow-cathode line list (3000-10,000 Å, Willmarth).
+- `fear.fits` - NOIRLAB/KPNO FeAr atlas spectrum (0.2 Å sampling, linear wavelength WCS) used by `specproc-match-anchors`.
 - `cuar.dat` - Cu-Ar line list.
 - `henear.dat`, `henearhres.dat`, `idhenear.dat` - He-Ne-Ar line lists, including a high-resolution list and an extended list.
 - `vacidhenear.dat` - `idhenear.dat` converted to vacuum wavelengths.

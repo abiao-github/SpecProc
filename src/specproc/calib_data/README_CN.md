@@ -9,7 +9,8 @@ calib_data/
 ├── linelists/              # 灯谱发射线目录
 │   ├── thar-noao.dat      # ThAr 灯谱线（兴隆216 HRS 推荐）
 │   ├── thar.dat           # 标准 ThAr 灯谱线
-│   ├── FeAr.dat           # FeAr 灯谱线
+│   ├── fear.txt           # FeAr 灯谱线表（Willmarth）
+│   ├── fear.fits          # FeAr 高分辨率图集光谱（NOIRLAB/KPNO）
 │   ├── henear*.dat        # He-Ne-Ar 灯谱线
 │   └── ...                # 其他灯谱线和夜空谱线
 └── telescopes/             # 望远镜特定校准文件
@@ -29,7 +30,8 @@ calib_data/
 - `thar-noao.dat` - Th-Ar 灯谱线；推荐用于兴隆 2.16 米 HRS。
 - `thar.dat` - Th-Ar 灯谱线（3180-9665 Å）。
 - `vacthar.dat` - `thar.dat` 转换得到的真空波长谱线。
-- `FeAr.dat` - Fe-Ar 空心阴极灯谱线（3000-10,000 Å）。
+- `fear.txt` - Fe-Ar 空心阴极灯谱线表（3000-10,000 Å，Willmarth）。
+- `fear.fits` - Fe-Ar 图集光谱（NOIRLAB/KPNO，0.2 Å 采样，带线性波长 WCS）。
 - `cuar.dat` - Cu-Ar 灯谱线。
 - `henear.dat`、`henearhres.dat`、`idhenear.dat` - He-Ne-Ar 灯谱线，包含高分辨率和扩展谱线表。
 - `vacidhenear.dat` - `idhenear.dat` 转换得到的真空波长谱线。
@@ -57,12 +59,38 @@ specproc-vac2air input.dat output.dat
 
 `thar-noao.dat` 文件没有注明波长为空气波长还是真空波长。与 `thar.dat` 比较后，证据支持它使用空气波长：在 `thar.dat` 的波长范围（3184.9486-9664.6983 Å）内，有 2,948 个波长数值与 `thar.dat` 完全一致。IRAF 线表说明指出 `vacthar.dat` 是由 `thar.dat` 转换得到的真空波长表，因此这些完全相同的值与两份原始线表均使用空气波长的判断相符。这是有较强依据的推断，并非 `thar-noao.dat` 文件中的明确声明；如能取得原始来源元数据，应以其为准。
 
-### 手动证认谱线（狭缝光谱）
+### 自动匹配锚点谱线（狭缝光谱，推荐）
 
-慕士塔格 1.93 米狭缝光谱仪没有预先计算的定标文件，需要先手动标记少量明显的灯谱线：
+慕士塔格 1.93 米狭缝光谱仪没有预先计算的定标文件。`specproc-match-anchors` 可以直接从
+抽取后的一维 FeAr 灯谱中自动找出明显的强发射线，与 `fear.fits` 图集光谱匹配，输出锚点
+文件并画诊断图；锚点文件的前两列（0 基像素、波长 Å）就是 `[slit] identification_file`
+所需格式，后续流水线会用 `full_linelist` 把锚点扩展到全量谱线并重新拟合。
 
 ```bash
-specproc-identify --lamp output/step5_extraction/<灯谱文件>_spec.fits --linelist calib_data/linelists/fear.dat
+specproc-match-anchors \
+    --lamp      output/step5_extraction/<灯谱文件>_spec.fits \
+    --reference src/specproc/calib_data/linelists/fear.fits \
+    --linelist  src/specproc/calib_data/linelists/fear.txt \
+    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_R_ids.csv \
+    --plot      docs/mstg193slit_R_anchor_match.png
+```
+
+工具会扫描色散曲率（光栅色散不是严格线性），用最强的一批参考谱线做形态匹配，再用三次
+多项式迭代精修；不需要人工点选，也不需要 `wave_start`/`wave_end` 提示（加 `--config`
+可给出近似范围提示；工具不会按该范围裁剪参考线表，因此范围写偏也不会被逼到假解）。RR2000V 的一帧，三次多项式
+外推到约 3976–11677 Å，锚点本身覆盖约 5912–9784 Å；锚点残差约 0.3 Å。蓝端外推已用
+夜天光验证（[OI] 5577/6300/6363、Na I、Hα 均在 0.4 Å 内），9800 Å 以外的红端仍是
+外推值。**使用前务必看一眼诊断图**（上：灯谱与锚点；中：观测/参考局部叠合；下：残差），
+确认匹配无误。若某帧锚点太少，可调低 `--catalog-frac`（如 0.005）或
+`--catalog-min-snr` 以保留更多参考线，再在图中核对新增的谱线。若更换光栅、狭缝或
+重新调焦，应重新生成锚点文件。
+
+### 手动证认谱线（狭缝光谱）
+
+若自动匹配因灯谱质量差而失败，也可用交互工具手动标记少量明显的灯谱线：
+
+```bash
+specproc-identify --lamp output/step5_extraction/<灯谱文件>_spec.fits --linelist calib_data/linelists/fear.txt
 ```
 
 （未安装时可用 `python -m specproc.gui.line_identifier`；`--lamp` 和 `--linelist` 可省略，在窗口中载入。）窗口上方显示抽取的一维灯谱（横轴为像素），下方把线表画成零基线上的 δ 函数（横轴为波长）。可人工点击一条灯谱峰，再点击对应参考谱线添加锚定线；右键可删除。设置 **low/upper** 波长范围和**信噪比阈值**后，即使没有人工配对，也可直接点击 **Auto identify**。程序根据谱线间隔的形态（最强灯谱峰的三线间距之比与线表中三线间距之比相比对，正反色散方向均尝试）寻找初始解，并剔除波长覆盖超出所设范围的解，再迭代匹配高于阈值的灯谱峰。人工配对（如有）会作为锚点保留。也可勾选 **Overlay reference lines**：用当前模型（或 low/upper 范围，波长随像素递减时勾选 **Flip**）把线表以竖线叠加在灯谱上，用 **Shift**/**Stretch**（或方向键：←/→ 平移，↑/↓ 拉伸）手动微调对齐，再点击 **Fit overlay** 匹配谱峰并拟合。保存后将 `[slit]` 中的 `identification_file` 设为该文件（`peak_snr` 设为同一阈值）：流水线据此拟合，再用 `full_linelist` 匹配并重新拟合最终多项式。线表的波长类型（空气或真空）须与所标注的波长一致。

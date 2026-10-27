@@ -140,6 +140,8 @@ output/
 # Large FITS files (exceeds GitHub's 100MB limit)
 # These are generated during data processing and should not be committed
 *.fits
+# Exception: the small FeAr atlas reference used by specproc-match-anchors
+!src/specproc/calib_data/linelists/fear.fits
 
 # Intermediate processing results
 # Users should control saving via [reduce.save_intermediate] in config

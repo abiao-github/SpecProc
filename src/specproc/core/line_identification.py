@@ -476,25 +476,42 @@ def pattern_match_linear(peak_pix, catalog, peak_amp=None, wave_range=None, pixe
         return None
     scale_all = np.concatenate(scales)
     offset_all = np.concatenate(offsets)
-    best, best_key = None, (0, 0.0)
-    block = 4096
-    for start in range(0, len(scale_all), block):
-        scale = scale_all[start:start + block]
-        offset = offset_all[start:start + block]
-        wl = scale[:, None] * pix[None, :] + offset[:, None]
-        idx = np.searchsorted(cat, wl.ravel())
-        idx = np.clip(idx, 1, len(cat) - 1).reshape(wl.shape)
-        dist = np.minimum(np.abs(cat[idx] - wl), np.abs(cat[idx - 1] - wl))
-        tol_w = np.maximum(1.5 * np.abs(scale), 1e-3)[:, None]
-        hit = dist < tol_w
-        score = hit.sum(axis=1)
-        rms = np.sqrt((np.where(hit, dist, 0) ** 2).sum(axis=1) / np.maximum(score, 1))
-        # np.argmax keeps the first maximum, so ties favour the earlier triple
-        # exactly as the old per-hypothesis loop did.
-        n = int(np.argmax(score - 1e-6 * rms))
-        cand = (int(score[n]), -float(rms[n]))
-        if cand > best_key:
-            best_key, best = cand, np.array([scale[n], offset[n]])
+    def score_hypotheses(scales, offsets, score_pix):
+        counts = np.zeros(len(scales), dtype=int)
+        rms = np.full(len(scales), np.inf)
+        block = 4096
+        for start in range(0, len(scales), block):
+            stop = min(start + block, len(scales))
+            scale = scales[start:stop]
+            offset = offsets[start:stop]
+            wl = scale[:, None] * score_pix[None, :] + offset[:, None]
+            idx = np.searchsorted(cat, wl.ravel())
+            idx = np.clip(idx, 1, len(cat) - 1).reshape(wl.shape)
+            dist = np.minimum(np.abs(cat[idx] - wl), np.abs(cat[idx - 1] - wl))
+            tol_w = np.maximum(1.5 * np.abs(scale), 1e-3)[:, None]
+            hit = dist < tol_w
+            counts[start:stop] = hit.sum(axis=1)
+            rms[start:stop] = np.sqrt(
+                (np.where(hit, dist, 0) ** 2).sum(axis=1)
+                / np.maximum(counts[start:stop], 1))
+        return counts, rms
+
+    # Most hypotheses are aliases that miss even the strongest observed lines.
+    # Rank cheaply against the seed peaks first, then run the full-spectrum
+    # score only for the best seeds.
+    coarse_count, coarse_rms = score_hypotheses(scale_all, offset_all, key)
+    coarse_score = coarse_count - 1e-6 * coarse_rms
+    shortlist_size = min(256, len(scale_all))
+    if len(scale_all) > shortlist_size:
+        shortlist = np.argpartition(coarse_score, -shortlist_size)[-shortlist_size:]
+        scale_all = scale_all[shortlist]
+        offset_all = offset_all[shortlist]
+
+    full_count, full_rms = score_hypotheses(scale_all, offset_all, pix)
+    full_score = full_count - 1e-6 * full_rms
+    best_idx = int(np.argmax(full_score))
+    best_key = (int(full_count[best_idx]), -float(full_rms[best_idx]))
+    best = np.array([scale_all[best_idx], offset_all[best_idx]])
     if best is None or best_key[0] < 4:
         return None
     return best
@@ -505,7 +522,7 @@ def refine_with_catalog(peak_pix, anchors: np.ndarray, catalog: np.ndarray, orde
                         initial_range: Optional[Tuple[float, float]] = None,
                         initial_pixel_range: Optional[Tuple[float, float]] = None,
                         peak_amp=None, initial_coef=None,
-                        poly_type: str = 'polynomial'):
+                        poly_type: str = 'polynomial', start_order: int = 3):
     """Match detected lamp peaks to a catalogue, optionally without manual anchors.
 
     With anchors, they give the rough solution and are always retained. With no
@@ -568,7 +585,8 @@ def refine_with_catalog(peak_pix, anchors: np.ndarray, catalog: np.ndarray, orde
 
     model = (Polynomial(np.asarray(initial_coef, dtype=float)[::-1])
              if initial_coef is not None
-             else _fit(anchors[:, 0], anchors[:, 1], 1))
+             else _fit(anchors[:, 0], anchors[:, 1],
+                       max(1, min(int(start_order), order, len(anchors) - 1))))
     if model is None:
         return _fallback()
 
@@ -584,7 +602,8 @@ def refine_with_catalog(peak_pix, anchors: np.ndarray, catalog: np.ndarray, orde
         if len(candidate) < 2:
             break
         pairs = candidate
-        model = _fit(pairs[:, 0], pairs[:, 1], min(order, it + 1))
+        model = _fit(pairs[:, 0], pairs[:, 1],
+                     min(order, max(it + 1, int(start_order))))
         if model is None:
             break
     final_fit = _fit(pairs[:, 0], pairs[:, 1], order)

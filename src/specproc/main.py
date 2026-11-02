@@ -351,12 +351,14 @@ def _profile_from_inputs(inputs: Sequence[str]) -> Optional[str]:
 
 
 # 将所选默认配置复制到当前目录。
-def copy_default_config_to_cwd(target_filename: str = 'specproc.cfg',
+def copy_default_config_to_cwd(target_filename: Optional[str] = None,
                                 profile: Optional[str] = None) -> Path:
     """Copy a packaged default config into the current working directory.
 
     Args:
-        target_filename: Name of the file to create in the current directory.
+        target_filename: Optional name of the file to create in the current
+            directory. By default, profile configs keep their packaged filename;
+            the generic config is copied as ``specproc.cfg``.
         profile: Optional telescope profile name (e.g. 'XL216_hrs' for the
             Xinglong 2.16m HRS, 'MSTG193_slit' for the Muztagh-Ata 1.93m slit
             spectrograph). If omitted, the generic default_config.cfg is used.
@@ -373,7 +375,8 @@ def copy_default_config_to_cwd(target_filename: str = 'specproc.cfg',
         if not default_config.exists():
             raise FileNotFoundError(f'Default config file not found: {default_config}')
 
-    target_path = Path.cwd() / target_filename
+    filename = target_filename or (default_config.name if profile else 'specproc.cfg')
+    target_path = Path.cwd() / filename
     if target_path.exists():
         print(f'Using existing working config: ./{target_path.name}')
         return target_path
@@ -445,7 +448,7 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
         '  specproc --mode cli 20241102_hrs\n'
         '  specproc --mode cli --config custom.cfg ./raw_data\n'
         '  specproc --mode cli --config XL216_hrs 20241102_hrs      # Process with a packaged telescope profile\n'
-        '  specproc --config MSTG193_slit  # Copy a packaged telescope profile to ./specproc.cfg\n'
+        '  specproc --config MSTG193_slit  # Copy the profile config with its original filename\n'
         '  specproc --profile mstg193slit raw_dir\n'
         '  specproc raw_dir                # Auto-detect profile from FITS headers\n'
         '\nCommand-line tools (not part of the reduction pipeline; '
@@ -467,7 +470,8 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
     parser.add_argument('--config', nargs='?', const=COPY_DEFAULT_CONFIG_SENTINEL, default=None,
                         help='Path to configuration file, or the name of a packaged telescope '
                              f'profile ({profiles_hint}). With inputs, the profile/config is used '
-                             'directly for processing; without inputs, it is copied to ./specproc.cfg. '
+                             'directly for processing; without inputs, the profile config keeps '
+                             'its packaged filename. '
                              'Pass --config without a value to copy the generic default config.')
     parser.add_argument('--profile', default=None,
                         help='Combined telescope+instrument profile, e.g. '
@@ -503,8 +507,11 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
         if profile is None and scan_inputs:
             profile = _profile_from_inputs(scan_inputs)
         if profile:
-            target = Path.cwd() / 'specproc.cfg'
-            if target.exists():
+            profile_path = resolve_telescope_profile(profile)
+            target = Path.cwd() / (profile_path.name if profile_path else 'specproc.cfg')
+            legacy_target = Path.cwd() / 'specproc.cfg'
+            if target.exists() or legacy_target.exists():
+                target = target if target.exists() else legacy_target
                 print(f'Using existing working config: ./{target.name} '
                       f'(profile {profile})')
                 args.config = str(target)
@@ -519,7 +526,7 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
     # If --config was given a value that is not an existing file path, try
     # resolving it as a packaged telescope profile name (e.g. 'XL216_hrs',
     # 'MSTG193_slit'). With inputs provided, use the profile directly for
-    # processing; without inputs, bootstrap ./specproc.cfg from it (mirrors
+    # processing; without inputs, copy the packaged config with its original name (mirrors
     # the no-value --config behavior above, but for a specific telescope).
     if args.config and not Path(args.config).expanduser().exists():
         profile_path = resolve_telescope_profile(args.config)

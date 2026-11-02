@@ -10,6 +10,7 @@ from specproc.core.line_identification import load_anchors, pattern_match_linear
 from specproc.core.anchor_matching import (
     Reference,
     _match_peaks,
+    _solution_score,
     detect_peaks,
     load_observed,
     load_reference,
@@ -61,6 +62,38 @@ def test_solve_dispersion_recovers_known_solution():
         min_separation=5.0, max_anchors=30, resolution=2000.0)
     assert len(anchors) >= 15
     assert anchors == sorted(anchors, key=lambda a: a[1])
+
+
+def test_solve_dispersion_keeps_assignments_stable_across_fit_orders():
+    flux, catalog, _ = _synthetic_lamp()
+    peaks = detect_peaks(flux, snr=8.0, min_width=0.5, max_width=8.0,
+                         distance=5, baseline_size=101)
+    solutions = [
+        solve_dispersion(
+            peaks, Reference(catalog), len(flux),
+            wave_range=(4800.0, 9600.0), order=order,
+            match_tol=3.0, min_tol=0.5)
+        for order in (3, 4, 5)
+    ]
+
+    assert all(solution is not None for solution in solutions)
+    assert np.array_equal(solutions[0].pairs, solutions[1].pairs)
+    assert np.array_equal(solutions[0].pairs, solutions[2].pairs)
+
+
+def test_solution_score_uses_reference_line_strength_as_a_weak_tiebreaker():
+    pixel = np.arange(8, dtype=float)
+    catalog = 5000.0 + pixel
+    amplitude = np.arange(1.0, 9.0)
+    coef = np.array([1.0, 5000.0])
+
+    aligned, _, _ = _solution_score(
+        coef, pixel, catalog, amplitude, catalog_strength=amplitude)
+    reversed_strength, _, _ = _solution_score(
+        coef, pixel, catalog, amplitude,
+        catalog_strength=amplitude[::-1])
+
+    assert aligned > reversed_strength
 
 
 def test_match_peaks_assigns_each_peak_once():

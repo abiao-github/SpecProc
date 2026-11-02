@@ -79,12 +79,14 @@ class SlitPipeline:
         self.flat_edge_margin = c.get_int('slit', 'flat_edge_margin', 40)
         self.trace_order = c.get_int('slit', 'trace_order', 2)
         self.trace_nbins = c.get_int('slit', 'trace_bins', 40)
+        self.trace_edge_tol = c.get_float('slit', 'trace_edge_tolerance', 3.0)
         self.aperture = c.get_int('slit', 'extract_half_width', 12)
         self.sky_gap = c.get_int('slit', 'sky_inner_offset', 20)
         self.aperture_mode = c.get('slit', 'aperture_mode', 'fixed').strip().lower()
         self.aperture_fwhm_factor = c.get_float('slit', 'aperture_fwhm_factor', 1.7)
         self.sky_fwhm_factor = c.get_float('slit', 'sky_fwhm_factor', 3.0)
-        self.sky_order = c.get_int('slit', 'sky_order', 1)
+        self.sky_order = c.get_int('slit', 'sky_order', 2)
+        self.sky_max_order = max(self.sky_order, c.get_int('slit', 'sky_max_order', 3))
         self.sky_edge_margin = c.get_int('slit', 'sky_edge_margin', 5)
         self.snr_valid_fraction = c.get_float('slit', 'snr_valid_fraction', 0.05)
         self.snr_smooth_window = c.get_int('slit', 'snr_smooth_window', 151)
@@ -279,8 +281,7 @@ class SlitPipeline:
 
     # 扣除主偏置并保存校正图像。
     def _debias(self, path: str, bias: np.ndarray, write: bool = True):
-        """Bias-subtract and, once the slit-curvature model exists, rectify the frame so that
-        the spectral lines run along the rows. Every later step works on the rectified image."""
+        """Bias-subtract while keeping the science data on its native pixel grid."""
         data, hdr = self._read(path)
         data = data - bias
         stem = Path(path).stem
@@ -288,14 +289,6 @@ class SlitPipeline:
             out = self.out / 'step1_basic' / 'bias_subtracted' / f'{stem}_bias_corrected'
             self._write(Path(str(out) + '.fits'), data, hdr)
             self._plot_image(out, data, f'{stem} bias-corrected')
-        if self._shift_model is not None:
-            data = self._rectify(data)
-            hdr = hdr.copy()
-            hdr['RECTIFY'] = (True, 'slit curvature rectified (lines along rows)')
-            if write:
-                rout = self.out / 'step1_basic' / 'rectified' / f'{stem}_rectified'
-                self._write(Path(str(rout) + '.fits'), data, hdr)
-                self._plot_image(rout, data, f'{stem} rectified')
         return data, hdr
 
     # --------------------------------------------------------------- stage 2
@@ -351,12 +344,10 @@ class SlitPipeline:
     # --------------------------------------------------------------- stage 3
     # 狭缝内沿空间方向平滑的天光线模型，供宇宙线探测先行扣除。
     def _line_model(self, data: np.ndarray, size: int = 41) -> np.ndarray:
-        """Running median along the slit of the rectified image.
+        """Running median along the slit in the curvature-corrected wavelength frame.
 
-        Sky lines fill the slit, so L.A.Cosmic would flag them as cosmic rays. A median along
-        the slit follows them (the lines run along the rows after rectification) but ignores
-        cosmic rays, which are a few pixels wide. The model is the background handed to
-        L.A.Cosmic; it is zero outside the slit band.
+        Only this background model is interpolated; the science pixels remain on their
+        native grid. Sky lines fill the slit, so L.A.Cosmic would flag them as cosmic rays.
         """
         model = np.zeros(data.shape, dtype=float)
         if self._band is None:
@@ -365,8 +356,19 @@ class SlitPipeline:
         c0, c1 = max(c0 - 10, 0), min(c1 + 10, data.shape[1])
         if c1 - c0 < size:
             return model
-        model[:, c0:c1] = ndimage.median_filter(
-            np.asarray(data[:, c0:c1], dtype=float), size=(1, size), mode='nearest')
+        source = np.asarray(data[:, c0:c1], dtype=float)
+        if self._shift_model is None:
+            model[:, c0:c1] = ndimage.median_filter(
+                source, size=(1, size), mode='nearest')
+            return model
+
+        aligned, native_rows = self._align_columns(data, c0, c1)
+        aligned_model = ndimage.median_filter(aligned, size=(1, size), mode='nearest')
+        rows = np.arange(data.shape[0], dtype=float)
+        for j, x in enumerate(range(c0, c1)):
+            aligned_row = np.interp(rows, native_rows[:, j], rows)
+            model[:, x] = ndimage.map_coordinates(
+                aligned_model[:, j], [aligned_row], order=3, mode='nearest')
         return model
 
     # 以模型加邻域残差中值替换被标记像素（L.A.Cosmic 带背景时的清理结果不可用）。
@@ -490,8 +492,13 @@ class SlitPipeline:
         ys = np.asarray(ys, dtype=float)
         centres = np.asarray(centres, dtype=float)
         flux = np.asarray(flux, dtype=float)
-        good = flux > 0.2 * np.median(flux)
+        # Faint bins (the continuum fades along dispersion) give noise centroids
+        # that bend a polynomial; keep only bins well above the brightest ones.
+        good = flux > 0.15 * np.percentile(flux, 90)
         order = min(self.trace_order, max(1, len(ys) - 2))
+        # Extrapolating a curved fit far beyond the reliable bins is unsafe.
+        if good.sum() >= 2 and np.ptp(ys[good]) < 0.7 * np.ptp(ys):
+            order = 1
         coef = None
         for _ in range(4):
             if good.sum() < order + 2:
@@ -507,6 +514,31 @@ class SlitPipeline:
             logger.info("%s trace fit failed; using flat trace", label or 'source')
             return np.asarray(initial, dtype=float)
         trace = np.polyval(coef, yy)
+        # The star trace must follow the slit-edge midpoint (flat trace) apart
+        # from a constant plus a slow linear drift; a bent fit means noisy bins
+        # drove it, so rebuild it as the edge trend + constant + linear term.
+        init = np.asarray(initial, dtype=float)
+        dev = trace - init
+        resid = dev - np.polyval(np.polyfit(yy, dev, 1), yy)
+        if np.ptp(resid) > self.trace_edge_tol:
+            dy = centres - np.interp(ys, yy, init)
+            use = good.copy()
+            deg = 1 if use.sum() >= 5 and np.ptp(ys[use]) >= 0.5 * np.ptp(ys) else 0
+            for _ in range(4):
+                if use.sum() < deg + 2:
+                    deg = 0
+                cf = np.polyfit(ys[use], dy[use], deg)
+                r = dy - np.polyval(cf, ys)
+                sg = 1.4826 * np.median(np.abs(r[use])) + 0.2
+                new_use = use & (np.abs(r) < 3.0 * sg)
+                if new_use.sum() < 2 or np.array_equal(new_use, use):
+                    break
+                use = new_use
+            logger.warning("%s trace deviates from the slit-edge trend by %.1f px; "
+                           "using edge trend + %s fitted on %d bins",
+                           label or 'source', np.ptp(resid),
+                           'linear drift' if deg else 'constant offset', use.sum())
+            trace = init + np.polyval(cf, yy)
         # Guard against a fit running away from the slit.
         if (np.any(trace < x0) or np.any(trace > x1) or
                 np.nanmax(np.abs(trace - initial)) > half_window):
@@ -654,7 +686,7 @@ class SlitPipeline:
         amp = np.array([p[1] for p in peaks], dtype=float)
         if len(cen) > 1:
             gap = np.minimum(np.r_[np.inf, np.diff(cen)], np.r_[np.diff(cen), np.inf])
-            iso = gap > 14
+            iso = gap > 10
             cen, amp = cen[iso], amp[iso]
         pts = []
         for c in cen:
@@ -702,7 +734,7 @@ class SlitPipeline:
         x, y = np.broadcast_arrays(np.asarray(x, dtype=float), np.asarray(y, dtype=float))
         return model['design'](x, y) @ model['coef']
 
-    # 把图像沿行方向拉平：out[y, x] = in[y + s(x, y), x]。
+    # 仅为弯曲诊断图生成拉平预览，不用于后续科学处理。
     def _rectify(self, img: np.ndarray) -> np.ndarray:
         mdl = self._shift_model
         if mdl is None:
@@ -718,11 +750,27 @@ class SlitPipeline:
             np.asarray(img[:, c0:c1], dtype=float), [yy + shift, cols], order=3, mode='nearest')
         return out
 
-    # 由灯谱建立畸变模型；之后所有帧（平场、灯谱、目标源）都先拉平再处理。
+    def _align_columns(self, img: np.ndarray, c0: int, c1: int):
+        """Interpolate only a slit-band view onto common dispersion rows (a row then maps to one wavelength)."""
+        ny = img.shape[0]
+        rows = np.arange(ny, dtype=float)
+        columns = np.arange(c0, c1, dtype=float)
+        shift = self._shift(self._shift_model, columns[None, :], rows[:, None])
+        native_rows = rows[:, None] + shift
+        if np.any(np.diff(native_rows, axis=0) <= 0):
+            raise RuntimeError("Slit-curvature mapping is not monotonic in dispersion pixels")
+        aligned = np.empty((ny, c1 - c0), dtype=float)
+        for j, x in enumerate(range(c0, c1)):
+            aligned[:, j] = ndimage.map_coordinates(
+                np.asarray(img[:, x], dtype=float), [native_rows[:, j]],
+                order=3, mode='nearest')
+        return aligned, native_rows
+
+    # 由灯谱建立畸变模型；后续只在背景模型中使用，不重采样处理图像。
     def _build_distortion(self, flat_files, arc_files, bias):
         self._shift_model = None
         if not arc_files:
-            logger.warning("No lamp frames: the slit curvature is not corrected")
+            logger.warning("No lamp frames: curvature-aware sky modeling is unavailable")
             return
         flat = np.median([self._debias(f, bias, write=False)[0] for f in flat_files], axis=0)
         band = self._detect_band(flat)
@@ -730,22 +778,22 @@ class SlitPipeline:
         xc, iref, pts, ycut = self._measure_shifts(arc, band)
         model = self._fit_shift(xc, iref, pts, arc.shape[0], band)
         if model is None:
-            logger.warning(f"Slit curvature: only {len(pts)} line measurements, not corrected")
+            logger.warning(f"Slit curvature: only {len(pts)} measurements; "
+                           "curvature-aware sky modeling is unavailable")
             return
         self._shift_model = model
         rect = self._rectify(arc)
-        _, _, pts2, _ = self._measure_shifts(rect, band)
-        resid = float(np.sqrt(np.mean(pts2[:, 2] ** 2))) if len(pts2) else float('nan')
+        resid = model['rms']
         span = float(np.ptp(self._shift(model, np.array([model['xmin'], model['xmax']]),
                                         np.full(2, model['ymid']))))
         logger.info(f"Slit curvature model: {model['n']}/{len(pts)} line measurements from "
                     f"{len(arc_files)} lamp frame(s), fit rms={model['rms']:.3f} px, line shift across "
-                    f"the slit {span:.2f} px at mid-spectrum, residual after rectification "
+                    f"the slit {span:.2f} px at mid-spectrum, inlier fit residual "
                     f"{resid:.3f} px (rms)")
-        self._plot_distortion(self.out / 'step1_basic' / 'rectified' / 'slit_distortion',
+        self._plot_distortion(self.out / 'step5_extraction' / 'slit_distortion',
                               model, arc, rect, ycut, resid)
 
-    # 绘制谱线弯曲的测量、拟合位移场及拉平前后的灯谱。
+    # 绘制谱线弯曲的测量、拟合位移场和仅供诊断的对齐预览。
     def _plot_distortion(self, path, model, before, after, ycut, resid):
         if not self.save_plots:
             return
@@ -763,11 +811,21 @@ class SlitPipeline:
             a1.legend(fontsize=7)
         fig.colorbar(sc, ax=a1).set_label('line row (dispersion pixel)')
         xs = np.linspace(model['xmin'], model['xmax'], 60)
-        for yv in np.linspace(0.15 * ny, 0.9 * ny, 4):
-            a1.plot(xs, self._shift(model, xs, np.full_like(xs, yv)), lw=0.9, color='k', alpha=0.6)
+        line_rows = np.unique(np.round(pts[use, 1], 1))
+        cmap = plt.get_cmap('viridis')
+        norm = plt.Normalize(float(line_rows.min()), float(line_rows.max())
+                             if len(line_rows) > 1 else float(line_rows.min()) + 1.0)
+        for yv in line_rows:
+            a1.plot(xs, self._shift(model, xs, np.full_like(xs, yv)),
+                    lw=0.65, color=cmap(norm(yv)), alpha=0.75)
+        a1.axvline(model['xref'], color='0.4', ls=':', lw=0.8,
+                   label='reference column (zero shift)')
+        n_lines = len(line_rows)
         a1.set_xlabel('spatial pixel')
         a1.set_ylabel('line shift relative to the reference column (rows)')
-        a1.set_title(f'Measured line shifts and fit (rms={model["rms"]:.3f} px)')
+        a1.set_title(f'{n_lines} measured arc lines; showing each fitted line trace '
+                     f'(rms={model["rms"]:.3f} px)')
+        a1.legend(fontsize=6, loc='best')
         gy = np.arange(0, ny, 8, dtype=float)
         gx = np.linspace(model['xmin'], model['xmax'], 80)
         grid = self._shift(model, gx[None, :], gy[:, None])
@@ -780,8 +838,9 @@ class SlitPipeline:
         x0, x1 = model['band']
         c0, c1 = max(x0 - 20, 0), min(x1 + 20, before.shape[1])
         r0, r1 = int(max(ycut - 25, 0)), int(min(ycut + 25, ny))
-        for a, img, title in ((a3, before, 'Lamp before rectification'),
-                              (a4, after, f'Lamp after rectification (residual {resid:.3f} px rms)')):
+        for a, img, title in ((a3, before, 'Lamp on native pixel grid'),
+                              (a4, after, f'Diagnostic-only aligned lamp preview '
+                               f'(inlier fit residual {resid:.3f} px rms)')):
             cut = img[r0:r1, c0:c1]
             lo, hi = np.nanpercentile(cut, [2, 99.5])
             a.imshow(cut, origin='lower', aspect='auto', cmap='viridis', vmin=lo, vmax=hi,
@@ -790,7 +849,7 @@ class SlitPipeline:
             a.set_xlabel('spatial pixel')
             a.set_ylabel('dispersion pixel')
             a.set_title(title)
-        fig.suptitle('Slit curvature (arc-line tilt) and rectification', fontsize=11)
+        fig.suptitle('Slit-curvature model (science images remain unrectified)', fontsize=11)
         fig.tight_layout()
         fig.savefig(Path(str(path) + '.' + self.fig_format), dpi=110, bbox_inches='tight')
         plt.close(fig)
@@ -800,6 +859,54 @@ class SlitPipeline:
         _, left, right = self._flat_trace
         return np.asarray(left, dtype=float)[:ny], np.asarray(right, dtype=float)[:ny]
 
+    def _fit_sky_row(self, xn: np.ndarray, values: np.ndarray, use: np.ndarray):
+        """Fit one row's cross-slit sky profile with an order chosen by BIC.
+
+        The order runs from sky_order to sky_max_order, so rows with a strong
+        sky line (whose profile across the slit is curved) get a higher order
+        while faint rows stay linear. Returns Legendre-free power coefficients
+        in the normalised column xn, zero-padded to sky_max_order + 1, or None.
+        """
+        lo, hi = self.sky_order, self.sky_max_order
+        best = None
+        for degree in range(lo, hi + 1):
+            sel = use.copy()
+            coef = None
+            for _ in range(4):
+                if sel.sum() < max(degree + 3, 10):
+                    coef = None
+                    break
+                design = np.vander(xn[sel], N=degree + 1, increasing=True)
+                coef, *_ = np.linalg.lstsq(design, values[sel], rcond=None)
+                residual = values[sel] - design @ coef
+                centre = np.median(residual)
+                sigma = 1.4826 * np.median(np.abs(residual - centre))
+                if sigma <= 1e-9:
+                    break
+                keep = np.abs(residual - centre) < 3.0 * sigma
+                if keep.all():
+                    break
+                idx = np.flatnonzero(sel)
+                sel = np.zeros_like(sel)
+                sel[idx[keep]] = True
+            if coef is None:
+                continue
+            fit_all = np.vander(xn[use], N=degree + 1, increasing=True) @ coef
+            res_all = values[use] - fit_all
+            # Score on the inliers so clipped blends/stars do not decide the order.
+            scale = 1.4826 * np.median(np.abs(res_all - np.median(res_all))) + 1e-9
+            inl = np.abs(res_all - np.median(res_all)) < 3.0 * scale
+            n = max(int(inl.sum()), degree + 3)
+            rss = float(np.sum(res_all[inl] ** 2)) + 1e-12
+            bic = n * np.log(rss / n) + (degree + 1) * np.log(n)
+            if best is None or bic < best[0]:
+                best = (bic, coef)
+        if best is None:
+            return None
+        out = np.zeros(hi + 1)
+        out[:len(best[1])] = best[1]
+        return out
+
     def _subtract_sky(self, img: np.ndarray, trace: np.ndarray, band: Tuple[int, int]):
         """Fit the sky per row inside the slit edges and subtract it up to the edges.
 
@@ -807,35 +914,124 @@ class SlitPipeline:
         column range. Pixels within sky_edge_margin of an edge are left out of the fit
         (illumination fall-off) but the sky model is extended to the edge itself.
         """
+        if self._shift_model is not None:
+            return self._subtract_curved_sky(img, trace)
+
         ny, nx = img.shape
         left, right = self._sky_bounds(ny)
         xi = np.arange(nx)
         sky = np.zeros_like(img)
         fm = self.sky_edge_margin
+        xmid = 0.5 * (nx - 1)
+        xscale = max(0.5 * nx, 1.0)
+        xn = (xi - xmid) / xscale
         for y in range(ny):
             fit_m = ((xi >= left[y] + fm) & (xi <= right[y] - fm)
                      & (np.abs(xi - trace[y]) > self.sky_gap))
             if fit_m.sum() < 10:
                 continue
-            xm, vm = xi[fit_m], img[y, fit_m]
-            c = np.polyfit(xm, vm, self.sky_order)
-            r = vm - np.polyval(c, xm)
-            s = 1.4826 * np.median(np.abs(r)) + 1e-6
-            k = np.abs(r) < 3 * s
-            if k.sum() > self.sky_order + 2:
-                c = np.polyfit(xm[k], vm[k], self.sky_order)
+            c = self._fit_sky_row(xn, img[y], fit_m)
+            if c is None:
+                continue
             apply = (xi >= np.ceil(left[y])) & (xi <= np.floor(right[y]))
-            sky[y, apply] = np.polyval(c, xi[apply])
+            sky[y, apply] = np.vander(xn[apply], N=len(c), increasing=True) @ c
+        return img - sky, sky
+
+    def _subtract_curved_sky(self, img: np.ndarray, trace: np.ndarray):
+        """Fit sky at common wavelengths without resampling the science image."""
+        ny, nx = img.shape
+        left, right = self._sky_bounds(ny)
+        c0 = max(0, int(np.floor(np.nanmin(left))))
+        c1 = min(nx, int(np.ceil(np.nanmax(right))) + 1)
+        rows = np.arange(ny, dtype=float)
+        columns = np.arange(c0, c1, dtype=float)
+        aligned, native_rows = self._align_columns(img, c0, c1)
+
+        native_index = np.empty((ny, c1 - c0), dtype=int)
+        for j in range(c1 - c0):
+            native_y = np.interp(rows, native_rows[:, j], rows)
+            native_index[:, j] = np.clip(np.rint(native_y).astype(int), 0, ny - 1)
+
+        fit_mask = (
+            (columns[None, :] >= left[native_index] + self.sky_edge_margin)
+            & (columns[None, :] <= right[native_index] - self.sky_edge_margin)
+            & (np.abs(columns[None, :] - trace[native_index]) > self.sky_gap)
+            & np.isfinite(aligned)
+        )
+        xmid = 0.5 * (c0 + c1 - 1)
+        xscale = max(0.5 * (c1 - c0), 1.0)
+        xn = (columns - xmid) / xscale
+        degree = self.sky_max_order
+        coefficients = np.full((ny, degree + 1), np.nan, dtype=float)
+        for y in range(ny):
+            use = fit_mask[y]
+            if use.sum() < 10:
+                continue
+            c = self._fit_sky_row(xn, aligned[y], use)
+            if c is not None:
+                coefficients[y] = c
+
+        valid = np.flatnonzero(np.isfinite(coefficients[:, 0]))
+        if not len(valid):
+            raise RuntimeError("Could not fit any rows of the curvature-aware sky model")
+        for k in range(degree + 1):
+            coefficients[:, k] = np.interp(rows, valid, coefficients[valid, k])
+
+        sky = np.zeros_like(img, dtype=float)
+        for j, x in enumerate(range(c0, c1)):
+            aligned_row = np.interp(rows, native_rows[:, j], rows)
+            x_value = (x - xmid) / xscale
+            values = np.zeros(ny, dtype=float)
+            for k in range(degree + 1):
+                values += ndimage.map_coordinates(
+                    coefficients[:, k], [aligned_row], order=3, mode='nearest') * x_value ** k
+            apply = (x >= np.ceil(left)) & (x <= np.floor(right))
+            sky[apply, x] = values[apply]
         return img - sky, sky
 
     def _extract_sky(self, img: np.ndarray, trace: np.ndarray, band: Tuple[int, int]) -> np.ndarray:
         """1D sky spectrum measured directly in the sky region of the unsubtracted image.
 
-        Per dispersion row: sigma-clipped mean of the pixels with
-        |x - trace| > sky_gap inside the slit edges (counts per spatial pixel).
+        With a curvature model, sky samples are aligned to common dispersion rows before averaging,
+        then sampled back onto the target trace's native dispersion rows.
         """
         left, right = self._sky_bounds(img.shape[0])
         fm = self.sky_edge_margin
+        if self._shift_model is not None:
+            ny, nx = img.shape
+            c0 = max(0, int(np.floor(np.nanmin(left))))
+            c1 = min(nx, int(np.ceil(np.nanmax(right))) + 1)
+            rows = np.arange(ny, dtype=float)
+            columns = np.arange(c0, c1, dtype=float)
+            aligned, native_rows = self._align_columns(img, c0, c1)
+            native_index = np.empty((ny, c1 - c0), dtype=int)
+            for j in range(c1 - c0):
+                native_y = np.interp(rows, native_rows[:, j], rows)
+                native_index[:, j] = np.clip(np.rint(native_y).astype(int), 0, ny - 1)
+            region = (
+                (columns[None, :] >= left[native_index] + fm)
+                & (columns[None, :] <= right[native_index] - fm)
+                & (np.abs(columns[None, :] - trace[native_index]) > self.sky_gap)
+            )
+            vals = np.where(region, aligned, np.nan)
+            with np.errstate(all='ignore'), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                med = np.nanmedian(vals, axis=1)
+                mad = 1.4826 * np.nanmedian(np.abs(vals - med[:, None]), axis=1)
+                clipped = np.where(
+                    np.abs(vals - med[:, None]) <= 3 * mad[:, None] + 1e-9,
+                    vals, np.nan)
+                spectrum = np.nanmean(clipped, axis=1)
+
+            star_rows = rows + self._shift(
+                self._shift_model, np.asarray(trace, dtype=float), rows)
+            if np.any(np.diff(star_rows) <= 0):
+                raise RuntimeError("Target-trace curvature mapping is not monotonic")
+            target_rows = np.interp(rows, star_rows, rows)
+            return ndimage.map_coordinates(
+                np.nan_to_num(spectrum, nan=0.0), [target_rows], order=3,
+                mode='nearest')
+
         xi = np.arange(img.shape[1])
         region = ((xi[None, :] >= left[:, None] + fm) & (xi[None, :] <= right[:, None] - fm)
                   & (np.abs(xi[None, :] - trace[:, None]) > self.sky_gap))
@@ -940,6 +1136,9 @@ class SlitPipeline:
     def _load_catalog(self) -> np.ndarray:
         path = _resolve_path(self.config.get('telescope.linelist', 'full_linelist', ''))
         if path is None:
+            logger.warning("Full line list not found (%s); wavelength solution will use "
+                           "the anchor lines only",
+                           self.config.get('telescope.linelist', 'full_linelist', ''))
             return np.array([])
         w = []
         for line in path.read_text(errors='ignore').splitlines():
@@ -1147,7 +1346,6 @@ class SlitPipeline:
 
         bias = self._master_bias(bias_files)
         if flat_files:
-            self._build_distortion(flat_files, arc_files, bias)
             pixflat, band = self._make_flat(flat_files, bias)
             self._band = band
         else:
@@ -1202,6 +1400,11 @@ class SlitPipeline:
             if master_flat_flux is not None:
                 self._write_lamp_wave(d5, 'master_flat', master_flat_flux, fits.Header(),
                                       info, fit, title='master flat')
+
+        # Curvature is needed for sky modeling in extraction, not for step 1,
+        # flat construction, or wavelength calibration.
+        if arc_files:
+            self._build_distortion(flat_files, arc_files, bias)
 
         results: Dict[str, SpectraSet] = {}
         for path in science_files:
@@ -1657,11 +1860,18 @@ class SlitPipeline:
         for w, ok in zip(y, keep):
             if not wlo <= w <= whi:
                 continue
-            yv = float(np.interp(w, wave, arc))
+            # np.interp needs increasing x; wavelength may fall with pixel.
+            order = np.argsort(wave)
+            px = float(np.interp(w, wave[order], order.astype(float)))
+            centre = int(round(px))
+            lo, hi = max(centre - 3, 0), min(centre + 4, len(arc))
+            yv = float(np.nanmax(arc[lo:hi]))
             colour = 'tab:red' if ok else '0.55'
-            a1.plot([w, w], [yv + 0.025 * arc_span, yv + 0.085 * arc_span],
+            tick_bottom = yv + 0.025 * arc_span
+            tick_top = yv + 0.085 * arc_span
+            a1.plot([w, w], [tick_bottom, tick_top],
                     color=colour, lw=0.85, solid_capstyle='butt', zorder=4)
-            a1.text(w, yv + 0.10 * arc_span, f'{w:.4f}', rotation=90,
+            a1.text(w, tick_top + 0.015 * arc_span, f'{w:.4f}', rotation=90,
                     ha='center', va='bottom', fontsize=6.0, color=colour,
                     zorder=5, clip_on=True)
         a1.set_xlim(wlo, whi)

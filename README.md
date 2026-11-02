@@ -449,8 +449,8 @@ specproc --mode cli --config /path/to/config.cfg
 # Or select a packaged telescope profile by name, and process data with it
 specproc --mode cli --config XL216_hrs 20241102_hrs
 
-# Without input data, the named profile is copied to ./specproc.cfg instead
-# of being used directly, so it can be reviewed/customized first
+# Without input data, the profile config is copied with its packaged filename
+# so it can be reviewed/customized first
 specproc --config MSTG193_slit
 ```
 
@@ -546,7 +546,7 @@ The same engine runs headless with `--auto`:
 # Interactive: reference atlas + measured lamp; adjust by hand, then save.
 specproc identify \
     --lamp output/step5_extraction/RR2000V_FeAr_0.8silt_0.2s_1_pixel.fits \
-    --reference src/specproc/calib_data/linelists/fear.fits \
+    --ref src/specproc/calib_data/linelists/fear.fits \
     --linelist  src/specproc/calib_data/linelists/fear.txt \
     --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_anchors_R.csv \
     --plot      docs/mstg193slit_R_anchor_match.pdf
@@ -554,7 +554,7 @@ specproc identify \
 # INSTRUME=Camera Spectrum-R/B); --arm B is only an explicit override.
 
 # Fully automatic, no window (same options; writes both files).
-specproc identify --auto --lamp <lamp.fits> --reference <atlas.fits> \
+specproc identify --auto --lamp <lamp.fits> --ref <atlas.fits> \
     --output <ids.csv> --plot <diagnostic.pdf>
 ```
 

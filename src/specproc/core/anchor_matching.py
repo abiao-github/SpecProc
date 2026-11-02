@@ -30,6 +30,7 @@ import numpy as np
 from astropy.io import fits
 from scipy import ndimage
 from scipy.signal import find_peaks
+from scipy.stats import rankdata
 
 from specproc.core.line_identification import (
     load_linelist,
@@ -552,16 +553,35 @@ def _refine(pixel: np.ndarray, catalog: np.ndarray, coef: np.ndarray,
     return coef, np.column_stack([px, py]), res, pi, ci
 
 
-def _solution_score(coef, pixel, catalog, amp) -> Tuple[float, int, float]:
-    """Score a solution by the number and quality of sub-arcsecond matches."""
+def _solution_score(coef, pixel, catalog, amp,
+                    catalog_strength=None) -> Tuple[float, int, float]:
+    """Score matches by count, residual, observed S/N and weak line-strength agreement."""
     px, py, pi = _match_peaks(pixel, catalog, coef, 0.6)
     if len(px) == 0:
         return 0.0, 0, np.inf
     res = py - np.polyval(coef, px)
     weight = np.sqrt(np.clip(amp[pi] / max(amp.max(), 1e-30), 1e-6, 1.0))
     score = float(np.sum(weight)) + 0.25 * len(px)
+    if catalog_strength is not None and len(px) >= 6:
+        strength = np.asarray(catalog_strength, dtype=float)
+        if len(strength) == len(catalog) and np.ptp(strength) > 0:
+            right = np.searchsorted(catalog, py).clip(0, len(catalog) - 1)
+            left = np.maximum(right - 1, 0)
+            use_left = np.abs(catalog[left] - py) < np.abs(catalog[right] - py)
+            ci = np.where(use_left, left, right)
+            observed_rank = rankdata(np.log1p(np.maximum(amp[pi], 0.0)))
+            reference_rank = rankdata(np.log1p(np.maximum(strength[ci], 0.0)))
+            correlation = float(np.corrcoef(observed_rank, reference_rank)[0, 1])
+            if np.isfinite(correlation):
+                score += 1.5 * max(correlation, 0.0)
     rms = float(np.sqrt(np.mean(res ** 2)))
     return score, len(px), rms
+
+
+def _is_monotonic_solution(coef: np.ndarray, n_pixels: int) -> bool:
+    probe = np.linspace(0, n_pixels - 1, 64)
+    delta = np.diff(np.polyval(coef, probe))
+    return bool(np.all(delta > 0) or np.all(delta < 0))
 
 
 def solve_dispersion(peaks: Sequence[Peak], catalog: Reference, n_pixels: int,
@@ -577,17 +597,19 @@ def solve_dispersion(peaks: Sequence[Peak], catalog: Reference, n_pixels: int,
     can find the correct alias; each seed is then refined with a polynomial in
     the original pixel coordinate.
 
-    ``wave_range`` is only a *soft* hint here: it gives a small score bonus
-    to solutions whose observed lines fall inside it.  The caller is expected
-    to restrict the catalogue with :func:`build_catalog` when the approximate
-    coverage is known; doing both keeps a wrong alias from winning without
-    making the seed search fragile.
+    ``wave_range`` constrains the predicted wavelength coverage over the full
+    detector, not just the span occupied by detected lines.  Matching uses a
+    fifth-order model to determine line assignments consistently regardless
+    of the requested final fit order; the selected order is applied after
+    those assignments are established.
     """
     if len(peaks) < 4 or len(catalog) < 4:
         return None
     pixel = np.array([p.pixel for p in peaks], dtype=float)
     amp = np.array([p.amplitude for p in peaks], dtype=float)
     cat_wave = np.asarray(catalog.wave, dtype=float)
+    matching_order = 5
+    seed_wave_range = wave_range or (2500.0, 12500.0)
 
     alphas = np.arange(-max_curvature, max_curvature + 0.5 * curvature_step,
                        curvature_step)
@@ -599,50 +621,61 @@ def solve_dispersion(peaks: Sequence[Peak], catalog: Reference, n_pixels: int,
         q = pixel + alpha * pixel ** 2
         if np.any(np.diff(q) <= 0):
             continue
+        q_end = (n_pixels - 1) + alpha * (n_pixels - 1) ** 2
         try:
             seed = pattern_match_linear(
-                q, cat_wave, amp, wave_range=(2500.0, 12500.0),
-                pixel_range=(0.0, float(q.max())),
+                q, cat_wave, amp, wave_range=seed_wave_range,
+                pixel_range=(0.0, float(q_end)),
                 n_peaks=min(n_peaks, len(pixel)),
                 max_catalog=min(len(cat_wave), max_catalog),
-                ratio_eps=0.02)
+                ratio_eps=0.01)
         except Exception:  # pragma: no cover - defensive
             seed = None
         if seed is None:
             continue
         scale, offset = float(seed[0]), float(seed[1])
-        if not np.isfinite(scale) or scale <= 0:
+        if not np.isfinite(scale) or abs(scale) < 1e-12:
             continue
         # lambda = scale*q + offset = (scale*a)*p^2 + scale*p + offset
         coef0 = np.array([scale * alpha, scale, offset], dtype=float)
-        out = _refine(pixel, cat_wave, coef0, order, match_tol, min_tol)
+        out = _refine(pixel, cat_wave, coef0, matching_order, match_tol, min_tol)
         if out is None:
             continue
         # The shrinking tolerance can drop faint lines at the detector ends,
         # which then makes the polynomial extrapolate badly.  A second pass
         # starting from the first solution recovers them without loosening
         # the early iterations (where a loose tolerance would accept blends).
-        out2 = _refine(pixel, cat_wave, out[0], order,
+        out2 = _refine(pixel, cat_wave, out[0], matching_order,
                        max(match_tol, 1.5), max(min_tol, 0.7))
         if out2 is not None and len(out2[1]) > len(out[1]):
-            _, _, rms2 = _solution_score(out2[0], pixel, cat_wave, amp)
+            _, _, rms2 = _solution_score(
+                out2[0], pixel, cat_wave, amp, catalog.flux)
             if rms2 < 1.0:
                 out = out2
         coef, pairs, res, pi, ci = out
         # A physical dispersion must be monotonic over the detector.
-        probe = np.linspace(0, n_pixels - 1, 32)
-        if np.any(np.diff(np.polyval(coef, probe)) <= 0):
+        if not _is_monotonic_solution(coef, n_pixels):
             continue
-        score, ngood, rms = _solution_score(coef, pixel, cat_wave, amp)
-        if ngood < max(order + 2, 8):
+        if wave_range is not None:
+            w0, w1 = sorted(float(v) for v in wave_range)
+            margin = 0.05 * (w1 - w0)
+            endpoint_waves = np.polyval(coef, [0.0, n_pixels - 1.0])
+            if (endpoint_waves.min() < w0 - margin
+                    or endpoint_waves.max() > w1 + margin):
+                continue
+        score, ngood, rms = _solution_score(
+            coef, pixel, cat_wave, amp, catalog.flux)
+        if ngood < max(matching_order + 2, 8):
             continue
         # Reward coverage: aliases typically match only 10-20 peaks, while the
         # true solution matches most of the strong lamp lines.
         score += 0.5 * ngood
+        matched_pixels = pairs[:, 0]
+        score += 2.0 * np.ptp(matched_pixels) / max(n_pixels - 1, 1)
         if wave_range is not None:
             w0, w1 = sorted(float(v) for v in wave_range)
-            obs = np.polyval(coef, pixel)
-            lo, hi = float(obs.min()), float(obs.max())
+            endpoints = np.polyval(coef, [0.0, n_pixels - 1.0])
+            lo, hi = float(endpoints.min()), float(endpoints.max())
             overlap = max(0.0, min(w1, hi) - max(w0, lo))
             score += 2.0 * overlap / max(hi - lo, 1.0)
         candidates.append((score, ngood, -rms, coef, pairs, res, pi, ci))
@@ -658,12 +691,41 @@ def solve_dispersion(peaks: Sequence[Peak], catalog: Reference, n_pixels: int,
     score, ngood, neg_rms, coef, pairs, res, pi, ci = candidates[0]
     # Final recovery pass: the winning fit may have dropped faint lines at the
     # detector ends.  Add them back if they are consistent with the solution.
-    out = _refine(pixel, cat_wave, coef, order,
-                  max(match_tol, 1.5), max(min_tol, 0.7))
-    if out is not None and len(out[1]) > len(pairs):
-        coef2, pairs2, res2, pi2, ci2 = out
-        if float(np.sqrt(np.mean(res2 ** 2))) < 0.6:
-            coef, pairs, res, pi, ci = coef2, pairs2, res2, pi2, ci2
+    # Keep the peak-to-line assignments from the stable cubic match, then fit
+    # the user's requested polynomial degree to exactly those same pairs.
+    # The matched lines may cover only part of the detector, so a high-order
+    # polynomial can extrapolate wildly; fall back to lower orders until the
+    # fit is monotonic and within the requested range.
+    keep = np.ones(len(pairs), dtype=bool)
+    for _ in range(5):
+        fit_order = min(max(int(order), 1), int(keep.sum()) - 1)
+        coef = np.polyfit(pairs[keep, 0], pairs[keep, 1], fit_order)
+        res_all = pairs[:, 1] - np.polyval(coef, pairs[:, 0])
+        mad = 1.4826 * np.median(np.abs(res_all[keep] - np.median(res_all[keep])))
+        new_keep = np.abs(res_all - np.median(res_all[keep])) < max(3.0 * mad, 0.3)
+        if new_keep.sum() < fit_order + 2 or np.array_equal(new_keep, keep):
+            break
+        keep = new_keep
+    pairs = pairs[keep]
+    pi = np.asarray(pi)[keep]
+    ci = np.asarray(ci)[keep]
+    solution = None
+    for fit_order in range(min(max(int(order), 1), len(pairs) - 1), 0, -1):
+        coef = np.polyfit(pairs[:, 0], pairs[:, 1], fit_order)
+        if not _is_monotonic_solution(coef, n_pixels):
+            continue
+        if wave_range is not None:
+            w0, w1 = sorted(float(v) for v in wave_range)
+            margin = 0.05 * (w1 - w0)
+            endpoint_waves = np.polyval(coef, [0.0, n_pixels - 1.0])
+            if (endpoint_waves.min() < w0 - margin
+                    or endpoint_waves.max() > w1 + margin):
+                continue
+        solution = coef
+        break
+    if solution is None:
+        return None
+    res = pairs[:, 1] - np.polyval(coef, pairs[:, 0])
     logger.info('Dispersion solution: %d matches, rms=%.3f A, range %.1f-%.1f A',
                 len(pairs), float(np.sqrt(np.mean(res ** 2))),
                 np.polyval(coef, 0), np.polyval(coef, n_pixels - 1))

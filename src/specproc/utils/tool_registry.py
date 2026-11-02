@@ -60,7 +60,7 @@ TOOLS: Tuple[Tool, ...] = (
         entry='main',
         summary='Identify lamp lines against a reference atlas (interactive GUI, '
                 'or --auto) and write anchors + a diagnostic figure',
-        usage='[--lamp FITS] [--reference ATLAS] [--auto]',
+        usage='[--lamp FITS] [--ref ATLAS] [--auto]',
     ),
 )
 

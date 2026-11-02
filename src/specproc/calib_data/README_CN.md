@@ -9,7 +9,7 @@ calib_data/
 ├── linelists/              # 灯谱发射线目录
 │   ├── thar-noao.dat      # ThAr 灯谱线（兴隆216 HRS 推荐）
 │   ├── thar.dat           # 标准 ThAr 灯谱线
-│   ├── fear.txt           # FeAr 灯谱线表（Willmarth）
+│   ├── fear.dat           # FeAr 灯谱线表（Willmarth）
 │   ├── fear.fits          # FeAr 高分辨率图集光谱（NOIRLAB/KPNO）
 │   ├── henear*.dat        # He-Ne-Ar 灯谱线
 │   └── ...                # 其他灯谱线和夜空谱线
@@ -30,7 +30,7 @@ calib_data/
 - `thar-noao.dat` - Th-Ar 灯谱线；推荐用于兴隆 2.16 米 HRS。
 - `thar.dat` - Th-Ar 灯谱线（3180-9665 Å）。
 - `vacthar.dat` - `thar.dat` 转换得到的真空波长谱线。
-- `fear.txt` - Fe-Ar 空心阴极灯谱线表（3000-10,000 Å，Willmarth）。
+- `fear.dat` - Fe-Ar 空心阴极灯谱线表（3000-10,000 Å，Willmarth）。
 - `fear.fits` - Fe-Ar 图集光谱（NOIRLAB/KPNO，0.2 Å 采样，带线性波长 WCS）。
 - `cuar.dat` - Cu-Ar 灯谱线。
 - `henear.dat`、`henearhres.dat`、`idhenear.dat` - He-Ne-Ar 灯谱线，包含高分辨率和扩展谱线表。
@@ -73,8 +73,8 @@ identification_file` 所需格式，后续流水线会用 `full_linelist` 把锚
 # 交互式：实测灯谱 + 参考图集
 specproc identify \
     --lamp      output/step5_extraction/<灯谱文件>_pixel.fits \
-    --reference src/specproc/calib_data/linelists/fear.fits \
-    --linelist  src/specproc/calib_data/linelists/fear.txt \
+    --ref src/specproc/calib_data/linelists/fear.fits \
+    --linelist  src/specproc/calib_data/linelists/fear.dat \
     --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_anchors_R.csv \
     --plot      docs/mstg193slit_R_anchor_match.pdf
 # 慕峰红/蓝端由 FITS 头的 TELESCOP=MOST + INSTRUME=Camera Spectrum-R/B
@@ -82,7 +82,7 @@ specproc identify \
 # mstg193slit_anchors_B.csv。
 
 # 全自动，不开窗口
-specproc identify --auto --lamp <灯谱.fits> --reference <图集.fits> \
+specproc identify --auto --lamp <灯谱.fits> --ref <图集.fits> \
     --output <锚点.csv> --plot <诊断图.pdf>
 ```
 

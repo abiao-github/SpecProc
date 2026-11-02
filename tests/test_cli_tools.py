@@ -92,7 +92,7 @@ def test_complete_option_values():
 
 def test_complete_tool_arguments():
     options = completion.complete(2, ['specproc', 'identify', '--'])
-    assert '--lamp' in options and '--reference' in options
+    assert '--lamp' in options and '--ref' in options
     choices = completion.complete(3, ['specproc', 'identify', '--poly-order', ''])
     assert choices == [str(k) for k in range(1, 10)]
     types = completion.complete(3, ['specproc', 'identify', '--poly-type', ''])
@@ -158,12 +158,17 @@ def test_mstg_anchor_file_loads(tmp_path):
 def test_copy_mstg_profile_to_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = copy_default_config_to_cwd(profile='MSTG193_slit')
-    assert path == tmp_path / 'specproc.cfg'
+    assert path == tmp_path / 'default_config_MSTG193_slit.cfg'
     text = path.read_text()
     assert 'name = mstg193slit' in text
     assert 'mstg193slit_anchors_R.csv' in text
     # Never overwrite an existing working config.
     assert copy_default_config_to_cwd(profile='MSTG193_slit') == path
+
+
+def test_copy_generic_config_keeps_working_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert copy_default_config_to_cwd() == tmp_path / 'specproc.cfg'
 
 
 def test_complete_dotted_command():

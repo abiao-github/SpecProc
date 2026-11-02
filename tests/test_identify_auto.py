@@ -119,9 +119,64 @@ def test_gui_uses_header_arm_for_default_name(tmp_path):
         app.processEvents()
 
 
+def test_gui_auto_identify_shows_match_connectors_and_unobtrusive_legend(tmp_path):
+    QtWidgets = pytest.importorskip('PyQt5.QtWidgets')
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from specproc.utils.identify import LineIdentifier
+
+    lamp = tmp_path / 'lamp.txt'
+    reference = tmp_path / 'reference.txt'
+    np.savetxt(lamp, _synthetic_lamp())
+    np.savetxt(reference, CATALOG)
+    window = LineIdentifier(str(lamp), reference_path=str(reference))
+    try:
+        for index, peak in enumerate(window.peaks):
+            peak.snr = 20.0 if index < 3 else 40.0 if index < 6 else 100.0
+        detected_peaks = list(window.peaks)
+
+        def assert_matches_respect_snr(threshold):
+            for pixel, _wave, _label in window.auto:
+                nearest = min(detected_peaks, key=lambda peak: abs(peak.pixel - pixel))
+                assert abs(nearest.pixel - pixel) < 1.0
+                assert nearest.snr >= threshold
+
+        window.auto_identify()
+        app.processEvents()
+        assert len(window.auto) >= 7
+        assert_matches_respect_snr(50.0)
+        high_threshold_count = len(window.auto)
+        window.snr_spin.setValue(30.0)
+        window.auto_identify()
+        app.processEvents()
+        assert len(window.auto) > high_threshold_count
+        assert_matches_respect_snr(30.0)
+        window.snr_spin.setValue(50.0)
+        window.auto_identify()
+        app.processEvents()
+        assert len(window.auto) == high_threshold_count
+        assert_matches_respect_snr(50.0)
+        legend = window.ax.get_legend()
+        assert legend is not None
+        assert legend._loc == 1
+        window.canvas.draw()
+        legend_box = legend.get_window_extent()
+        axes_box = window.ax.get_window_extent()
+        assert axes_box.x0 <= legend_box.x0 < legend_box.x1 <= axes_box.x1
+        assert axes_box.y0 <= legend_box.y0 < legend_box.y1 <= axes_box.y1
+        black_connectors = [
+            artist for artist in window.ax.collections
+            if len(artist.get_colors())
+            and np.allclose(artist.get_colors()[0, :3], [0.0, 0.0, 0.0])
+        ]
+        assert len(black_connectors) >= len(window.auto)
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_parser_exposes_reference_and_auto():
     parser = build_parser()
-    args = parser.parse_args(['--lamp', 'x.fits', '--reference', 'fear.fits', '--auto'])
+    args = parser.parse_args(['--lamp', 'x.fits', '--ref', 'fear.fits', '--auto'])
     assert args.auto is True
     assert args.reference == 'fear.fits'
     assert args.lamp == 'x.fits'
@@ -139,7 +194,7 @@ def test_headless_identify_writes_anchors_and_plot(lamp_files, tmp_path):
     lamp, ref = lamp_files
     out = tmp_path / 'anchors.csv'
     plot = tmp_path / 'diagnostic.png'
-    rc = main(['--auto', '--lamp', str(lamp), '--reference', str(ref),
+    rc = main(['--auto', '--lamp', str(lamp), '--ref', str(ref),
                '--wave-range', '5000', '9500', '--min-snr', '5',
                '--poly-type', 'chebyshev', '--poly-order', '5',
                '--output', str(out), '--plot', str(plot)])
@@ -335,9 +390,22 @@ def test_gui_matches_offscreen(lamp_files):
         assert window.resolution_info['resolution'] > 0
         assert len(window.resolution_info['waves']) == window.resolution_info['n']
         assert len(window.res_ax.lines) >= 2
+        residual_text = [text.get_text() for text in window.resid_ax.texts]
+        resolution_text = [text.get_text() for text in window.res_ax.texts]
+        assert not any('R ≈' in text for text in residual_text)
+        assert any('median R' in text and 'FWHM' in text
+                   for text in resolution_text)
         assert window.fit_type() == 'legendre'
         assert 'P' in window.fit_formula.text()
         assert not window.flip_x_box.isChecked()   # wavelength rises with pixel
+        window.ax.set_xlim(100.0, 500.0)
+        assert np.allclose(
+            window.resid_ax.get_xlim(),
+            window.disp_fit(np.asarray(window.ax.get_xlim())))
+        wave_limits = window.disp_fit(np.array([200.0, 400.0]))
+        window.resid_ax.set_xlim(*wave_limits)
+        assert np.allclose(window.ax.get_xlim(), [200.0, 400.0], atol=0.1)
+        window.ax.set_xlim(-0.5, len(window.flux) - 0.5)
         solution = window.build_solution()
         rows = window._anchor_rows(solution)
         assert len(rows) == len(window.auto)
@@ -356,8 +424,14 @@ def test_gui_matches_offscreen(lamp_files):
         # a decreasing model flips the display axis, and so does its opposite
         window._set_flip_x_from_endpoints(9000.0, 5000.0)
         assert window.flip_x_box.isChecked()
+        assert np.allclose(
+            window.resid_ax.get_xlim(),
+            window.disp_fit(np.asarray(window.ax.get_xlim())))
         window._set_flip_x_from_endpoints(5000.0, 9000.0)
         assert not window.flip_x_box.isChecked()
+        assert np.allclose(
+            window.resid_ax.get_xlim(),
+            window.disp_fit(np.asarray(window.ax.get_xlim())))
         assert window.snr_spin.value() == 50.0
         assert window.clip_mode() == 'sigma'
         assert window.fit_clip_spin.value() == 3.0
@@ -443,6 +517,16 @@ def test_gui_auto_flips_reverse_dispersion(reverse_lamp_files):
         assert window.flip_x_box.isChecked()
         x0, x1 = window.ax.get_xlim()
         assert x0 > x1
+        assert np.allclose(
+            window.resid_ax.get_xlim(),
+            window.disp_fit(np.asarray(window.ax.get_xlim())))
+        window.flip_x_box.setChecked(False)
+        assert window.ax.get_xlim()[0] < window.ax.get_xlim()[1]
+        assert np.allclose(
+            window.resid_ax.get_xlim(),
+            window.disp_fit(np.asarray(window.ax.get_xlim())))
+        window.flip_x_box.setChecked(True)
+        assert window.ax.get_xlim()[0] > window.ax.get_xlim()[1]
         solution = window.build_solution()
         assert solution.wave_range[0] > solution.wave_range[1]
     finally:

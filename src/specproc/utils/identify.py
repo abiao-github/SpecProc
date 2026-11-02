@@ -85,10 +85,10 @@ def add_match_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the input/matching options shared by the window and --auto mode."""
     parser.add_argument('--lamp',
                         help='extracted 1-D lamp spectrum (FITS table or text)')
-    parser.add_argument('--reference',
+    parser.add_argument('--ref', dest='reference',
                         help='reference lamp spectrum (e.g. fear.fits) or line list')
     parser.add_argument('--linelist',
-                        help='optional line catalogue used for ion labels (e.g. fear.txt)')
+                        help='optional line catalogue used for ion labels (e.g. fear.dat)')
     parser.add_argument('--anchors',
                         help='optional existing anchor file (pixel, wavelength) used to '
                              'seed the solution')
@@ -184,18 +184,18 @@ def _mirror_peaks(peaks, n_pixels: int):
 
 def solve_auto(peaks, catalog, n_pixels: int, wave_range=None, order: int = 3,
                match_tol: float = 2.0, min_tol: float = 0.3):
-    """Blind pattern match, trying both pixel directions.
+    """Blind pattern match, supporting either wavelength direction.
 
-    The lamp spectrum may run blue-to-red or red-to-blue with increasing pixel.
-    :func:`solve_dispersion` expects the first case; when it finds nothing the
-    peaks are mirrored, solved, and the pairs are mapped back to the original
-    pixel axis.
+    The matcher evaluates both signs of the linear seed in one search. The
+    mirrored fallback is retained for cases where the original-axis seed
+    search cannot produce a valid solution.
     """
     solution = solve_dispersion(
         peaks, catalog, n_pixels, wave_range=wave_range, order=order,
         match_tol=match_tol, min_tol=min_tol)
     if solution is not None:
         return solution
+
     reversed_solution = solve_dispersion(
         _mirror_peaks(peaks, n_pixels), catalog, n_pixels,
         wave_range=wave_range, order=order, match_tol=match_tol, min_tol=min_tol)
@@ -253,7 +253,7 @@ def run_auto(args) -> int:
                         format='%(asctime)s - %(levelname)s - %(message)s')
 
     if not args.lamp or not args.reference:
-        logger.error('Automatic matching needs --lamp and --reference. '
+        logger.error('Automatic matching needs --lamp and --ref. '
                      'Run `specproc identify` to load files interactively.')
         return 2
 
@@ -287,13 +287,24 @@ def run_auto(args) -> int:
     else:
         logger.info('No wavelength hint; running the blind line-pattern scan.')
 
-    # Keep the whole strong-line catalogue: --wave-range is approximate and a
-    # hard cut could hide the true reference lines and force a wrong alias.
     try:
-        catalog = build_catalog(
-            ref, wave_range=None, snr=args.catalog_snr,
-            strength_frac=args.catalog_frac, min_strength=args.catalog_min_snr,
-            linelist_wave=label_wave, linelist_labels=label_text)
+        if ref.flux is not None and not np.allclose(ref.flux, 1.0):
+            catalog_ref = ref
+            if wave_range is not None:
+                w0, w1 = sorted(map(float, wave_range))
+                margin = max(50.0, 0.05 * (w1 - w0))
+                catalog_ref = ref.subset(wave_range, margin=margin)
+            catalog = build_catalog(
+                catalog_ref, snr=args.catalog_snr,
+                strength_frac=args.catalog_frac,
+                min_strength=args.catalog_min_snr, max_lines=400,
+                linelist_wave=label_wave, linelist_labels=label_text)
+        else:
+            catalog = build_catalog(
+                ref, wave_range=wave_range, snr=args.catalog_snr,
+                strength_frac=args.catalog_frac,
+                min_strength=args.catalog_min_snr,
+                linelist_wave=label_wave, linelist_labels=label_text)
     except Exception as exc:
         logger.error('Cannot build the reference catalogue: %s', exc)
         return 2
@@ -306,21 +317,6 @@ def run_auto(args) -> int:
     peaks = detect_peaks(flux, snr=detect_snr, min_width=0.5, max_width=10.0,
                          distance=4, baseline_size=61)
     logger.info('Detected %d lamp peaks above S/N=%.1f', len(peaks), detect_snr)
-    if len(peaks) < 4:
-        logger.error('Too few lamp peaks; lower --min-snr or check the spectrum')
-        return 2
-
-    if ref.flux is not None and not np.allclose(ref.flux, 1.0):
-        n_ref = max(3, sum(1 for p in peaks if p.snr >= args.min_snr))
-        try:
-            catalog = build_catalog(
-                ref, wave_range=None, snr=5.0, strength_frac=0.0,
-                min_strength=0.0, n_peaks=n_ref,
-                linelist_wave=label_wave, linelist_labels=label_text)
-            logger.info('Reference atlas: using the %d brightest peaks to match %d lamp peaks',
-                        len(catalog), n_ref)
-        except Exception as exc:
-            logger.warning('Could not rebuild the reference catalogue: %s', exc)
 
     anchor_seed = None
     if args.anchors:
@@ -333,6 +329,14 @@ def run_auto(args) -> int:
             logger.warning('Anchor file %s has fewer than two lines; ignoring it',
                            args.anchors)
             anchor_seed = None
+
+    peaks = [peak for peak in peaks if peak.snr >= args.min_snr]
+    logger.info('%d lamp peaks meet --min-snr %.1f', len(peaks), args.min_snr)
+    min_match_peaks = 4 if anchor_seed is not None else 7
+    if len(peaks) < min_match_peaks:
+        logger.error('Too few lamp peaks meet --min-snr for matching (%d; need %d)',
+                     len(peaks), min_match_peaks)
+        return 2
 
     if anchor_seed is not None:
         logger.info('Seeding the solution with %d manual anchors from %s',
@@ -529,6 +533,8 @@ class LineIdentifier(QtWidgets.QMainWindow):
         self._plot_in_wave = False
         self._view_in_wave = False
         self._syncing = False
+        self._ax_xlim_cid = None
+        self._resid_xlim_cid = None
         self._ref_top: Optional[float] = None
         self._ref_texts = []
         self._wave_texts = []
@@ -612,7 +618,6 @@ class LineIdentifier(QtWidgets.QMainWindow):
         self.canvas.mpl_connect('scroll_event', self.on_scroll)
         self.canvas.mpl_connect('resize_event', self._on_resize)
         self.canvas.setFocusPolicy(Qt.StrongFocus)
-        self.ax.callbacks.connect('xlim_changed', self._on_xlim_changed)
 
         opts = QW.QHBoxLayout()
         self.flip_x_box = QW.QCheckBox('Flip x')
@@ -714,8 +719,9 @@ class LineIdentifier(QtWidgets.QMainWindow):
         self.snr_spin = QW.QDoubleSpinBox()
         self.snr_spin.setRange(MIN_DETECT_SNR, 1000.0)
         self.snr_spin.setValue(50.0)
-        self.snr_spin.setToolTip('S/N threshold for measured lamp peaks; the reference atlas '
-                                 'uses the same number of brightest peaks.')
+        self.snr_spin.setToolTip(
+            'Only measured lamp peaks at or above this S/N are used for automatic '
+            'matching and anchor selection.')
         self.snr_spin.valueChanged.connect(lambda *_: self.redraw(keep_view=True))
         self.order_spin = QW.QSpinBox()
         self.order_spin.setRange(1, 7)
@@ -1241,6 +1247,40 @@ class LineIdentifier(QtWidgets.QMainWindow):
     def _on_xlim_changed(self, _ax):
         if self._syncing:
             return
+        self._sync_residual_xlim()
+        if not self._plot_in_wave:
+            self._draw_wave_labels()
+        self.label_reference_lines()
+        self.canvas.draw_idle()
+
+    def _sync_residual_xlim(self):
+        if self.disp_fit is None or len(self.flux) < 2:
+            return
+        x_limits = self.ax.get_xlim()
+        wave_limits = self._model_at(np.asarray(x_limits, dtype=float))
+        if np.all(np.isfinite(wave_limits)):
+            self.resid_ax.set_xlim(float(wave_limits[0]), float(wave_limits[1]))
+
+    def _on_residual_xlim_changed(self, _ax):
+        if self._syncing or self.disp_fit is None or len(self.flux) < 2:
+            return
+        pixels = np.arange(len(self.flux), dtype=float)
+        waves = np.asarray(self._model_at(pixels), dtype=float)
+        if not (np.all(np.diff(waves) > 0) or np.all(np.diff(waves) < 0)):
+            return
+        wave_limits = self.resid_ax.get_xlim()
+        if (min(wave_limits) < min(waves[0], waves[-1])
+                or max(wave_limits) > max(waves[0], waves[-1])):
+            return
+        if waves[0] > waves[-1]:
+            waves = waves[::-1]
+            pixels = pixels[::-1]
+        x_limits = np.interp(wave_limits, waves, pixels)
+        self._syncing = True
+        try:
+            self.ax.set_xlim(float(x_limits[0]), float(x_limits[1]))
+        finally:
+            self._syncing = False
         if not self._plot_in_wave:
             self._draw_wave_labels()
         self.label_reference_lines()
@@ -1281,7 +1321,7 @@ class LineIdentifier(QtWidgets.QMainWindow):
             self.statusBar().showMessage(
                 'Pan/zoom mode: drag or scroll to align; click Select to pick lines.')
 
-    def catalog(self, wave_range=None):
+    def catalog(self, wave_range=None, for_matching: bool = False):
         """Strong-line catalogue for matching: atlas peaks or the line list."""
         ref = self.ref
         if ref is None or not len(ref):
@@ -1289,20 +1329,21 @@ class LineIdentifier(QtWidgets.QMainWindow):
         if not self.ref_is_spectrum:
             cat = ref.subset(wave_range)
             return Reference(cat.wave, np.ones_like(cat.wave), list(cat.labels), ref.source)
-        # Match the number of reference peaks to the visible lamp peaks; do
-        # not apply an absolute S/N cut to the atlas (that would keep many
-        # faint atlas lines when the lamp itself has only a few strong lines).
-        n_ref = max(3, len(self._visible_peaks()))
-        key = n_ref
+        # Matching uses a fixed atlas catalogue so changing the display/anchor
+        # S/N threshold cannot change the wavelength solution. Overlay plots
+        # remain uncluttered by showing only as many strong lines as visible
+        # observed peaks.
+        n_ref = None if for_matching else max(3, len(self._visible_peaks()))
+        key = (bool(for_matching), n_ref)
         if wave_range is not None and wave_range[1] > wave_range[0]:
             key = (round(float(wave_range[0]), 1),
-                   round(float(wave_range[1]), 1), n_ref)
+                   round(float(wave_range[1]), 1), bool(for_matching), n_ref)
         if self._catalog_cache is not None and self._catalog_cache[0] == key:
             return self._catalog_cache[1]
         try:
             cat = build_catalog(ref, wave_range=wave_range, snr=5.0,
                                 strength_frac=0.0, min_strength=0.0,
-                                n_peaks=n_ref)
+                                max_lines=400, n_peaks=n_ref)
         except Exception as exc:
             self.statusBar().showMessage(
                 f'Reference catalogue: {exc}; falling back to all reference lines')
@@ -1519,16 +1560,20 @@ class LineIdentifier(QtWidgets.QMainWindow):
             return
         lo, hi = self.lo_spin.value(), self.hi_spin.value()
         wave_range = (lo, hi) if hi > lo > 0 else None
-        catalog = self.catalog(wave_range)
+        catalog = self.catalog(wave_range, for_matching=True)
         if len(catalog) < 4:
             self.statusBar().showMessage(
                 'The reference catalogue has too few lines in this range.')
             return
-        peaks = [p for p in self.peaks if p.snr >= self.snr_spin.value()]
-        if len(peaks) < 4:
+        visible_peaks = self._visible_peaks()
+        peaks = list(visible_peaks)
+        if len(peaks) < 7 and len(self.manual) < 2:
+            self.auto = []
+            self.solution = None
+            self.update_model()
             self.statusBar().showMessage(
-                f'Only {len(peaks)} lamp peaks above SNR {self.snr_spin.value():g}; '
-                'lower the threshold or check the spectrum.')
+                f'Only {len(peaks)} peaks meet S/N ≥ {self.snr_spin.value():g}; '
+                'at least 7 are required for the fifth-order matching model.')
             return
         QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
         QtWidgets.QApplication.processEvents()
@@ -1553,6 +1598,9 @@ class LineIdentifier(QtWidgets.QMainWindow):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         if solution is None:
+            self.auto = []
+            self.solution = None
+            self.update_model()
             self.statusBar().showMessage(
                 'No dispersion solution found. Check the wavelength range, SNR threshold, '
                 'reference lines and initial match tolerance.')
@@ -1570,7 +1618,7 @@ class LineIdentifier(QtWidgets.QMainWindow):
         self.update_model(keep_view=False)
         self.statusBar().showMessage(
             f'Auto identify: {len(self.auto)} lines matched with {len(self.manual)} manual '
-            f'({len(peaks)} peaks with SNR ≥ {self.snr_spin.value():g}); '
+            f'({len(peaks)} peaks at S/N ≥ {self.snr_spin.value():g}); '
             f'rms {solution.rms:.3f} Å'
             + ('; pixel axis flipped' if self.flip_x_box.isChecked() else ''))
 
@@ -1584,6 +1632,10 @@ class LineIdentifier(QtWidgets.QMainWindow):
         has_ref = self.ref is not None and len(self.ref) > 0
         draw_ref = has_ref and self.ov_box.isChecked()
         self._syncing = True
+        if self._ax_xlim_cid is not None:
+            self.ax.callbacks.disconnect(self._ax_xlim_cid)
+        if self._resid_xlim_cid is not None:
+            self.resid_ax.callbacks.disconnect(self._resid_xlim_cid)
         # Remove every auxiliary reference axis, including any that may have
         # been left behind by an earlier draw.  Only the main spectrum and
         # residual axes belong to this figure permanently.
@@ -1599,6 +1651,10 @@ class LineIdentifier(QtWidgets.QMainWindow):
         self.ref_axis = None
         self.ax.clear()
         self.resid_ax.clear()
+        self._ax_xlim_cid = self.ax.callbacks.connect(
+            'xlim_changed', self._on_xlim_changed)
+        self._resid_xlim_cid = self.resid_ax.callbacks.connect(
+            'xlim_changed', self._on_residual_xlim_changed)
         self.res_ax.clear()
         self._ref_texts = []
         self._wave_texts = []
@@ -1677,8 +1733,18 @@ class LineIdentifier(QtWidgets.QMainWindow):
                 self.ax.set_ylim(-0.05, top)
             if draw_ref:
                 self._draw_reference(plot_x)
+                if self.disp_fit is not None and anchor_lines:
+                    for rx, rw, _kind in anchor_lines:
+                        if rx < 0 or rx >= len(disp):
+                            continue
+                        ref_y = self._reference_y_at(rw)
+                        lamp_y = float(np.interp(rx, x, disp)) + measured_offset
+                        self.ax.vlines(
+                            rx, ref_y, lamp_y, color='black', linewidth=0.55,
+                            linestyles=(0, (2, 2)), alpha=0.75, zorder=5)
         self._draw_residuals()
         self._draw_resolution()
+        self._sync_residual_xlim()
         self._syncing = False
         self._view_in_wave = self._plot_in_wave
         self.label_reference_lines()
@@ -1703,9 +1769,10 @@ class LineIdentifier(QtWidgets.QMainWindow):
         pairs = list(dict(zip(labels, handles)).items())
         self.ax.legend([handle for _, handle in pairs],
                        [label for label, _ in pairs],
-                       loc='center right', bbox_to_anchor=(0.99, 0.38),
-                       fontsize=6.5, framealpha=0.88, borderpad=0.3,
-                       handlelength=1.4)
+                       loc='upper right', bbox_to_anchor=(0.99, 0.99),
+                       fontsize=5.5, framealpha=0.88, borderpad=0.25,
+                       handlelength=1.0, handletextpad=0.35,
+                       borderaxespad=0.0)
 
     def _draw_wave_labels(self):
         """Manual bottom wavelength tick labels for the fitted case."""
@@ -1944,7 +2011,8 @@ class LineIdentifier(QtWidgets.QMainWindow):
             ax.axhline(median, color='#1565c0', lw=0.8, ls='--',
                        alpha=0.8)
         ax.text(0.995, 0.95,
-                f'median R ≈ {median:,.0f}   (n={good.sum()}, '
+                f'median R ≈ {median:,.0f}   (FWHM {info["fwhm_ang"]:.2f} Å, '
+                f'n={good.sum()}, '
                 f'rejected {info.get("n_rejected", 0)})',
                 transform=ax.transAxes, ha='right', va='top', fontsize=7,
                 color='#1565c0',
@@ -2006,15 +2074,11 @@ class LineIdentifier(QtWidgets.QMainWindow):
                 f'   (dotted ±1σ RMS; {clip_text})',
                 transform=ax.transAxes, ha='right', va='top', fontsize=7,
                 bbox=dict(fc='white', ec='none', alpha=0.75, pad=1.5))
-        if self.resolution_info:
-            info = self.resolution_info
-            ax.text(0.995, 0.72,
-                    f'R ≈ {info["resolution"]:,.0f}   (FWHM {info["fwhm_ang"]:.2f} Å, '
-                    f'n={info["n"]}, rejected {info.get("n_rejected", 0)})',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=7,
-                    color='0.25')
         wlo, whi = sorted((float(fit(0.0)), float(fit(float(len(self.flux) - 1)))))
-        ax.set_xlim(wlo, whi)
+        if self.flip_x_box.isChecked():
+            ax.set_xlim(whi, wlo)
+        else:
+            ax.set_xlim(wlo, whi)
 
     def label_reference_lines(self):
         """Label the reference lines currently visible in the top panel."""

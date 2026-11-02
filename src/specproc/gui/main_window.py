@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow):
 
                 overscan_kwargs = {
                     'overscan_start_column': self.config.get_int('data', 'overscan_start_column', -1),
-                    'overscan_method': self.config.get('data', 'overscan_method', 'mean_only'),
+                    'overscan_method': self.config.get('data', 'overscan_method', 'mean_savgol'),
                     'overscan_smooth_window': self.config.get_int('data', 'overscan_smooth_window', -1),
                     'overscan_poly_order': self.config.get_int('data', 'overscan_poly_order', 3),
                     'overscan_poly_type': self.config.get('data', 'overscan_poly_type', 'legendre'),
@@ -1757,9 +1757,8 @@ class MainWindow(QMainWindow):
                     try:
                         mf_img, _ = read_fits_image(str(mf_path))
                         mf_name = "MasterFlat"
-                        process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{mf_name}_1D_sum.fits', plot_prefix=f'{mf_name}_1D_sum', **extract_kwargs)
                         process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{mf_name}_1D_optimal.fits', plot_prefix=f'{mf_name}_1D_optimal', **extract_kwargs)
-                        self.log_text.append(f"  ✓ Extracted MasterFlat 1D spectra (sum & optimal) from {mf_path.parent.name}")
+                        self.log_text.append(f"  ✓ Extracted MasterFlat optimal 1D spectrum from {mf_path.parent.name}")
                     except Exception as e:
                         self.log_text.append(f"  ! Failed to extract MasterFlat: {e}")
                 else:
@@ -1773,9 +1772,8 @@ class MainWindow(QMainWindow):
                         try:
                             c_img, _ = read_fits_image(best_calib)
                             c_name = Path(best_calib).stem
-                            process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{c_name}_1D_sum.fits', plot_prefix=f'{c_name}_1D_sum', **extract_kwargs)
                             process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs)
-                            self.log_text.append(f"  ✓ Extracted Calibration 1D spectra for {c_name} (sum & optimal)")
+                            self.log_text.append(f"  ✓ Extracted Calibration optimal 1D spectrum for {c_name}")
                         except Exception as e:
                             self.log_text.append(f"  ! Failed to extract Calibration {c_name}: {e}")
 
@@ -1784,10 +1782,9 @@ class MainWindow(QMainWindow):
                     try:
                         sci_img, _ = read_fits_image(sci_file)
                         sci_name = Path(sci_file).stem
-                        process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{sci_name}_1D_sum.fits', plot_prefix=f'{sci_name}_1D_sum', **extract_kwargs)
                         spectra_opt = process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{sci_name}_1D_optimal.fits', plot_prefix=f'{sci_name}_1D_optimal', **extract_kwargs)
                         extracted_spectra_dict[sci_name] = spectra_opt
-                        self.log_text.append(f"  ✓ Extracted Science 1D spectra for {sci_name} (sum & optimal)")
+                        self.log_text.append(f"  ✓ Extracted Science optimal 1D spectrum for {sci_name}")
                     except Exception as e:
                         self.log_text.append(f"  ! Failed to extract Science {Path(sci_file).name}: {e}")
 
@@ -1833,31 +1830,32 @@ class MainWindow(QMainWindow):
                 
                 # 为目标光谱生成去闪耀结果。
                 def do_deblaze(target_name, spectra_obj=None):
-                    deblazed_opt = None
-                    for method in ['sum', 'optimal']:
-                        spectra = spectra_obj if (method == 'optimal' and spectra_obj is not None) else None
-                        if spectra is None:
-                            spectra_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
-                            if spectra_path.exists():
-                                try: spectra = load_extracted_spectra(str(spectra_path))
-                                except Exception as e: self.log_text.append(f"  ! Error loading {spectra_path.name}: {e}")
-                        if spectra is not None:
+                    spectra = spectra_obj
+                    if spectra is None:
+                        spectra_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_optimal.fits'
+                        if spectra_path.exists():
                             try:
-                                db_spec = process_de_blazing_stage(
-                                    spectra,
-                                    output_dir_base=self.config.get_output_path(),
-                                    flat_field=flat_field,
-                                    save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
-                                    output_filename=f'{target_name}_1D_{method}_Deblaze.fits',
-                                    plot_prefix=f'{target_name}_1D_{method}_Deblaze',
-                                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                                    fig_format=self.config.get('reduce', 'fig_format', 'png')
-                                )
-                                self.log_text.append(f"  ✓ Step 6 De-blazing complete for {target_name} ({method})")
-                                if method == 'optimal': deblazed_opt = db_spec
+                                spectra = load_extracted_spectra(str(spectra_path))
                             except Exception as e:
-                                self.log_text.append(f"  ! Failed to de-blaze {target_name} ({method}): {e}")
-                    return deblazed_opt
+                                self.log_text.append(f"  ! Error loading {spectra_path.name}: {e}")
+                    if spectra is None:
+                        return None
+                    try:
+                        db_spec = process_de_blazing_stage(
+                            spectra,
+                            output_dir_base=self.config.get_output_path(),
+                            flat_field=flat_field,
+                            save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
+                            output_filename=f'{target_name}_1D_optimal_Deblaze.fits',
+                            plot_prefix=f'{target_name}_1D_optimal_Deblaze',
+                            save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                            fig_format=self.config.get('reduce', 'fig_format', 'pdf')
+                        )
+                        self.log_text.append(f"  ✓ Step 6 De-blazing complete for {target_name} (optimal)")
+                        return db_spec
+                    except Exception as e:
+                        self.log_text.append(f"  ! Failed to de-blaze {target_name} (optimal): {e}")
+                        return None
 
                 do_deblaze("MasterFlat")
                 for calib_f in current_calib_files:
@@ -1953,71 +1951,54 @@ class MainWindow(QMainWindow):
                          closest_calib = min(calibrations, key=lambda x: abs(x[0] - target_time))
                          wave_calib = closest_calib[1]
                          self.log_text.append(f"  Using calibration {closest_calib[2]} for {target_name} (closest in time)")
-                         
-                         calib_opt = None
-                         for method in ['sum', 'optimal']:
-                             spectra = None
-                             deblaze_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_{method}_Deblaze.fits'
-                             if deblaze_path.exists():
-                                 try: spectra = load_extracted_spectra(str(deblaze_path))
-                                 except Exception: pass
-                             
-                             if spectra is None:
-                                 extract_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
-                                 if extract_path.exists():
-                                     try: spectra = load_extracted_spectra(str(extract_path))
-                                     except Exception as e: self.log_text.append(f"  ! Error loading {extract_path.name}: {e}")
-                             
-                             if spectra is None:
-                                 self.log_text.append(f"  ! Step 7: No {method} spectra found to calibrate for {target_name}")
-                                 self.log_text.append(f"    -> Code searched for: {deblaze_path.name} and {extract_path.name}")
-                                 self.log_text.append(f"    -> Absolute path 1: {deblaze_path.absolute()} (Exists: {deblaze_path.exists()})")
-                                 self.log_text.append(f"    -> Absolute path 2: {extract_path.absolute()} (Exists: {extract_path.exists()})")
-                                 continue
-                                 
-                             delta_m = getattr(wave_calib, 'delta_m', 0)
-                             if delta_m != 0:
-                                 spectra.shift_orders(delta_m)
-                                 
-                             calibrator = WavelengthCalibrator()
-                             calibrator.wave_calib = wave_calib
-                             
-                             from specproc.core.data_structures import SpectraSet
-                             calibrated_spectra = SpectraSet()
-                             
-                             for spectrum in spectra.spectra.values():
-                                 n_pixels = len(spectrum.flux)
-                                 pixel_array = np.arange(n_pixels)
-                                 wavelengths = calibrator.apply_wavelength_calibration(
-                                     spectrum.flux, pixel_array, aperture_y=float(spectrum.aperture)
-                                 )
-                                 calibrated_spectrum = spectrum.copy()
-                                 calibrated_spectrum.wavelength = wavelengths
-                                 calibrated_spectra.add_spectrum(calibrated_spectrum)
-                                 
-                             out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
-                             out_dir.mkdir(parents=True, exist_ok=True)
-                             from specproc.core.de_blazing import save_deblazed_spectra
-                             save_deblazed_spectra(
-                                 str(out_dir / f'{target_name}_1D_{method}_wavecal.fits'), 
-                                 calibrated_spectra,
-                                 content_desc='Wavelength calibrated spectra',
-                                 log_desc='wavelength-calibrated'
-                             )
-                             
-                             if self.config.get_bool('reduce', 'save_plots', True):
-                                 from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
-                                 pdf_path = out_dir / f"{target_name}_1D_{method}_wavecal.pdf"
-                                 plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
-                                                     title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)",
-                                                     id_label="Order")
 
-                             self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied for {target_name} ({method})")
-                             if method == 'optimal':
-                                 calib_opt = calibrated_spectra
-                                 
-                         if calib_opt is not None and target_name in [Path(s).stem for s in current_science_files]:
-                             calibrated_spectra_dict[target_name] = calib_opt
+                         spectra = None
+                         deblaze_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_optimal_Deblaze.fits'
+                         if deblaze_path.exists():
+                             try: spectra = load_extracted_spectra(str(deblaze_path))
+                             except Exception: pass
+                         if spectra is None:
+                             extract_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_optimal.fits'
+                             if extract_path.exists():
+                                 try: spectra = load_extracted_spectra(str(extract_path))
+                                 except Exception as e: self.log_text.append(f"  ! Error loading {extract_path.name}: {e}")
+                         if spectra is None:
+                             self.log_text.append(f"  ! Step 7: No optimal spectra found for {target_name}")
+                             continue
+
+                         delta_m = getattr(wave_calib, 'delta_m', 0)
+                         if delta_m != 0:
+                             spectra.shift_orders(delta_m)
+                         calibrator = WavelengthCalibrator()
+                         calibrator.wave_calib = wave_calib
+                         from specproc.core.data_structures import SpectraSet
+                         calibrated_spectra = SpectraSet()
+                         for spectrum in spectra.spectra.values():
+                             n_pixels = len(spectrum.flux)
+                             pixel_array = np.arange(n_pixels)
+                             wavelengths = calibrator.apply_wavelength_calibration(
+                                 spectrum.flux, pixel_array, aperture_y=float(spectrum.aperture))
+                             calibrated_spectrum = spectrum.copy()
+                             calibrated_spectrum.wavelength = wavelengths
+                             calibrated_spectra.add_spectrum(calibrated_spectrum)
+
+                         out_dir = Path(self.config.get_output_path()) / 'step7_wavelength'
+                         out_dir.mkdir(parents=True, exist_ok=True)
+                         from specproc.core.de_blazing import save_deblazed_spectra
+                         save_deblazed_spectra(
+                             str(out_dir / f'{target_name}_1D_optimal_wavecal.fits'),
+                             calibrated_spectra,
+                             content_desc='Wavelength calibrated spectra',
+                             log_desc='wavelength-calibrated')
+                         if self.config.get_bool('reduce', 'save_plots', True):
+                             from specproc.plotting.spectra_plotter import plot_spectra_to_pdf
+                             pdf_path = out_dir / f"{target_name}_1D_optimal_wavecal.pdf"
+                             plot_spectra_to_pdf(calibrated_spectra, str(pdf_path),
+                                                 title_prefix="Wavelength Calibrated Spectrum",
+                                                 xlabel=r"Wavelength ($\AA$)", id_label="Order")
+                         self.log_text.append(f"  ✓ Step 7 Wavelength calibration applied for {target_name} (optimal)")
+                         if target_name in [Path(s).stem for s in current_science_files]:
+                             calibrated_spectra_dict[target_name] = calibrated_spectra
 
         # STAGE 7: Order Stitching
         if "stage_7" in selected_stages:

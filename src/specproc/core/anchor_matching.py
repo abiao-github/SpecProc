@@ -19,7 +19,7 @@ The recommended workflow for the Muztagh-Ata 1.93 m slit spectrograph is:
 
 The functions are independent of the GUI so they can also be called from
 notebooks or tests.  The command line entry point is
-:mod:`specproc.match_anchors` (``specproc-match-anchors``).
+:mod:`specproc.utils.identify` (``specproc identify --auto``).
 """
 
 import logging
@@ -31,13 +31,23 @@ from astropy.io import fits
 from scipy import ndimage
 from scipy.signal import find_peaks
 
-from specproc.core.line_identification import load_linelist, pattern_match_linear
+from specproc.core.line_identification import (
+    load_linelist,
+    pattern_match_linear,
+    refine_with_catalog,
+)
+from specproc.core.peak_fitting import fit_peak_center
 
 logger = logging.getLogger(__name__)
 
 
 class Peak:
-    """A detected emission peak (0-based pixel, prominence, S/N and width)."""
+    """A detected emission peak.
+
+    ``pixel`` is the 0-based detector pixel for an observed spectrum; for a
+    reference catalogue built with ``detect_peaks(..., x=ref.wave)`` it holds
+    the fitted wavelength in Angstrom.
+    """
 
     __slots__ = ('pixel', 'amplitude', 'snr', 'width')
 
@@ -82,20 +92,47 @@ class Solution:
 
     def __init__(self, coef: np.ndarray, pairs: np.ndarray, residuals: np.ndarray,
                  peak_indices: np.ndarray, catalog_indices: np.ndarray,
-                 n_pixels: int):
+                 n_pixels: int, rms_mask: Optional[np.ndarray] = None):
         self.coef = np.asarray(coef, dtype=float)
         self.pairs = np.asarray(pairs, dtype=float).reshape(-1, 2)
         self.residuals = np.asarray(residuals, dtype=float)
         self.peak_indices = np.asarray(peak_indices, dtype=int)
         self.catalog_indices = np.asarray(catalog_indices, dtype=int)
         self.n_pixels = int(n_pixels)
+        self.rms_mask = self._default_rms_mask(rms_mask)
+
+    def _default_rms_mask(self, mask) -> np.ndarray:
+        """Keep inlier residuals (3-MAD) unless an explicit mask is supplied."""
+        n = len(self.residuals)
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool).reshape(-1)
+            if len(mask) != n:
+                raise ValueError('rms_mask length does not match residuals')
+            if mask.any():
+                return mask
+        if n < 3:
+            return np.ones(n, dtype=bool)
+        centre = float(np.median(self.residuals))
+        mad = 1.4826 * float(np.median(np.abs(self.residuals - centre)))
+        if not np.isfinite(mad) or mad < 0:
+            return np.ones(n, dtype=bool)
+        scale = max(mad, 1e-6)
+        keep = np.abs(self.residuals - centre) <= 3.0 * scale
+        return keep if keep.sum() >= 2 else np.ones(n, dtype=bool)
+
+    @property
+    def n_rms(self) -> int:
+        return int(self.rms_mask.sum())
 
     def wavelength(self, pixel) -> np.ndarray:
         return np.polyval(self.coef, pixel)
 
     @property
     def rms(self) -> float:
-        return float(np.sqrt(np.mean(self.residuals ** 2))) if len(self.residuals) else np.nan
+        if not len(self.residuals):
+            return np.nan
+        res = self.residuals[self.rms_mask]
+        return float(np.sqrt(np.mean(res ** 2))) if len(res) else np.nan
 
     @property
     def wave_range(self) -> Tuple[float, float]:
@@ -139,7 +176,7 @@ def load_observed(path: str) -> Tuple[np.ndarray, np.ndarray, dict]:
     """Read an extracted 1-D lamp spectrum.
 
     Returns ``(flux, pixel, info)`` where ``pixel`` is 0-based.  Both SpecProc
-    ``*_spec.fits`` tables and plain 1-D FITS arrays are accepted.  When the
+    ``*_pixel.fits`` / ``*_wave.fits`` tables and plain 1-D FITS arrays are accepted.  When the
     table carries an absolute wavelength column it is returned in
     ``info['wavelength']`` (and ``info['wave_range']``); the pixel axis is
     always returned as well because that is what the slit pipeline expects.
@@ -158,7 +195,10 @@ def load_observed(path: str) -> Tuple[np.ndarray, np.ndarray, dict]:
         if not rows:
             raise ValueError(f'No numeric spectrum found in {path}')
         arr = np.asarray(rows, dtype=float)
-        flux = _as_float_array(arr[:, -1])
+        if arr.shape[0] == 1 and arr.shape[1] > 2:
+            flux = _as_float_array(arr[0])
+        else:
+            flux = _as_float_array(arr[:, -1])
         return flux, np.arange(len(flux), dtype=float), {'path': str(p)}
 
     with fits.open(p) as hdul:
@@ -300,16 +340,23 @@ def load_reference(path: str, linelist: Optional[str] = None) -> Reference:
 # ---------------------------------------------------------------------------
 def detect_peaks(flux: np.ndarray, snr: float = 8.0, min_width: float = 0.5,
                  max_width: float = 10.0, distance: int = 4,
-                 baseline_size: int = 61) -> List[Peak]:
+                 baseline_size: int = 61,
+                 x: Optional[np.ndarray] = None) -> List[Peak]:
     """Detect narrow emission peaks on top of a smooth continuum.
 
     A median-filtered version of the smoothed spectrum is subtracted before
     peak finding, so broad blaze/continuum variations do not produce spurious
-    peaks.  The returned pixel is a three-pixel weighted centroid.
+    peaks.  Each peak is centred with a local Gaussian fit (falling back to a
+    weighted centroid); ``x`` supplies the coordinate of each sample (pixels
+    by default, or wavelengths for a reference atlas).
     """
     flux = _as_float_array(flux)
     if len(flux) < 5:
         return []
+    grid = (np.arange(len(flux), dtype=float) if x is None
+            else np.asarray(x, dtype=float).reshape(-1))
+    if len(grid) != len(flux):
+        raise ValueError('x and flux must have the same length')
     smooth = ndimage.gaussian_filter1d(flux, 1.0)
     size = min(baseline_size, len(smooth) // 2 * 2 + 1)
     baseline = ndimage.median_filter(smooth, size=max(size, 3))
@@ -320,11 +367,21 @@ def detect_peaks(flux: np.ndarray, snr: float = 8.0, min_width: float = 0.5,
     idx, props = find_peaks(residual, prominence=max(snr * noise, 1e-9),
                             width=(min_width, max_width), distance=distance)
     peaks = []
-    for k, i in enumerate(idx):
-        lo, hi = max(i - 3, 0), min(i + 4, len(residual))
-        w = np.clip(residual[lo:hi], 0, None)
-        centroid = float((np.arange(lo, hi) * w).sum() / w.sum()) if w.sum() > 0 else float(i)
-        peaks.append(Peak(centroid, props['prominences'][k],
+    positions = np.asarray(idx, dtype=int)
+    for k, i in enumerate(positions):
+        half_width = max(3, int(round(1.5 * float(props['widths'][k]))))
+        # Do not let the fit window cross the midpoint to a neighbouring
+        # detected peak: a single Gaussian spanning a doublet would otherwise
+        # put its centre in the valley between the two components.
+        left_width = half_width
+        right_width = half_width
+        if k > 0:
+            left_width = min(half_width, max(2, int((i - positions[k - 1]) // 2)))
+        if k + 1 < len(positions):
+            right_width = min(half_width, max(2, int((positions[k + 1] - i) // 2)))
+        centre = fit_peak_center(grid, residual, int(i), half_width=half_width,
+                                 left_width=left_width, right_width=right_width)
+        peaks.append(Peak(centre, props['prominences'][k],
                           props['prominences'][k] / noise, props['widths'][k]))
     return peaks
 
@@ -352,13 +409,15 @@ def build_catalog(ref: Reference, wave_range: Optional[Sequence[float]] = None,
                   snr: float = 20.0, strength_frac: float = 0.01,
                   min_strength: float = 50.0, max_lines: int = 400,
                   linelist_wave: Optional[np.ndarray] = None,
-                  linelist_labels: Optional[Sequence[str]] = None) -> Reference:
+                  linelist_labels: Optional[Sequence[str]] = None,
+                  n_peaks: Optional[int] = None) -> Reference:
     """Build the strong-line catalogue used for the pattern match.
 
-    When ``ref`` is a real spectrum its strongest peaks are used, with a
-    threshold relative to the strongest line *inside* the requested range.
-    Using a local threshold is important for the KPNO atlas: its throughput
-    changes by more than an order of magnitude between echelle orders.
+    When ``ref`` is a real spectrum its peaks are detected first.  By default
+    they are filtered with an absolute S/N threshold (``snr``) plus a relative
+    brightness threshold; ``n_peaks`` instead keeps the N brightest peaks,
+    which is useful for matching a reference atlas to a small observed lamp
+    line list.  A pure wavelength catalogue is returned unchanged.
     """
     if ref.flux is None or np.allclose(ref.flux, 1.0):
         margin = 50.0
@@ -372,10 +431,10 @@ def build_catalog(ref: Reference, wave_range: Optional[Sequence[float]] = None,
         return Reference(cat.wave.copy(), np.ones_like(cat.wave), labels, ref.source)
 
     ref_peaks = detect_peaks(ref.flux, snr=snr, min_width=0.2, max_width=8.0,
-                             distance=3, baseline_size=101)
+                             distance=3, baseline_size=101, x=ref.wave)
     if not ref_peaks:
         raise ValueError('No peaks detected in the reference spectrum')
-    cat_wave = np.interp([p.pixel for p in ref_peaks], np.arange(len(ref)), ref.wave)
+    cat_wave = np.array([p.pixel for p in ref_peaks], dtype=float)
     strength = np.array([p.snr for p in ref_peaks], dtype=float)
     labels = _labels_for(cat_wave, linelist_wave, linelist_labels)
 
@@ -390,18 +449,30 @@ def build_catalog(ref: Reference, wave_range: Optional[Sequence[float]] = None,
     if len(cat_wave) == 0:
         raise ValueError('The reference catalogue is empty inside the requested range')
 
-    threshold = max(min_strength, strength_frac * float(strength.max()))
-    keep = strength >= threshold
-    if keep.sum() > max_lines:
-        order = np.argsort(-strength[keep])[:max_lines]
-        sel = np.where(keep)[0][order]
+    if n_peaks is not None:
+        # Choose the N brightest catalogue peaks, independent of an absolute
+        # S/N cut.  This keeps the reference list comparable in size to the
+        # measured lamp peaks instead of filling it with faint atlas lines.
+        count = max(1, min(int(n_peaks), len(cat_wave), max_lines))
+        sel = np.argsort(-strength)[:count]
+        threshold = float(strength[sel].min()) if len(sel) else 0.0
     else:
-        sel = np.where(keep)[0]
+        threshold = max(min_strength, strength_frac * float(strength.max()))
+        keep = strength >= threshold
+        if keep.sum() > max_lines:
+            order = np.argsort(-strength[keep])[:max_lines]
+            sel = np.where(keep)[0][order]
+        else:
+            sel = np.where(keep)[0]
     sel = sel[np.argsort(cat_wave[sel])]
     cat = Reference(cat_wave[sel], strength[sel],
                     [labels[i] for i in sel], ref.source)
-    logger.info('Reference catalogue: %d lines from %s (S/N >= %.0f)',
-                len(cat), ref.source, threshold)
+    if n_peaks is not None:
+        logger.info('Reference catalogue: %d brightest lines from %s',
+                    len(cat), ref.source)
+    else:
+        logger.info('Reference catalogue: %d lines from %s (S/N >= %.0f)',
+                    len(cat), ref.source, threshold)
     return cat
 
 
@@ -599,6 +670,71 @@ def solve_dispersion(peaks: Sequence[Peak], catalog: Reference, n_pixels: int,
     return Solution(coef, pairs, res, pi, ci, n_pixels)
 
 
+def solution_from_pairs(pairs, n_pixels: int, order: int = 3,
+                        peaks: Optional[Sequence[Peak]] = None,
+                        catalog: Optional[Reference] = None,
+                        coef: Optional[np.ndarray] = None,
+                        rms_mask: Optional[np.ndarray] = None) -> Solution:
+    """Build a :class:`Solution` from explicit ``(pixel, wavelength)`` pairs.
+
+    This is the object the identification window uses after manual editing:
+    the polynomial is fitted to the pairs and the nearest lamp peak and
+    catalogue line are recorded for every row, so the same :class:`Solution`
+    can be written out and plotted.  ``rms_mask`` marks the inliers used for
+    the reported RMS; by default a 3-MAD clip is applied.
+    """
+    pairs = np.asarray(pairs, dtype=float).reshape(-1, 2)
+    if len(pairs) < 2:
+        raise ValueError('At least two (pixel, wavelength) pairs are required')
+    order = max(1, min(int(order), len(pairs) - 1))
+    if coef is None:
+        coef = np.polyfit(pairs[:, 0], pairs[:, 1], order)
+    coef = np.asarray(coef, dtype=float)
+    residuals = pairs[:, 1] - np.polyval(coef, pairs[:, 0])
+
+    peak_px = np.array([p.pixel for p in peaks], dtype=float) if peaks else np.empty(0)
+    cat_wave = np.asarray(catalog.wave, dtype=float) if catalog is not None else np.empty(0)
+    if len(peak_px):
+        peak_indices = np.array([int(np.argmin(np.abs(peak_px - x))) for x in pairs[:, 0]],
+                                dtype=int)
+    else:
+        peak_indices = np.full(len(pairs), -1, dtype=int)
+    if len(cat_wave):
+        catalog_indices = np.array([int(np.argmin(np.abs(cat_wave - w))) for w in pairs[:, 1]],
+                                   dtype=int)
+    else:
+        catalog_indices = np.full(len(pairs), -1, dtype=int)
+    return Solution(coef, pairs, residuals, peak_indices, catalog_indices,
+                    n_pixels, rms_mask=rms_mask)
+
+
+def solve_from_anchors(peaks: Sequence[Peak], catalog: Reference, anchors,
+                       n_pixels: int, order: int = 3, match_tol: float = 2.0,
+                       min_tol: float = 0.3, poly_type: str = 'polynomial') -> Optional[Solution]:
+    """Fit the anchor lines first, then extend the solution to the catalogue.
+
+    This keeps the slit pipeline's data flow: the identified
+    (``[slit] identification_file``) anchor lines give the preliminary
+    pixel-to-wavelength solution and are always retained, then every detected
+    lamp peak is matched against the full line catalogue and the polynomial is
+    refitted.  ``poly_type`` selects the fitting basis.  Without anchors use
+    :func:`solve_dispersion`.
+    """
+    pairs = np.asarray(anchors, dtype=float).reshape(-1, 2)
+    if len(pairs) < 2 or len(peaks) < 2 or len(catalog) < 2:
+        return None
+    peak_pix = np.array([p.pixel for p in peaks], dtype=float)
+    peak_amp = np.array([p.amplitude for p in peaks], dtype=float)
+    matched, coef = refine_with_catalog(
+        peak_pix, pairs, np.asarray(catalog.wave, dtype=float),
+        order, match_tol, min_tol=min_tol, peak_amp=peak_amp,
+        poly_type=poly_type)
+    if coef is None or len(matched) < 2:
+        return None
+    return solution_from_pairs(matched, n_pixels, order=order, peaks=peaks,
+                               catalog=catalog, coef=coef)
+
+
 # ---------------------------------------------------------------------------
 # Anchor selection and output
 # ---------------------------------------------------------------------------
@@ -678,7 +814,7 @@ def _format_solution(coef: np.ndarray, precision: int = 8) -> Tuple[str, str]:
 
 def write_anchor_file(path: str, anchors, solution: Solution, lamp: str,
                       reference: str, note: str = '', created: str = ''):
-    """Write anchors as ``pixel, wavelength`` CSV readable by the slit pipeline."""
+    """Write ``pixel, wavelength, snr`` CSV readable by the slit pipeline."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     formula, coef_text = _format_solution(solution.coef)
@@ -700,9 +836,9 @@ def write_anchor_file(path: str, anchors, solution: Solution, lamp: str,
     ]
     if note:
         lines.append(f'# note       : {note}')
-    lines.append('# pixel, wavelength, ion, snr, residual')
-    for snr, x, w, res, label in anchors:
-        lines.append(f'{x:.3f}, {w:.4f}, {label or "?"}, {snr:.1f}, {res:+.2f}')
+    lines.append('# pixel, wavelength, snr')
+    for snr, x, w, _res, _label in anchors:
+        lines.append(f'{x:.3f}, {w:.4f}, {snr:.1f}')
     p.write_text('\n'.join(lines) + '\n')
     return p
 
@@ -741,43 +877,70 @@ def plot_diagnostic(path: str, flux: np.ndarray, peaks: Sequence[Peak],
                     title: str = '', zoom: Optional[Tuple[float, float]] = None,
                     pixel_wavelength: Optional[np.ndarray] = None):
     """Draw the visual-check figure: spectrum, zoomed overlay and residuals."""
-    import os
-    import tempfile
-    os.environ.setdefault('MPLCONFIGDIR', tempfile.mkdtemp(prefix='specproc-mpl-'))
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+    # Build the figure on an Agg canvas directly instead of going through
+    # pyplot: the interactive window calls this while a Qt backend is active,
+    # and ``matplotlib.use('Agg')`` would try to switch (and close) the live
+    # figures.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
     pixel = np.arange(len(flux), dtype=float)
     if pixel_wavelength is None:
         pixel_wavelength = solution.wavelength(pixel)
     pixel_wavelength = np.asarray(pixel_wavelength, dtype=float)
 
-    fig = plt.figure(figsize=(14, 10.5))
+    fig = Figure(figsize=(14, 10.5))
+    FigureCanvasAgg(fig)
     gs = fig.add_gridspec(3, 1, height_ratios=[1.35, 1.05, 0.85], hspace=0.30)
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[2])
 
     # --- full spectrum -----------------------------------------------------
-    ax1.plot(pixel, np.clip(flux, 1, None), color='0.25', lw=0.55, zorder=2)
-    ax1.set_yscale('log')
+    ax1.plot(pixel, flux, color='0.25', lw=0.55, zorder=2)
+    ax1.set_yscale('linear')
     ax1.set_xlim(0, len(flux) - 1)
-    ax1.set_ylabel('Counts (log)')
+    ax1.set_ylabel('Counts')
     ax1.set_xlabel('Pixel (0-based)')
     ax1.set_title(title or 'Lamp spectrum and anchor lines', pad=10)
     ax1.grid(alpha=0.18)
+
+    # Reference atlas / line list in the same panel, mapped to detector pixels.
+    if ref is not None and len(ref):
+        order = np.argsort(pixel_wavelength)
+        px = np.interp(ref.wave, pixel_wavelength[order], pixel[order],
+                       left=np.nan, right=np.nan)
+        good = np.isfinite(px) & (px >= 0) & (px < len(flux))
+        if not np.allclose(ref.flux, 1.0):
+            ipx = np.full(len(px), -1, dtype=int)
+            finite = np.isfinite(px)
+            ipx[finite] = np.round(px[finite]).astype(int)
+            good &= (ipx >= 0) & (ipx < len(flux))
+            if good.any():
+                prof = np.zeros(len(flux), dtype=float)
+                np.maximum.at(prof, ipx[good],
+                              np.clip(np.nan_to_num(ref.flux[good]), 0, None))
+                top = max(float(np.nanmax(prof)), 1e-12)
+                axr = ax1.twinx()
+                axr.plot(pixel, prof / top, color='#2e7d32', lw=0.6, alpha=0.85, zorder=1)
+                axr.set_ylim(0, 1.15)
+                axr.set_ylabel('Reference (norm.)', color='#2e7d32', fontsize=8)
+                axr.tick_params(axis='y', colors='#2e7d32', labelsize=7)
+                axr.spines['right'].set_color('#2e7d32')
+        elif good.any():
+            ax1.vlines(px[good], 0.0, 0.18, transform=ax1.get_xaxis_transform(),
+                       color='#2e7d32', lw=0.55, alpha=0.75, zorder=1)
 
     matched = solution.pairs[:, 0] if solution is not None and len(solution.pairs) else []
     for x in matched:
         ax1.axvline(x, color='0.60', lw=0.45, alpha=0.65, zorder=1)
     for snr, x, w, res, label in anchors:
-        ax1.axvline(x, color='crimson', lw=0.9, ls='--', alpha=0.9, zorder=3)
+        ax1.axvline(x, color='#d50000', lw=0.9, ls='--', alpha=0.9, zorder=3)
     # Alternate two label rows so close pairs stay readable.
     for k, (snr, x, w, res, label) in enumerate(anchors):
         ypos = 0.985 if k % 2 == 0 else 0.905
         ax1.text(x, ypos, f'{w:.0f} {label or ""}', rotation=90, ha='center', va='top',
-                 transform=ax1.get_xaxis_transform(), fontsize=6.2, color='crimson',
+                 transform=ax1.get_xaxis_transform(), fontsize=6.2, color='#d50000',
                  bbox=dict(fc='white', ec='none', alpha=0.80, pad=0.30))
 
     formula, _ = _format_solution(solution.coef, precision=6)
@@ -857,5 +1020,4 @@ def plot_diagnostic(path: str, flux: np.ndarray, peaks: Sequence[Peak],
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=160, bbox_inches='tight')
-    plt.close(fig)
     return out

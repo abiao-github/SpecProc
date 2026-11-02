@@ -10,7 +10,6 @@ import configparser
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +17,14 @@ logger = logging.getLogger(__name__)
 # default_config.cfg (used when no config is specified) plus one
 # default_config_<profile>.cfg file per supported telescope/instrument.
 PACKAGE_CONFIG_DIR = Path(__file__).parent
+
+# Canonical telescope+instrument names used by the calibration directories.
+# The packaged config filenames predate these combined names, so keep a small
+# alias table rather than renaming files and breaking existing scripts.
+PROFILE_ALIASES = {
+    'mstg193slit': 'MSTG193_slit',
+    'xinglong216hrs': 'XL216_hrs',
+}
 
 
 # 列出已打包的望远镜配置档。
@@ -61,6 +68,9 @@ def resolve_telescope_profile(name: str) -> Optional[Path]:
         return None
 
     candidates = {name, name.lower()}
+    alias = PROFILE_ALIASES.get(name.lower())
+    if alias:
+        candidates.update({alias, alias.lower()})
     stem = Path(name).stem
     if stem.startswith("default_config_"):
         suffix = stem[len("default_config_"):]
@@ -177,7 +187,7 @@ class ConfigManager:
         self.config['reduce'] = {
             'output_path': './output',
             'mode': 'normal',
-            'fig_format': 'png',
+            'fig_format': 'pdf',
             'oned_suffix': '_ods',
             'ncores': 'max',
             'auto_process_all_images': 'yes',
@@ -278,7 +288,13 @@ class ConfigManager:
         try:
             self.config.read(config_path)
             self.config_path = Path(config_path)
-            logger.info(f"Loaded configuration from {config_path}")
+            shown = Path(config_path).expanduser()
+            try:
+                rel = shown.resolve().relative_to(Path.cwd().resolve())
+                shown = './' if str(rel) == '.' else f'./{rel}'
+            except ValueError:
+                shown = str(shown.resolve())
+            logger.info(f"Loaded configuration from {shown}")
         except Exception as e:
             logger.error(f"Error loading config from {config_path}: {e}")
             raise

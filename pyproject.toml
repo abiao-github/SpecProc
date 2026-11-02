@@ -7,7 +7,7 @@ name = "SpecProc"
 version = "1.0.0"
 description = "A spectral processing tool"
 readme = "README.md"
-requires-python = ">=3.6"
+requires-python = ">=3.7"
 license = "MIT"
 authors = [
     {name = "Niu, Hubiao", email = "niuhubiao@xao.ac.cn"}
@@ -32,10 +32,9 @@ Repository = "https://github.com/yourusername/specproc"
 
 [project.scripts]
 specproc = "specproc.main:main"
-specproc-air2vac = "specproc.utils.airvac:air2vac_main"
-specproc-vac2air = "specproc.utils.airvac:vac2air_main"
-specproc-identify = "specproc.gui.line_identifier:main"
-specproc-match-anchors = "specproc.match_anchors:main"
+"specproc.air2vac" = "specproc.utils.airvac:air2vac_main"
+"specproc.vac2air" = "specproc.utils.airvac:vac2air_main"
+"specproc.identify" = "specproc.utils.identify:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

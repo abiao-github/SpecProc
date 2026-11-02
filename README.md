@@ -26,9 +26,9 @@ A complete PyQt-based graphical interface for reducing slit/chelle spectrograph 
 2. **Apertures Tracing** - Master flat generation and echelle aperture tracing
 3. **Scattered Light Subtraction** - Inter-aperture background modeling and removal (astropy convolution or spline)
 4. **2D Flat-Field Correction** - 2D pixel flat correction
-5. **1D Spectrum Extraction** - 1D spectrum extraction for each aperture (sum or optimal)
+5. **1D Spectrum Extraction** - optimal extraction for each aperture
 6. **De-blazing** - Blaze function correction
-7. **Wavelength Calibration** - Wavelength calibration applied to both sum and optimal de-blazed 1D spectra
+7. **Wavelength Calibration** - Wavelength calibration applied to the optimal de-blazed 1D spectra
 8. **Order Stitching** - Merge overlapping neighboring orders into a continuous 1D spectrum
 
 ### Interactive GUI
@@ -418,13 +418,10 @@ calibration_file = wlcalib_20211123011_A.fits
 
 ## Usage
 
-### GUI Mode (Default)
+### GUI Mode
 
 ```bash
-# Launch GUI (default mode)
-specproc
-
-# Or explicitly specify GUI mode
+# Launch GUI (must be requested explicitly; the default is CLI)
 specproc --mode gui
 
 # With custom config file
@@ -443,8 +440,8 @@ specproc --config /path/to/config.cfg
 ### CLI Mode (Command Line)
 
 ```bash
-# Run CLI mode
-specproc --mode cli
+# CLI is the default: process FITS files in the current directory
+specproc
 
 # Or with custom config file
 specproc --mode cli --config /path/to/config.cfg
@@ -464,24 +461,43 @@ per supported telescope/instrument under `src/specproc/config/` (e.g.
 to that packaged file automatically — no need to type the full path. Run
 `specproc --help` to see the list of available profiles.
 
+When no `--config` is given, CLI processing reads `TELESCOP`/`INSTRUME` from the
+input FITS headers, selects the matching packaged profile, copies it to
+`./specproc.cfg` if that file does not already exist, and uses that working copy.
+The combined profile names currently reserved are `mstg193slit`,
+`xinglong216hrs`, `xinglong216bfosc` and `lijiang24hrs`. The profile can also
+be forced explicitly:
+
+```bash
+specproc --profile mstg193slit raw_dir
+```
+
+If no telescope/instrument metadata is available, create an editable working
+config with `specproc --config` and adjust it for the observation.
+For MSTG data the slit pipeline also selects `mstg193slit_anchors_R.csv` or
+`mstg193slit_anchors_B.csv` from `INSTRUME` when the corresponding file exists.
+
 **Slit mode** (`[telescope] instrument = slit`, used by `MSTG193_slit`): a
 separate single-aperture pipeline (`core/slit_pipeline.py`) replaces the echelle
 stages: overscan/bias → pixel flat → cosmic rays → star trace + sky subtraction →
-sum/optimal extraction → 1-D wavelength solution. Frame types are taken from file
+optimal extraction → 1-D wavelength solution. Frame types are taken from file
 names (`frame_type_source = filename`; bias / flat / FeAr / dark, rest = science).
 Run the red and blue cameras separately (one directory each). Wavelength
 calibration needs `[slit] identification_file` (pixel, wavelength rows; generate it
-with `specproc-match-anchors`, candidate pixels are also written to
-`step7_wavelength/<lamp frame>_peaks.csv`) or `wave_start`/`wave_end` hints; otherwise
-spectra are saved on a pixel axis.
+with `specproc identify`) or `wave_start`/`wave_end` hints; otherwise
+spectra are saved on a pixel axis.  The final 1-D solution uses
+`[slit] wave_poly_type` (`legendre` by default, `chebyshev` or `polynomial` also
+accepted) and `wave_poly_order` (default 5 when enough well-spread lines are available).
 
 Slit-mode output layout (same numbering as HRS; steps not needed are omitted):
-`step1_basic/{overscan_corrected,bias_subtracted,cosmic_corrected}`, `step2_trace` (slit trace of the master flat: centre and both edges, plus each
-science frame's trace = flat centre line + a constant star offset; the same trace
-is applied to the science and lamp frames),
-`step4_flat_corrected` (master/pixel flat and flat-fielded images), `step5_extraction`
-(sky-subtracted images and 1-D spectra of the targets, every lamp frame and the master flat,
-all extracted along the master-flat trace), `step7_wavelength`. No scattered-light
+`step1_basic/{overscan_corrected,bias_subtracted,cosmic_corrected}` (each FITS image
+has a matching PDF diagnostic plus `master_bias.pdf`), `step2_trace` (independent traces of the master flat, each lamp frame and each
+science frame, with a per-frame `*_trace.txt` and `*_trace.pdf`),`step4_flat_corrected` (master/pixel flat and flat-fielded images), `step5_extraction`
+(sky-subtracted images, 1-D spectra and an extraction-aperture/sky-region
+diagnostic PDF for each science frame, extracted along its own trace),
+`step7_wavelength` (calibrated target and lamp spectra `*_wave.fits`/`*_wave.pdf`,
+residual plots and a two-page `*_arc.pdf` containing the arc spectrum + matched
+lines/residuals and the R(λ) diagnostic). No scattered-light
 (step3) or de-blazing (step6) directories are created.
 
 **Extraction aperture (slit mode)**: with `[slit] aperture_mode = auto` the spatial FWHM of each
@@ -495,46 +511,108 @@ science frame is measured from the profile stacked along the whole dispersion ax
 range (window ±`snr_half_window` px; signal = median flux, noise = standard deviation
 of the residual to a quadratic fit). SNR is a dimensionless ratio, labelled
 `SNR=xx@position`: the position is in pixels before wavelength calibration
-(`step5_extraction/*_spec_pixel.pdf`) and in Å after it (`step7_wavelength/*_spec_wave.pdf`).
-Values are annotated on the plots and stored as `SNRPxx`/`SNRWxx` keywords in the `*_spec.fits` table.
+(`step5_extraction/*_pixel.pdf`) and in Å after it (`step7_wavelength/*_wave.pdf`).
+Values are annotated on the plots and stored as `SNRPxx`/`SNRWxx` keywords in the `*_pixel.fits` / `*_wave.fits` table.
 
-**Automatic anchor lines (slit mode)**: `specproc-match-anchors` detects the strong
-peaks in an extracted lamp spectrum, matches them against a high-resolution reference
-lamp spectrum (the NOIRLAB/KPNO FeAr atlas `calib_data/linelists/fear.fits` is
-bundled), fits a low-order pixel → wavelength polynomial and writes a clean anchor
-CSV plus a diagnostic figure. The first two columns (0-based pixel, wavelength in Å)
-are exactly the `[slit] identification_file` format; the pipeline then extends these
-anchors to the full `full_linelist` catalogue for the final wavelength solution.
+**Anchor lines (slit mode)**: `specproc identify` identifies the emission lines of an
+extracted lamp spectrum against a reference atlas (the NOIRLAB/KPNO FeAr atlas
+`calib_data/linelists/fear.fits` is bundled) or a text line list.  The top panel
+shows the normalized measured lamp spectrum in the upper half (pixel axis on top,
+only peaks above the SNR threshold marked with red inverted triangles) and the
+reference atlas/line list in the lower half (blue, wavelength axis at the bottom);
+the reference is mapped through the current dispersion model.  The
+bottom panel shows the residuals of a Legendre or Chebyshev series fitted to the
+identified lines. The resolving power is estimated from the Gaussian FWHM of the
+clean arc lines, R = λ/FWHM, and is shown in a separate R(λ) tab and in the saved diagnostic PDF. The spectrum panel keeps the pixel axis while the residual panel uses wavelength; the two tabs are saved as two PDF pages. The basis, degree and residual-clip threshold are adjustable in
+the window.  Press
+**Auto identify** to match all strong peaks, adjust the result by hand if needed
+(click a lamp peak, then the matching reference line; right-click removes a line),
+and save.  **Flip x** reverses the displayed pixel axis when wavelength decreases
+with pixel; automatic identification sets it from the fitted dispersion.  Saving
+writes a clean anchor CSV — the first two columns (0-based pixel, wavelength in Å)
+are exactly the `[slit] identification_file` format — plus a diagnostic figure
+(spectrum, zoomed observed/reference overlay and residuals).  The pipeline then
+extends these anchors to the full `full_linelist` catalogue for the final wavelength
+solution.
+
+The final dispersion fit basis is selectable: `--poly-type legendre|chebyshev|polynomial`
+(default `legendre`) and `--poly-order` (default 5, up to 9); the interactive window
+exposes the same basis and degree controls.  The slit pipeline reads
+`[slit] wave_poly_type` and `wave_poly_order`.
+
+The same engine runs headless with `--auto`:
 
 ```bash
-# Muztagh-Ata 1.93 m / RR2000V example
-specproc-match-anchors \
-    --lamp output/step5_extraction/RR2000V_FeAr_0.8silt_0.2s_1_spec.fits \
+# Interactive: reference atlas + measured lamp; adjust by hand, then save.
+specproc identify \
+    --lamp output/step5_extraction/RR2000V_FeAr_0.8silt_0.2s_1_pixel.fits \
     --reference src/specproc/calib_data/linelists/fear.fits \
     --linelist  src/specproc/calib_data/linelists/fear.txt \
-    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_R_ids.csv \
-    --plot      docs/mstg193slit_R_anchor_match.png
+    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_anchors_R.csv \
+    --plot      docs/mstg193slit_R_anchor_match.pdf
+# MSTG arm is read from the FITS header (TELESCOP=MOST and
+# INSTRUME=Camera Spectrum-R/B); --arm B is only an explicit override.
+
+# Fully automatic, no window (same options; writes both files).
+specproc identify --auto --lamp <lamp.fits> --reference <atlas.fits> \
+    --output <ids.csv> --plot <diagnostic.pdf>
 ```
 
-The search scans the dispersion curvature and matches the strongest reference lines,
-so it works without manual pairs and without a `wave_start`/`wave_end` hint.  Supplying
+`identify` accepts FITS, CSV and TXT inputs. Its residual fit defaults to 3σ clipping based on the inlier RMS; an absolute-Å clipping mode is also available. Anchor and diagnostic outputs default to
+the current working directory (use `--output`/`--plot` to override); anchor CSV columns are
+`pixel, wavelength, snr`. The search scans
+the dispersion curvature and matches the strongest reference lines,
+so it works without manual pairs and without a `wave_start`/`wave_end` hint.  Both
+pixel directions are tried, so a spectrum whose wavelength decreases with pixel is
+matched as well; the window then flips its displayed pixel axis to keep wavelength
+increasing to the right.  In the
+window, any manual pairs seed the solution and the automatic match then extends them.
+Supplying
 `--config` or `--wave-range` only adds a soft preference for that range; it never cuts the
 reference catalogue, so a slightly wrong hint cannot force a wrong alias. For a
 typical RR2000V frame the cubic extrapolates to ≈3976–11677 Å, while the anchors
 themselves span ≈5912–9784 Å; the selected anchors leave ≈0.3 Å residuals. The blue
 extrapolation has been checked against the night-sky spectrum ([OI] 5577/6300/6363,
 Na I and Hα agree within 0.4 Å); the red end beyond 9800 Å remains approximate.
-Always inspect the diagnostic figure (spectrum, zoomed observed/reference overlay and
-residuals) before using the file, and re-run the tool if the grating, slit or camera
-focus changes. If a frame yields too few anchors, lower `--catalog-frac` (e.g. 0.005)
-or `--catalog-min-snr` to keep more reference lines, then check the extra lines in
-the figure.
+Always inspect the two-page diagnostic PDF (spectrum/reference match and residuals; R(λ)) before using the file, and re-run the tool if the grating, slit or camera
+focus changes. The reference atlas is matched to the same number of brightest peaks
+as the observed lamp; lower `--min-snr` if the lamp itself has too few strong peaks.
 
 **CLI Workflow**:
 1. Follow prompts to select files
 2. Select processing stages (0-7, or Enter for all)
 3. Monitor console progress
 4. Check results in output directory
+
+### Command-line tools (not part of the pipeline)
+
+SpecProc also ships a few small, self-contained commands for preparing and
+inspecting data. They are not part of the reduction pipeline. Each one is
+invoked as a standalone `specproc.<tool>` command (type `specproc.` and press
+Tab to list all three; `specproc <tool> ...` also works):
+
+| Command | Purpose |
+|---|---|
+| `specproc.air2vac INPUT OUTPUT` | Convert line-list wavelengths from air to vacuum (Å) |
+| `specproc.vac2air INPUT OUTPUT` | Convert line-list wavelengths from vacuum to air (Å) |
+| `specproc.identify` | Interactive/automatic lamp-line identification: reference atlas + lamp spectrum → anchor CSV + diagnostic figure |
+| `specproc tools` | List the tools above |
+
+Run `specproc <tool> --help` for the full option list; `specproc --help` also
+lists the available tools. If the first argument names an existing file or
+directory it is always treated as pipeline input, so a data directory is never
+mistaken for a tool.
+
+**Shell completion** (completes tool names, their options and choice values;
+positional file arguments fall back to the shell's filename completion):
+
+```bash
+# bash: add to ~/.bashrc
+eval "$(specproc --completion bash)"
+
+# zsh: add to ~/.zshrc
+eval "$(specproc --completion zsh)"
+```
 
 ## Calibration Data
 
@@ -562,7 +640,7 @@ calib_data/
 - `thar-noao.dat` - ThAr lamp lines (Xinglong 2.16m HRS recommended)
 - `thar.dat` - Standard ThAr lamp lines
 - `fear.txt` - FeAr lamp lines (Willmarth 3000-10,000 Å)
-- `fear.fits` - NOIRLAB/KPNO FeAr atlas spectrum used by `specproc-match-anchors`
+- `fear.fits` - NOIRLAB/KPNO FeAr atlas spectrum used by `specproc identify`
 
 **Supported lamp types**:
 - `ThAr` - Thorium-Argon (most common for echelle spectrographs)
@@ -640,26 +718,25 @@ cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
 ```
 SpecProc/
 ├── README.md                    # Main documentation
-├── README_CN.md                # Main documentation (Chinese)
-├── specproc.cfg.example         # Example user configuration
+├── pyproject.toml               # Packaging and console-script entry points
 ├── install.sh                   # Installation script
-├── requirements.txt              # Python dependencies
-├── run.py                      # Main entry point
-├── setup.py                     # Installation configuration
 ├── LICENSE                      # License
-├── .gitignore                  # Git ignore rules
-├── src/
-│   └── specproc/               # Source code
-│       ├── calib_data/              # Calibration data
-│       │   ├── linelists/
-│       │   └── telescopes/
-│       ├── default_config.cfg       # Default configuration
-│       ├── gui/                     # GUI modules
-│       ├── core/                    # Core processing
-│       ├── config/                  # Configuration management
-│       ├── utils/                   # Utility functions
-│       └── plotting/                # Plotting functions
-└── test_*.py                    # Test files
+├── .gitignore                   # Git ignore rules
+├── docs/                        # Screenshots, reports and the Chinese manual
+├── tests/                       # pytest tests
+└── src/
+    └── specproc/                # Source code
+        ├── calib_data/          # Calibration data (line lists, telescope profiles)
+        ├── config/              # Configuration management & default configs
+        ├── core/                # Reduction pipeline (echelle and long-slit)
+        ├── gui/                 # Main GUI (main window, settings dialog)
+        ├── plotting/            # Plotting helpers
+        ├── utils/               # Shared helpers + standalone CLI tools
+        │   ├── airvac.py        #   air <-> vacuum wavelength conversion
+        │   ├── identify.py      #   interactive/automatic line identification (`specproc identify`)
+        │   ├── tool_registry.py #   registry behind `specproc tools`
+        │   └── completion.py    #   bash/zsh completion support
+        └── main.py              # `specproc` entry point (GUI + CLI + tools)
 ```
 
 ## License

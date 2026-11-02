@@ -1,0 +1,29 @@
+# SpecProc anchor lines for long-slit wavelength calibration
+# pixel (0-based along the dispersion axis), wavelength (Angstrom, air)
+# These are a small set of clean, isolated strong lines.  They seed the
+# full-catalogue matching; they are not the complete lamp line list.
+# lamp       : BR2000V_FeAr_0.8silt_15s_1_optimal.fits
+# reference  : fear.fits
+# created    : 2026-11-02
+# solution   : lambda(x) = 1.2664518e-15*x^5 + -9.0406162e-12*x^4 + 2.933863e-08*x^3 + -3.8130864e-05*x^2 + -0.77573944*x + 5526.8855
+# coef       : [1.2664518e-15, -9.0406162e-12, 2.933863e-08, -3.8130864e-05, -0.77573944, 5526.8855]  (np.polyval order)
+# solution_rms: 0.074 A
+# anchors    : 16
+# note       : 0 manual + 16 automatic lines; legendre degree 5
+# pixel, wavelength, snr
+817.292, 4879.8612, 116.7
+961.870, 4764.8407, 180.0
+1096.742, 4657.8366, 105.1
+1157.818, 4609.5396, 149.3
+1182.706, 4589.9002, 87.4
+1239.519, 4545.0523, 126.4
+1390.494, 4426.0028, 68.3
+1490.232, 4348.0611, 90.1
+1580.497, 4277.5169, 148.6
+1733.521, 4158.5997, 90.1
+1845.521, 4071.9412, 71.4
+2088.214, 3886.2448, 56.3
+2123.048, 3859.8590, 118.7
+2274.206, 3745.6333, 60.0
+2286.432, 3737.1521, 95.9
+2308.829, 3719.9481, 133.7

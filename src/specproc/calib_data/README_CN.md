@@ -47,11 +47,11 @@ calib_data/
 SpecProc 提供了基于 IRAF `airvac.cl` 的波长转换命令，公式参考 Allen 的 *Astrophysical Quantities*（1973）。波长单位为 Å。在仓库根目录运行：
 
 ```bash
-specproc-air2vac input.dat output.dat
-specproc-vac2air input.dat output.dat
+specproc air2vac input.dat output.dat
+specproc vac2air input.dat output.dat
 ```
 
-安装或更新 SpecProc 后，这两个命令会添加到当前 Python 环境中（在仓库本地以可编辑模式安装可运行 `python -m pip install -e .`）。默认环境参数为温度 `-t 15` ℃、气压 `-p 760` mmHg、水蒸气分压 `-f 4` mmHg，也可以通过这些参数覆盖。工具只转换每行第一个数值列，并保留注释和后续文本。请使用不同的输出文件名，以免覆盖原始线表。
+同样的功能也保留为独立命令 `specproc.air2vac` 和 `specproc.vac2air`。安装或更新 SpecProc 后，这些命令会添加到当前 Python 环境中（在仓库本地以可编辑模式安装可运行 `python -m pip install -e .`）。默认环境参数为温度 `-t 15` ℃、气压 `-p 760` mmHg、水蒸气分压 `-f 4` mmHg，也可以通过这些参数覆盖。工具只转换每行第一个数值列，并保留注释和后续文本。请使用不同的输出文件名，以免覆盖原始线表。
 
 如需不安装、直接从仓库运行，可使用 `PYTHONPATH=src python -m specproc.utils.airvac input.dat output.dat --type air2vac` 或 `--type vac2air`。
 
@@ -59,25 +59,38 @@ specproc-vac2air input.dat output.dat
 
 `thar-noao.dat` 文件没有注明波长为空气波长还是真空波长。与 `thar.dat` 比较后，证据支持它使用空气波长：在 `thar.dat` 的波长范围（3184.9486-9664.6983 Å）内，有 2,948 个波长数值与 `thar.dat` 完全一致。IRAF 线表说明指出 `vacthar.dat` 是由 `thar.dat` 转换得到的真空波长表，因此这些完全相同的值与两份原始线表均使用空气波长的判断相符。这是有较强依据的推断，并非 `thar-noao.dat` 文件中的明确声明；如能取得原始来源元数据，应以其为准。
 
-### 自动匹配锚点谱线（狭缝光谱，推荐）
+### 谱线证认与锚点生成（狭缝光谱，推荐）
 
-慕士塔格 1.93 米狭缝光谱仪没有预先计算的定标文件。`specproc-match-anchors` 可以直接从
-抽取后的一维 FeAr 灯谱中自动找出明显的强发射线，与 `fear.fits` 图集光谱匹配，输出锚点
-文件并画诊断图；锚点文件的前两列（0 基像素、波长 Å）就是 `[slit] identification_file`
-所需格式，后续流水线会用 `full_linelist` 把锚点扩展到全量谱线并重新拟合。
+慕士塔格 1.93 米狭缝光谱仪没有预先计算的定标文件。`specproc identify` 把实测灯谱与参考
+图集（`fear.fits`）或线表对照：窗口上方把两者叠加在同一个像素轴上（参考谱线按当前色散
+模型映射到像素坐标），下方给出锚点线的 Legendre/Chebyshev 拟合残差（基函数、阶数和残差裁剪可调）。点
+**Auto identify** 会对强灯谱峰做色散曲率扫描与形态匹配，结果还可以人工增删；保存时同时
+写出锚点 CSV 和诊断对比图。锚点文件的前两列（0 基像素、波长 Å）就是 `[slit]
+identification_file` 所需格式，后续流水线会用 `full_linelist` 把锚点扩展到全量谱线并重新
+拟合。波长随像素递减时可勾选 **Flip x** 翻转横向显示（自动匹配会自行判断方向）。
 
 ```bash
-specproc-match-anchors \
-    --lamp      output/step5_extraction/<灯谱文件>_spec.fits \
+# 交互式：实测灯谱 + 参考图集
+specproc identify \
+    --lamp      output/step5_extraction/<灯谱文件>_pixel.fits \
     --reference src/specproc/calib_data/linelists/fear.fits \
     --linelist  src/specproc/calib_data/linelists/fear.txt \
-    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_R_ids.csv \
-    --plot      docs/mstg193slit_R_anchor_match.png
+    --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_anchors_R.csv \
+    --plot      docs/mstg193slit_R_anchor_match.pdf
+# 慕峰红/蓝端由 FITS 头的 TELESCOP=MOST + INSTRUME=Camera Spectrum-R/B
+# 自动判断；--arm B 仅用于显式覆盖。默认文件名自动变为
+# mstg193slit_anchors_B.csv。
+
+# 全自动，不开窗口
+specproc identify --auto --lamp <灯谱.fits> --reference <图集.fits> \
+    --output <锚点.csv> --plot <诊断图.pdf>
 ```
 
 工具会扫描色散曲率（光栅色散不是严格线性），用最强的一批参考谱线做形态匹配，再用三次
 多项式迭代精修；不需要人工点选，也不需要 `wave_start`/`wave_end` 提示（加 `--config`
-可给出近似范围提示；工具不会按该范围裁剪参考线表，因此范围写偏也不会被逼到假解）。RR2000V 的一帧，三次多项式
+可给出近似范围提示；工具不会按该范围裁剪参考线表，因此范围写偏也不会被逼到假解）。两个
+像素方向都会尝试，波长随像素递减的灯谱同样能自动匹配，窗口中会自动翻转横轴，使波长从左
+到右增加。RR2000V 的一帧，三次多项式（默认 Legendre 基，可配置为 Chebyshev/5 阶）
 外推到约 3976–11677 Å，锚点本身覆盖约 5912–9784 Å；锚点残差约 0.3 Å。蓝端外推已用
 夜天光验证（[OI] 5577/6300/6363、Na I、Hα 均在 0.4 Å 内），9800 Å 以外的红端仍是
 外推值。**使用前务必看一眼诊断图**（上：灯谱与锚点；中：观测/参考局部叠合；下：残差），
@@ -85,15 +98,7 @@ specproc-match-anchors \
 `--catalog-min-snr` 以保留更多参考线，再在图中核对新增的谱线。若更换光栅、狭缝或
 重新调焦，应重新生成锚点文件。
 
-### 手动证认谱线（狭缝光谱）
-
-若自动匹配因灯谱质量差而失败，也可用交互工具手动标记少量明显的灯谱线：
-
-```bash
-specproc-identify --lamp output/step5_extraction/<灯谱文件>_spec.fits --linelist calib_data/linelists/fear.txt
-```
-
-（未安装时可用 `python -m specproc.gui.line_identifier`；`--lamp` 和 `--linelist` 可省略，在窗口中载入。）窗口上方显示抽取的一维灯谱（横轴为像素），下方把线表画成零基线上的 δ 函数（横轴为波长）。可人工点击一条灯谱峰，再点击对应参考谱线添加锚定线；右键可删除。设置 **low/upper** 波长范围和**信噪比阈值**后，即使没有人工配对，也可直接点击 **Auto identify**。程序根据谱线间隔的形态（最强灯谱峰的三线间距之比与线表中三线间距之比相比对，正反色散方向均尝试）寻找初始解，并剔除波长覆盖超出所设范围的解，再迭代匹配高于阈值的灯谱峰。人工配对（如有）会作为锚点保留。也可勾选 **Overlay reference lines**：用当前模型（或 low/upper 范围，波长随像素递减时勾选 **Flip**）把线表以竖线叠加在灯谱上，用 **Shift**/**Stretch**（或方向键：←/→ 平移，↑/↓ 拉伸）手动微调对齐，再点击 **Fit overlay** 匹配谱峰并拟合。保存后将 `[slit]` 中的 `identification_file` 设为该文件（`peak_snr` 设为同一阈值）：流水线据此拟合，再用 `full_linelist` 匹配并重新拟合最终多项式。线表的波长类型（空气或真空）须与所标注的波长一致。
+**人工调整**：若自动匹配因灯谱质量差而失败，可在窗口中先人工点选少量明显的灯谱线（点灯谱峰，再点对应参考谱线；右键删除），再点 **Auto identify** —— 人工配对会作为初值。保持 **Show reference** 勾选即可：拟合前参考谱显示在自己的波长轴上，有 ≥2 条锚点建立模型后自动映射到 pixel 轴；需要左右翻转时勾 **Flip x**。保存后 `[slit]` 中的 `identification_file` 指向该 CSV（`peak_snr` 设为同一阈值），流水线再用 `full_linelist` 匹配并重新拟合最终多项式。线表的波长类型（空气或真空）须与所标注的波长一致。（未安装时可用 `PYTHONPATH=src python -m specproc.utils.identify`。）
 
 ## 望远镜校准文件
 

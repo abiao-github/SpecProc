@@ -4,8 +4,10 @@ Port of the IRAF ``airvac.cl`` script. The refractive index formula is from
 Allen's Astrophysical Quantities (1973). Wavelengths are in Angstroms.
 
 Usage:
-    specproc-air2vac INPUT OUTPUT [-t T] [-p P] [-f F]
-    specproc-vac2air INPUT OUTPUT [-t T] [-p P] [-f F]
+    specproc air2vac INPUT OUTPUT [-t T] [-p P] [-f F]
+    specproc vac2air INPUT OUTPUT [-t T] [-p P] [-f F]
+    specproc.air2vac INPUT OUTPUT          # standalone alias
+    specproc.vac2air INPUT OUTPUT          # standalone alias
     python -m specproc.utils.airvac INPUT OUTPUT --type air2vac|vac2air
 """
 
@@ -73,20 +75,31 @@ def convert_file(input_path, output_path, conv_type="air2vac", t=15.0, p=760.0, 
     return count
 
 
-def main(argv=None, conv_type=None):
-    prog = "python -m specproc.utils.airvac" if conv_type is None else "specproc-" + conv_type
-    direction = {
-        "air2vac": ("air", "vacuum"),
-        "vac2air": ("vacuum", "air"),
-    }
-    parser = argparse.ArgumentParser(
-        prog=prog,
-        description=("Convert a line-list file between air and vacuum wavelengths "
-                     "(Angstrom). Comments and text after the first column are preserved.")
-        if conv_type is None else
-        "Convert line-list wavelengths from %s to %s (Angstrom). "
-        "Comments and text after the first column are preserved."
-        % direction[conv_type])
+def build_parser(prog=None, conv_type=None):
+    """Build the argument parser for the air/vac conversion tools.
+
+    ``conv_type`` fixes the conversion direction (used by the ``air2vac`` /
+    ``vac2air`` commands); when ``None`` the direction is chosen with
+    ``--type`` instead (used by ``python -m specproc.utils.airvac``).
+    """
+    if conv_type not in (None, "air2vac", "vac2air"):
+        raise ValueError("conv_type must be 'air2vac' or 'vac2air'")
+
+    if conv_type is None:
+        prog = prog or "python -m specproc.utils.airvac"
+        description = ("Convert a line-list file between air and vacuum wavelengths "
+                       "(Angstrom). Comments and text after the first column are preserved.")
+    else:
+        prog = prog or "specproc." + conv_type
+        direction = {
+            "air2vac": ("air", "vacuum"),
+            "vac2air": ("vacuum", "air"),
+        }
+        description = ("Convert line-list wavelengths from %s to %s (Angstrom). "
+                       "Comments and text after the first column are preserved."
+                       % direction[conv_type])
+
+    parser = argparse.ArgumentParser(prog=prog, description=description)
     parser.add_argument("input", help="input line-list file")
     parser.add_argument("output", help="output line-list file")
     if conv_type is None:
@@ -97,6 +110,11 @@ def main(argv=None, conv_type=None):
     parser.add_argument("-p", type=float, default=760.0, help="pressure in mmHg (default: 760)")
     parser.add_argument("-f", type=float, default=4.0,
                         help="water vapour pressure in mmHg (default: 4)")
+    return parser
+
+
+def main(argv=None, conv_type=None, prog=None):
+    parser = build_parser(prog=prog, conv_type=conv_type)
     args = parser.parse_args(argv)
 
     try:
@@ -109,14 +127,14 @@ def main(argv=None, conv_type=None):
     return 0
 
 
-def air2vac_main():
+def air2vac_main(argv=None, prog=None):
     """Command-line entry point for air-to-vacuum conversion."""
-    return main(conv_type="air2vac")
+    return main(argv=argv, conv_type="air2vac", prog=prog)
 
 
-def vac2air_main():
+def vac2air_main(argv=None, prog=None):
     """Command-line entry point for vacuum-to-air conversion."""
-    return main(conv_type="vac2air")
+    return main(argv=argv, conv_type="vac2air", prog=prog)
 
 
 if __name__ == "__main__":

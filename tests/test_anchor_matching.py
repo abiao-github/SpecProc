@@ -113,10 +113,10 @@ def test_write_anchor_file(tmp_path):
                       note='test', created='2026-01-01')
     text = out.read_text()
     assert '# anchors' in text
-    assert '# pixel, wavelength, ion, snr, residual' in text
+    assert '# pixel, wavelength, snr' in text
     rows = [ln for ln in text.splitlines() if ln and not ln.startswith('#')]
     assert len(rows) == len(anchors)
-    assert len(rows[0].split(',')) == 5
+    assert len(rows[0].split(',')) == 3
 
 
 def test_load_reference_reads_fear_atlas_wcs():
@@ -139,6 +139,25 @@ def test_pattern_match_recovers_linear_dispersion():
     assert coef is not None
     assert abs(coef[0] - scale) < 0.01
     assert abs(coef[1] - offset) < 5.0
+
+
+def test_doublet_peaks_are_not_centred_in_the_valley():
+    n = 4096
+    x = np.arange(n, dtype=float)
+    rng = np.random.default_rng(1)
+    flux = np.full(n, 50.0)
+    for centre in (2275.0, 2281.0):
+        flux += 1500.0 * np.exp(-0.5 * ((x - centre) / 1.2) ** 2)
+    flux += rng.normal(0.0, 2.0, n)
+
+    peaks = [p for p in detect_peaks(flux, snr=50.0, min_width=0.5,
+                                     max_width=10.0, distance=4,
+                                     baseline_size=61)
+             if 2250.0 < p.pixel < 2300.0]
+    assert len(peaks) == 2
+    assert abs(peaks[0].pixel - 2275.0) < 1.5
+    assert abs(peaks[1].pixel - 2281.0) < 1.5
+    assert not any(abs(p.pixel - 2278.0) < 0.5 for p in peaks)
 
 
 def test_anchor_file_round_trip(tmp_path):

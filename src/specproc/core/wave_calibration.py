@@ -15,6 +15,7 @@ from typing import Tuple, Optional, List, Dict
 from scipy.optimize import curve_fit
 from pathlib import Path
 from specproc.core.data_structures import WaveCalib, Spectrum, SpectraSet
+from specproc.core.peak_fitting import fit_peak_center
 from specproc.config.config_manager import ConfigManager
 from specproc.utils.fits_io import read_fits_image
 from specproc.plotting.spectra_plotter import plot_wavelength_calibration
@@ -95,8 +96,21 @@ class WavelengthCalibrator:
 
         logger.debug(f"Detected {len(peaks)} emission lines")
 
+        grid = np.arange(len(spectrum), dtype=float)
+        peaks_int = np.asarray(peaks, dtype=int)
+        centres = []
+        for k, i in enumerate(peaks_int):
+            left_width = right_width = 4
+            if k > 0:
+                left_width = min(4, max(2, int((i - peaks_int[k - 1]) // 2)))
+            if k + 1 < len(peaks_int):
+                right_width = min(4, max(2, int((peaks_int[k + 1] - i) // 2)))
+            centres.append(fit_peak_center(grid, spectrum, int(i), half_width=4,
+                                           left_width=left_width,
+                                           right_width=right_width))
+        centres = np.asarray(centres, dtype=float)
         snrs = properties['prominences'] / mad_noise if mad_noise > 0 else np.zeros_like(peaks, dtype=float)
-        return peaks, spectrum[peaks], snrs
+        return centres, spectrum[peaks], snrs
 
     # 读取级次与波长锚点
     def load_anchor_file(self, anchor_file: str) -> Dict[int, np.ndarray]:

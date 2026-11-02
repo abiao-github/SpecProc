@@ -228,13 +228,10 @@ rms_threshold = 0.5
 
 ## 使用方法
 
-### GUI 模式 (默认)
+### GUI 模式
 
 ```bash
-# 启动 GUI (默认模式)
-specproc
-
-# 或明确指定 GUI 模式
+# 启动 GUI (需显式指定,默认为命令行模式)
 specproc --mode gui
 
 # 使用自定义配置文件
@@ -250,3 +247,38 @@ specproc --config /path/to/config.cfg
 specproc --mode cli --config ./specproc.cfg
 ```
 无需图形界面，适合部署在远端服务器批量执行常规管线作业。
+
+### 命令行小工具（不属于数据处理流程）
+
+除主流程外，SpecProc 还附带几个独立小工具，统一以 `specproc.<工具名>` 独立命令调用
+（输入 `specproc.` 后按 Tab 可列出全部三个工具；`specproc <工具名>` 也可用）：
+
+| 命令 | 用途 |
+|---|---|
+| `specproc.air2vac 输入 输出` | 谱线表波长由空气换算为真空（Å） |
+| `specproc.vac2air 输入 输出` | 谱线表波长由真空换算为空气（Å） |
+| `specproc.identify` | 灯谱证认（图形界面，或 `--auto` 全自动）：实测灯谱 + 参考图集 → 锚线 CSV + 诊断对比图 |
+| `specproc tools` | 列出以上工具 |
+
+`specproc identify` 的窗口上方上半部分显示归一化后的实测一维灯谱（横轴 pixel 标在顶部，
+只标记超过 SNR 阈值的峰，红色倒三角），下半部分显示参考图集/线表（蓝色，横轴波长标在
+底部），参考谱线按当前色散模型映射到像素坐标；下方给出锚点线的拟合残差，拟合基函数
+（Legendre / Chebyshev）、阶数和残差裁剪阈值可在界面调整。点 **Auto identify** 自动匹配，
+匹配结果可人工增删。波长随像素递减时勾选 **Flip x** 翻转横向显示，自动匹配会根据拟合出的
+色散方向自动设置。保存时同时写出锚点 CSV 和诊断对比图（灯谱、观测/参考局部叠合、残差）。
+命令行可用 `--poly-type legendre|chebyshev|polynomial` 和 `--poly-order` 指定同样的拟合；
+狭缝流水线对应 `[slit] wave_poly_type` 和 `wave_poly_order`。给出的 CSV 前两列即可直接
+作为 `[slit] identification_file`。
+
+`specproc <工具名> --help` 可查看完整参数；若第一个参数是已存在的文件或目录，
+则始终按数据处理输入处理，不会被误当成工具名。
+
+**终端自动补全**（补全工具名、工具参数及其取值）：
+
+```bash
+# bash：加入 ~/.bashrc
+eval "$(specproc --completion bash)"
+
+# zsh：加入 ~/.zshrc
+eval "$(specproc --completion zsh)"
+```

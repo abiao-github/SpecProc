@@ -95,7 +95,7 @@ class ProcessingPipeline:
                 'trim_y_start': self.config.get_int('data', 'trim_y_start', -1),
                 'trim_y_end': self.config.get_int('data', 'trim_y_end', -1),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png')
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf')
             }
             corrected_files = process_overscan_stage(
                 raw_filenames, self.config.get_output_path(), **overscan_kwargs
@@ -137,7 +137,7 @@ class ProcessingPipeline:
                 'combine_method': self.config.get('reduce.bias', 'combine_method', 'median'),
                 'combine_sigma': self.config.get_float('reduce.bias', 'combine_sigma', 3.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             master_bias, bias_file = process_bias_stage(
                 bias_filenames, self.config.get_output_path(), **bias_kwargs
@@ -165,7 +165,7 @@ class ProcessingPipeline:
         output_dir = Path(self.config.get_output_path()) / 'step1_basic' / 'bias_subtracted'
         output_dir.mkdir(parents=True, exist_ok=True)
         save_plots = self.config.get_bool('reduce', 'save_plots', True)
-        fig_format = self.config.get('reduce', 'fig_format', 'png')
+        fig_format = self.config.get('reduce', 'fig_format', 'pdf')
 
         corrected_files = []
         for filename in input_files:
@@ -236,7 +236,7 @@ class ProcessingPipeline:
                 'aperture_boundary_snr': self.config.get_float('reduce.trace', 'aperture_boundary_snr', 3.0),
                 'gap_fill_factor_interp': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.35),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             flat_field, apertures = process_order_tracing_stage(
                 flat_filenames, **flat_kwargs
@@ -277,7 +277,7 @@ class ProcessingPipeline:
             extract_kwargs = {
                 'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             lamp_spectra = process_extraction_stage(
                 lamp_img, self.state.apertures,
@@ -296,7 +296,7 @@ class ProcessingPipeline:
                 output_dir_base=self.config.get_output_path(),
                 lamp_type=self.config.get('telescope.linelist', 'linelist_type', 'ThAr'),
                 save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                fig_format=self.config.get('reduce', 'fig_format', 'pdf'),
             )
 
             self.state.wavelength_calib = wave_calib
@@ -426,7 +426,7 @@ class ProcessingPipeline:
                 'cosmic_gain': self.config.get_float('reduce', 'cosmic_gain', 1.0),
                 'cosmic_readnoise': self.config.get_float('reduce', 'cosmic_readnoise', 5.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
 
             out_dir = Path(self.config.get_output_path()) / 'step1_basic' / 'cosmic_corrected'
@@ -446,7 +446,7 @@ class ProcessingPipeline:
             temp_input_path.unlink() # Clean up temporary file
 
             if self.config.get_bool('reduce', 'save_plots', True):
-                fig_format = self.config.get('reduce', 'fig_format', 'png')
+                fig_format = self.config.get('reduce', 'fig_format', 'pdf')
                 plot_2d_image_to_file(
                     corrected_image,
                     str(out_dir / f'{science_name}_science_cosmic_corrected.{fig_format}'),
@@ -494,20 +494,10 @@ class ProcessingPipeline:
                 'output_dir_base': output_dir_base,
                 'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             
-            # 1. Science Extraction
-            extracted_sum = process_extraction_stage(
-                science_image, self.state.apertures,
-                wavelength_calib=None,
-                flat_field=self.state.flat_field,
-                method_override='sum',
-                output_filename=f'{science_name}_1D_sum.fits',
-                plot_prefix=f'{science_name}_1D_sum',
-                **extract_kwargs,
-            )
-
+            # 1. Science Extraction (optimal only)
             extracted_optimal = process_extraction_stage(
                 science_image, self.state.apertures,
                 wavelength_calib=None,
@@ -523,12 +513,6 @@ class ProcessingPipeline:
                 try:
                     mf_img, _ = read_fits_image(master_flat_path)
                     mf_name = "MasterFlat"
-                    process_extraction_stage(
-                        mf_img, self.state.apertures,
-                        wavelength_calib=None, flat_field=self.state.flat_field,
-                        method_override='sum', output_filename=f'{mf_name}_1D_sum.fits',
-                        plot_prefix=f'{mf_name}_1D_sum', **extract_kwargs
-                    )
                     process_extraction_stage(
                         mf_img, self.state.apertures,
                         wavelength_calib=None, flat_field=self.state.flat_field,
@@ -549,12 +533,6 @@ class ProcessingPipeline:
                             process_extraction_stage(
                                 c_img, self.state.apertures,
                                 wavelength_calib=None, flat_field=self.state.flat_field,
-                                method_override='sum', output_filename=f'{c_name}_1D_sum.fits',
-                                plot_prefix=f'{c_name}_1D_sum', **extract_kwargs
-                            )
-                            process_extraction_stage(
-                                c_img, self.state.apertures,
-                                wavelength_calib=None, flat_field=self.state.flat_field,
                                 method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits',
                                 plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs
                             )
@@ -568,10 +546,8 @@ class ProcessingPipeline:
             self.state.extraction_done = True
 
             self._report_progress(0.80, "Spectrum Extraction Complete")
-            logger.info(
-                f"✓ Spectrum extraction stage complete (sum={extracted_sum.norders} orders, "
-                f"optimal={extracted_optimal.norders} orders)"
-            )
+            logger.info("✓ Spectrum extraction stage complete "
+                        f"(optimal={extracted_optimal.norders} orders)")
 
             return extracted_spectra
 
@@ -607,7 +583,7 @@ class ProcessingPipeline:
                 output_filename=f'{science_name}_1D_optimal_Deblaze.fits',
                 plot_prefix=f'{science_name}_1D_optimal_Deblaze',
                 save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                fig_format=self.config.get('reduce', 'fig_format', 'png'),
+                fig_format=self.config.get('reduce', 'fig_format', 'pdf'),
             )
 
             self.state.de_blazed_spectra = de_blazed_spectra
@@ -630,7 +606,7 @@ class ProcessingPipeline:
         from specproc.core.flat_correction import save_flat_correction_products
         save_flat_correction_products(
             self.state.flat_field, self.state.apertures, out_dir,
-            fig_format=self.config.get('reduce', 'fig_format', 'png'),
+            fig_format=self.config.get('reduce', 'fig_format', 'pdf'),
             save_plots=self.config.get_bool('reduce', 'save_plots', True),
         )
 
@@ -669,7 +645,7 @@ class ProcessingPipeline:
         
         if self.config.get_bool('reduce', 'save_plots', True):
             import matplotlib.pyplot as plt
-            fig_format = self.config.get('reduce', 'fig_format', 'png')
+            fig_format = self.config.get('reduce', 'fig_format', 'pdf')
             plt.figure(figsize=(12, 10))
             plt.imshow(step3_mask, aspect='auto', origin='lower', cmap='gray', vmin=0, vmax=1)
             
@@ -707,7 +683,7 @@ class ProcessingPipeline:
             'spline_smooth_factor': self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
             'spline_post_smooth_x': self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
             'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-            'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+            'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
         }
         flat_background = process_background_stage(
             self.state.flat_field.flat_data,
@@ -843,7 +819,7 @@ class ProcessingPipeline:
                     'cosmic_gain': self.config.get_float('reduce', 'cosmic_gain', 1.0),
                     'cosmic_readnoise': self.config.get_float('reduce', 'cosmic_readnoise', 5.0),
                     'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                    'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                    'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
                 }
                 science_pre_flat_files = process_cosmic_stage(
                     science_corrected_files,
@@ -901,7 +877,7 @@ class ProcessingPipeline:
                 'spline_smooth_factor': self.config.get_float('reduce.background', 'spline_smooth_factor', 1.0),
                 'spline_post_smooth_x': self.config.get_float('reduce.background', 'spline_post_smooth_x', 5.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             
             self._report_progress(0.45, "Step 3: Master Flat Scattered Light")
@@ -955,7 +931,7 @@ class ProcessingPipeline:
                 'pixel_flat_max': self.config.get_float('reduce.flat', 'pixel_flat_max', 1.5),
                 'fringe_orders': self.config.get_int('reduce.flat', 'fringe_orders', 20),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             # This call builds the model and saves all diagnostics.
             # The returned 'corrected_flat' is the pixel_flat map itself.
@@ -999,7 +975,7 @@ class ProcessingPipeline:
                 
                 if self.config.get_bool('reduce', 'save_plots', True):
                     from specproc.plotting.spectra_plotter import plot_2d_image_to_file
-                    fig_format = self.config.get('reduce', 'fig_format', 'png')
+                    fig_format = self.config.get('reduce', 'fig_format', 'pdf')
                     plot_2d_image_to_file(corrected, str(out_dir_f / f"{sci_name}_flat2d_corrected.{fig_format}"), f"Science After 2D Flat Correction: {sci_name}")
 
                 science_flat2d_files.append(str(out_path))
@@ -1019,7 +995,7 @@ class ProcessingPipeline:
 
                 if self.config.get_bool('reduce', 'save_plots', True):
                     from specproc.plotting.spectra_plotter import plot_2d_image_to_file
-                    fig_format = self.config.get('reduce', 'fig_format', 'png')
+                    fig_format = self.config.get('reduce', 'fig_format', 'pdf')
                     plot_2d_image_to_file(corrected, str(out_dir_f / f"{calib_name}_flat2d_corrected.{fig_format}"), f"Calibration Frame After 2D Flat Correction: {calib_name}")
 
                 calib_filenames_final.append(str(out_path))
@@ -1033,26 +1009,23 @@ class ProcessingPipeline:
                 'output_dir_base': self.config.get_output_path(),
                 'optimal_sigma': self.config.get_float('reduce.extract', 'optimal_sigma', 3.0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
-                'fig_format': self.config.get('reduce', 'fig_format', 'png'),
+                'fig_format': self.config.get('reduce', 'fig_format', 'pdf'),
             }
             
             mf_path = Path(self.config.get_output_path()) / 'step4_flat_corrected' / 'MasterFlat.fits'
             if mf_path.exists():
                 mf_img, _ = read_fits_image(str(mf_path))
-                process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename='MasterFlat_1D_sum.fits', plot_prefix='MasterFlat_1D_sum', **extract_kwargs)
                 process_extraction_stage(mf_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename='MasterFlat_1D_optimal.fits', plot_prefix='MasterFlat_1D_optimal', **extract_kwargs)
 
             for c_file in calib_filenames_final:
                 c_img, _ = read_fits_image(c_file)
                 c_name = Path(c_file).stem
-                process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{c_name}_1D_sum.fits', plot_prefix=f'{c_name}_1D_sum', **extract_kwargs)
                 process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs)
 
             extracted_science_dict = {}
             for sci_file in science_flat2d_files:
                 sci_img, _ = read_fits_image(sci_file)
                 sci_name = Path(sci_file).stem
-                process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='sum', output_filename=f'{sci_name}_1D_sum.fits', plot_prefix=f'{sci_name}_1D_sum', **extract_kwargs)
                 opt_spec = process_extraction_stage(sci_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{sci_name}_1D_optimal.fits', plot_prefix=f'{sci_name}_1D_optimal', **extract_kwargs)
                 extracted_science_dict[sci_name] = opt_spec
             
@@ -1063,23 +1036,24 @@ class ProcessingPipeline:
             logger.info("=" * 50)
             def do_deblaze(target_name, spectra_obj=None):
                 from specproc.core.extraction import load_extracted_spectra
-                db_opt = None
-                for method in ['sum', 'optimal']:
-                    spectra = spectra_obj if (method == 'optimal' and spectra_obj is not None) else None
-                    if spectra is None:
-                        try: spectra = load_extracted_spectra(str(Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'))
-                        except Exception: pass
-                    if spectra is not None:
-                        db_spec = process_de_blazing_stage(
-                            spectra, self.config.get_output_path(), flat_field=flat_field,
-                            save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
-                            output_filename=f'{target_name}_1D_{method}_Deblaze.fits',
-                            plot_prefix=f'{target_name}_1D_{method}_Deblaze',
-                            save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                            fig_format=self.config.get('reduce', 'fig_format', 'png')
-                        )
-                        if method == 'optimal': db_opt = db_spec
-                return db_opt
+                spectra = spectra_obj
+                if spectra is None:
+                    try:
+                        spectra = load_extracted_spectra(
+                            str(Path(self.config.get_output_path()) / 'step5_extraction'
+                                / f'{target_name}_1D_optimal.fits'))
+                    except Exception:
+                        spectra = None
+                if spectra is None:
+                    return None
+                return process_de_blazing_stage(
+                    spectra, self.config.get_output_path(), flat_field=flat_field,
+                    save_deblaze=self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True),
+                    output_filename=f'{target_name}_1D_optimal_Deblaze.fits',
+                    plot_prefix=f'{target_name}_1D_optimal_Deblaze',
+                    save_plots=self.config.get_bool('reduce', 'save_plots', True),
+                    fig_format=self.config.get('reduce', 'fig_format', 'pdf')
+                )
 
             do_deblaze("MasterFlat")
             for c_file in calib_filenames_final:
@@ -1136,26 +1110,21 @@ class ProcessingPipeline:
                 wave_calib = closest_calib[1]
                 logger.info(f"Using calibration {closest_calib[2]} for target {target_name} (closest in time)")
 
-                calib_opt = None
-                for method in ['sum', 'optimal']:
-                    from specproc.core.extraction import load_extracted_spectra
-                    spectra = None
-                    db_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_{method}_Deblaze.fits'
-                    if db_path.exists():
-                        try: spectra = load_extracted_spectra(str(db_path))
+                from specproc.core.extraction import load_extracted_spectra
+                spectra = None
+                db_path = Path(self.config.get_output_path()) / 'step6_deblazing' / f'{target_name}_1D_optimal_Deblaze.fits'
+                if db_path.exists():
+                    try: spectra = load_extracted_spectra(str(db_path))
+                    except Exception: pass
+                if spectra is None:
+                    ex_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_optimal.fits'
+                    if ex_path.exists():
+                        try: spectra = load_extracted_spectra(str(ex_path))
                         except Exception: pass
-                    if spectra is None:
-                        ex_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_{method}.fits'
-                        if ex_path.exists():
-                            try: spectra = load_extracted_spectra(str(ex_path))
-                            except Exception: pass
-                    
-                    if spectra is not None:
-                        calib_spec = self.stage_wavelength_calibration_on_spectra(
-                            spectra, wave_calib, science_name=target_name, method=method)
-                        if method == 'optimal':
-                            calib_opt = calib_spec
-                
+                calib_opt = None
+                if spectra is not None:
+                    calib_opt = self.stage_wavelength_calibration_on_spectra(
+                        spectra, wave_calib, science_name=target_name, method='optimal')
                 if calib_opt is not None and target_name in extracted_science_dict:
                     calibrated_science_dict[target_name] = calib_opt
 

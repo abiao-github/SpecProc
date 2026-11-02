@@ -755,7 +755,7 @@ class SettingsDialog(QDialog):
         # Data Reduction tab
         overscan_val = self.config.get_int('data', 'overscan_start_column', -1)
         self.overscan_start_column_spin.setValue(overscan_val)
-        self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'mean_only'))
+        self.overscan_method_combo.setCurrentText(self.config.get('data', 'overscan_method', 'mean_savgol'))
         self.overscan_smooth_window_spin.setValue(self.config.get_int('data', 'overscan_smooth_window', -1))
         self.overscan_poly_type_combo.setCurrentText(self.config.get('data', 'overscan_poly_type', 'legendre'))
         self.overscan_poly_order_spin.setValue(self.config.get_int('data', 'overscan_poly_order', 3))

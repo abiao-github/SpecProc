@@ -24,6 +24,7 @@ PACKAGE_CONFIG_DIR = Path(__file__).parent
 PROFILE_ALIASES = {
     'mstg193slit': 'MSTG193_slit',
     'xinglong216hrs': 'XL216_hrs',
+    'nanshan12': 'NS12_hrs',
 }
 
 
@@ -173,8 +174,6 @@ class ConfigManager:
         # Data section
         self.config['data'] = {
             'statime_key': 'DATE-OBS',
-            'exptime_key': 'EXPTIME',
-            'direction': 'xrb',
             'overscan_start_column': '-1',  # Default: no overscan correction
             'overscan_method': 'mean_savgol',
             'trim_x_start': '-1',
@@ -186,9 +185,7 @@ class ConfigManager:
         # Reduce section
         self.config['reduce'] = {
             'output_path': './output',
-            'mode': 'normal',
             'fig_format': 'pdf',
-            'oned_suffix': '_ods',
             'ncores': 'max',
             'auto_process_all_images': 'yes',
             'cosmic_enabled': 'yes',
@@ -209,7 +206,6 @@ class ConfigManager:
         # Flat section
         self.config['reduce.flat'] = {
             'combine_method': 'median',
-            'q_threshold': '0.5',
             'mosaic_maxcount': '65535',
             'blaze_smooth_factor': '1.0',
             'width_smooth_window': '41',
@@ -298,6 +294,19 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error loading config from {config_path}: {e}")
             raise
+
+    # 用另一个配置文件整体替换当前参数（GUI 选择望远镜/终端配置时使用）。
+    def load_profile(self, source):
+        """Replace all current parameters with those of ``source``.
+
+        Packaged profiles are never overwritten: saving afterwards writes a working copy
+        with the same file name into the current directory.
+        """
+        source = Path(source).expanduser()
+        self.config.clear()
+        self.load(source)
+        if source.resolve().parent == PACKAGE_CONFIG_DIR.resolve():
+            self.config_path = Path.cwd() / source.name
 
     # 将当前配置写入文件。
     def save(self, config_path: Optional[str] = None):

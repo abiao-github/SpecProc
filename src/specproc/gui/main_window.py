@@ -1039,6 +1039,7 @@ class MainWindow(QMainWindow):
                     'overscan_smooth_window': self.config.get_int('data', 'overscan_smooth_window', -1),
                     'overscan_poly_order': self.config.get_int('data', 'overscan_poly_order', 3),
                     'overscan_poly_type': self.config.get('data', 'overscan_poly_type', 'legendre'),
+                    'flip_vertical': self.config.get_bool('data', 'flip_vertical', False),
                 }
                 processed_files = process_overscan_stage(
                     all_files_to_process, self.config.get_output_path(), **overscan_kwargs

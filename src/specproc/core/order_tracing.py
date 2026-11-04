@@ -136,7 +136,8 @@ class FlatFieldProcessor:
     def detect_orders(self, snr_threshold: float = 5.0,
                       min_trace_coverage: float = 0.2,
                       trace_degree: int = 4,
-                      output_dir_base: str = '') -> ApertureSet:
+                      output_dir_base: str = '',
+                      **tracer_kwargs) -> ApertureSet:
         """
         Detect grating orders in flat field with simple tracing.
 
@@ -165,6 +166,7 @@ class FlatFieldProcessor:
             snr_threshold=snr_threshold,
             min_trace_coverage=min_trace_coverage,
             trace_degree=trace_degree,
+            **tracer_kwargs,
         )
         apertures = tracer.trace_orders()
         self.order_diagnostics = tracer.get_diagnostics()
@@ -237,9 +239,10 @@ class GratingOrderTracer:
         self.diagnostics = {}
 
     # 提取级次种子剖面并估算间距
-    def _get_seed_profile(self) -> Tuple[np.ndarray, dict]:
+    def _get_seed_profile(self, x_center: Optional[int] = None) -> Tuple[np.ndarray, dict]:
         """Extracts and analyzes a 1D cross-section to find order seeds."""
-        x_center = self.w // 2
+        if x_center is None:
+            x_center = self.w // 2
         half_band = max(5, self.w // 20)
         x1, x2 = max(0, x_center - half_band), min(self.w, x_center + half_band + 1)
         profile = np.median(self.data[:, x1:x2], axis=1)
@@ -339,17 +342,23 @@ class GratingOrderTracer:
         return final_seeds
 
     # 从种子沿列追踪单个级次
-    def _trace_one_order(self, seed_y: float, diags: dict) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def _trace_one_order(self, seed_y: float, diags: dict,
+                         seed_x: Optional[int] = None,
+                         min_coverage: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Traces a single order starting from a seed."""
         xs, ys = [], []
+        if seed_x is None:
+            seed_x = self.w // 2
+        if min_coverage is None:
+            min_coverage = self.params['min_trace_coverage']
 
         # 在指定列精修级次峰位
         def refine_peak(x, y_guess, search_half):
             y0 = int(round(y_guess))
             y1, y2 = max(0, y0 - search_half), min(self.h, y0 + search_half + 1)
-            if y2 - y1 < 3: return None
+            if y2 - y1 < 3: return None, 0.0
             col = self.data[y1:y2, x]
-            if not np.any(np.isfinite(col)): return None
+            if not np.any(np.isfinite(col)): return None, 0.0
             
             loc = int(np.nanargmax(col))
             
@@ -384,22 +393,23 @@ class GratingOrderTracer:
 
         # Start from the center, calculate dynamic search window
         initial_sep = diags['local_sep_func'](seed_y)
-        initial_search_half = max(3, int(initial_sep * 0.25))
+        cap = int(self.params.get('max_search_half', 10**6))
+        initial_search_half = min(cap, max(3, int(initial_sep * 0.25)))
         
-        res = refine_peak(self.w // 2, seed_y, initial_search_half)
+        res = refine_peak(seed_x, seed_y, initial_search_half)
         if res[0] is None: return None
         start_y, start_snr = res
         
-        xs.append(float(self.w // 2))
+        xs.append(float(seed_x))
         ys.append(start_y)
 
         # Trace right and left
         for direction in [1, -1]:
-            hist_x = [float(self.w // 2)]
+            hist_x = [float(seed_x)]
             hist_y = [start_y]
             miss_count = 0 # Counter for consecutive columns with signal below threshold or no peak
             
-            x_range = range(self.w // 2 + direction, self.w if direction == 1 else -1, direction)
+            x_range = range(seed_x + direction, self.w if direction == 1 else -1, direction)
             for x in x_range:
                 # Extrapolate y_guess using a polynomial fit to the recent trace history
                 if len(hist_x) >= 15:
@@ -429,7 +439,7 @@ class GratingOrderTracer:
                 
                 # Dynamically adjust search window based on the smooth separation curve
                 local_sep = diags['local_sep_func'](y_guess)
-                search_half = max(2, int(local_sep * 0.25))
+                search_half = min(cap, max(2, int(local_sep * 0.25)))
                 
                 res = refine_peak(x, y_guess, search_half)
                 if res[0] is not None and abs(res[0] - y_guess) <= search_half:
@@ -456,7 +466,7 @@ class GratingOrderTracer:
                 if miss_count > max_miss:
                     break
 
-        if len(xs) < self.params['min_trace_coverage'] * self.w:
+        if len(xs) < min_coverage * self.w:
             return None
 
         xs, ys = np.array(xs), np.array(ys)
@@ -474,29 +484,64 @@ class GratingOrderTracer:
 
         aperture_set = ApertureSet()
         order_id_counter = 1
-        for seed in seeds:
-            trace_result = self._trace_one_order(float(seed), diags)
+        domain = (0.0, float(self.w - 1))
+        fitted: List[Tuple[np.ndarray, np.ndarray]] = []
+
+        # 追加在其他列发现的种子：用于只在图像一侧可见的暗级次。
+        jobs = [(float(sd), self.w // 2, self.params['min_trace_coverage'], diags) for sd in seeds]
+        extra_cols = [c for c in self.params.get('seed_columns', ()) if abs(c - 0.5) > 1e-6]
+        extra_cov = float(self.params.get('side_min_coverage', self.params['min_trace_coverage']))
+        for frac in extra_cols:
+            xc = int(np.clip(round(frac * (self.w - 1)), 0, self.w - 1))
+            sp, dg = self._get_seed_profile(xc)
+            dg['local_sep_func'] = diags['local_sep_func']
+            for sd in self._find_seeds(sp, dg):
+                jobs.append((float(sd), xc, extra_cov, dg))
+
+        for seed, seed_x, cov, dg in jobs:
+            # Skip seeds that already lie on an accepted trace.
+            sep = diags['local_sep_func'](seed)
+            if seed_x != self.w // 2 and any(
+                    abs(float(cheb.chebval(2.0 * seed_x / (self.w - 1) - 1.0, c)) - seed) < 0.4 * sep
+                    for c in fitted):
+                continue
+            trace_result = self._trace_one_order(seed, dg, seed_x=seed_x, min_coverage=cov)
             if trace_result is None:
                 continue
 
             x_pts, y_pts = trace_result
             if len(x_pts) < 10: continue
 
-            # Fit with Chebyshev polynomial
             deg = min(self.params['trace_degree'], len(x_pts) - 2)
             if deg < 1: continue
-            domain = (0.0, float(self.w - 1))
             x_mapped = 2.0 * (x_pts - domain[0]) / (domain[1] - domain[0]) - 1.0
             center_coef = cheb.chebfit(x_mapped, y_pts, deg)
+            # Clip points that drifted off the order (e.g. onto the detector edge).
+            for _ in range(5):
+                resid = y_pts - cheb.chebval(x_mapped, center_coef)
+                keep = np.abs(resid) < max(1.5, 3.0 * 1.4826 * np.median(np.abs(resid)))
+                if keep.all() or keep.sum() < max(10, deg + 2):
+                    break
+                x_pts, y_pts, x_mapped = x_pts[keep], y_pts[keep], x_mapped[keep]
+                center_coef = cheb.chebfit(x_mapped, y_pts, deg)
 
-            # Estimate width
+            if seed_x != self.w // 2:
+                # A side-column trace may duplicate an order already found elsewhere.
+                xm = 2.0 * np.array([x_pts[0], x_pts[-1]]) / (self.w - 1) - 1.0
+                dup = any(np.all(np.abs(cheb.chebval(xm, c) - cheb.chebval(xm, center_coef)) < 0.4 * sep)
+                          for c in fitted)
+                if dup:
+                    continue
+            fitted.append(center_coef)
+
             local_sep = diags['local_sep_func'](float(seed))
-            width = 0.4 * local_sep # Simplified width estimation
+            width = 0.4 * local_sep
 
             ap = ApertureLocation(
                 aperture=order_id_counter, order=order_id_counter,
                 center_coef=center_coef, width=width,
-                is_chebyshev=True, domain=domain
+                is_chebyshev=True, domain=domain,
+                x_range=(float(x_pts.min()), float(x_pts.max())),
             )
             aperture_set.add_aperture(ap)
             order_id_counter += 1
@@ -507,6 +552,86 @@ class GratingOrderTracer:
     # 返回级次追踪诊断数据
     def get_diagnostics(self) -> dict:
         return self.diagnostics
+
+
+# 按位置剔除最下/最上若干条级次（如只有噪声的暗带）
+def _exclude_edge_apertures(apertures: ApertureSet, width: int, n_low: int, n_high: int) -> ApertureSet:
+    """Remove the ``n_low`` lowest and ``n_high`` highest traces (by row at the middle column)."""
+    ids = sorted(apertures.apertures, key=lambda i: float(apertures.apertures[i].get_position(width // 2)))
+    drop = set(ids[:max(0, n_low)]) | set(ids[len(ids) - max(0, n_high):] if n_high > 0 else [])
+    if not drop or len(drop) >= len(ids):
+        return apertures
+    kept = ApertureSet()
+    for i in sorted(apertures.apertures):
+        if i in drop:
+            logger.info(f"Excluded trace {i} (exclude_lowest_apertures={n_low}, exclude_highest_apertures={n_high})")
+        else:
+            kept.add_aperture(apertures.apertures[i])
+    return kept
+
+
+# 剔除边界外或形状异常的假级次轨迹
+def reject_false_traces(apertures: ApertureSet, width: int, height: int,
+                        curvature_tol: float = 10.0, n_neighbors: int = 3) -> ApertureSet:
+    """Drop traces that cannot be real orders.
+
+    A trace is rejected when (1) its centre leaves the detector (0..height-1)
+    anywhere across the full width, (2) it crosses an adjacent trace, or
+    (3) its edge-to-centre curvature differs strongly from that of the
+    neighbouring orders (real orders bend alike; false ones do not).
+    """
+    if apertures.norders == 0:
+        return apertures
+    xs = np.linspace(0, width - 1, 33)
+    ids = list(apertures.apertures.keys())
+    ys = np.array([apertures.apertures[i].get_position(xs) for i in ids])
+    # Columns where each trace was measured; evaluation outside is extrapolation.
+    seen = np.ones_like(ys, dtype=bool)
+    for k, i in enumerate(ids):
+        xr = getattr(apertures.apertures[i], 'x_range', None)
+        if xr is not None:
+            seen[k] = (xs >= xr[0]) & (xs <= xr[1])
+    reasons: Dict[int, str] = {}
+
+    for k, i in enumerate(ids):
+        yk = ys[k][seen[k]] if seen[k].any() else ys[k]
+        if not np.all(np.isfinite(yk)) or yk.min() < 0 or yk.max() > height - 1:
+            reasons[i] = f"leaves the image (y range {yk.min():.0f}..{yk.max():.0f})"
+
+    keep = [k for k, i in enumerate(ids) if i not in reasons]
+    order = sorted(keep, key=lambda k: ys[k][16])
+    # Crossing: of two traces whose order swaps along x, drop the more curved one.
+    for a, b in zip(order[:-1], order[1:]):
+        both = seen[a] & seen[b]
+        if both.any() and np.any(ys[a][both] >= ys[b][both]):
+            curv = lambda k: abs(ys[k][0] - ys[k][16]) + abs(ys[k][-1] - ys[k][16])
+            bad = a if curv(a) >= curv(b) else b
+            reasons[ids[bad]] = "crosses an adjacent trace"
+    # Curvature is compared only for traces measured across (nearly) the whole width.
+    order = [k for k in order if ids[k] not in reasons and seen[k][0] and seen[k][-1]]
+
+    if len(order) >= 6:
+        sL = np.array([ys[k][0] - ys[k][16] for k in order])
+        sR = np.array([ys[k][-1] - ys[k][16] for k in order])
+        for pos, k in enumerate(order):
+            lo, hi = max(0, pos - n_neighbors), min(len(order), pos + n_neighbors + 1)
+            nb = [j for j in range(lo, hi) if j != pos]
+            mL, mR = np.median(sL[nb]), np.median(sR[nb])
+            tol = max(curvature_tol, 0.5 * max(abs(mL), abs(mR)))
+            if abs(sL[pos] - mL) > tol or abs(sR[pos] - mR) > tol:
+                reasons[ids[k]] = (f"curvature ({sL[pos]:.0f},{sR[pos]:.0f}) px differs from "
+                                   f"neighbours ({mL:.0f},{mR:.0f}) px")
+
+    if not reasons:
+        return apertures
+    cleaned = ApertureSet()
+    for i in sorted(ids):
+        if i in reasons:
+            logger.info(f"Rejected false trace {i}: {reasons[i]}")
+        else:
+            cleaned.add_aperture(apertures.apertures[i])
+    logger.info(f"False-trace rejection: {len(reasons)} removed, {cleaned.norders} kept")
+    return cleaned
 
 
 # 根据级次间隙分配物理序号
@@ -623,6 +748,7 @@ def renumber_apertures_with_gaps(apertures: ApertureSet, gap_fill_factor: float 
             is_chebyshev=ap.is_chebyshev,
             domain=ap.domain,
             is_interpolated=ap.is_interpolated,
+            x_range=getattr(ap, 'x_range', None),
         )
         # Preserve custom attributes if they exist
         if getattr(ap, 'center_arr', None) is not None:
@@ -1070,6 +1196,13 @@ def process_order_tracing_stage(flat_filenames: List[str],
                       gap_fill_factor: float = 1.6,
                       min_trace_coverage: float = 0.20,
                       trace_degree: int = 4,
+                      seed_columns: Tuple[float, ...] = (0.5,),
+                      side_min_coverage: float = 0.2,
+                      max_search_half: int = 10**6,
+                      reject_false: bool = True,
+                      curvature_tolerance: float = 10.0,
+                      exclude_lowest: int = 0,
+                      exclude_highest: int = 0,
                       # Profile boundary parameters
                       width_cheb_degree: int = 3,
                       aperture_boundary_snr: float = 3.0,
@@ -1113,13 +1246,22 @@ def process_order_tracing_stage(flat_filenames: List[str],
         snr_threshold=snr_threshold,
         min_trace_coverage=min_trace_coverage,
         trace_degree=trace_degree,
-        output_dir_base=output_dir_base)
+        output_dir_base=output_dir_base,
+        seed_columns=tuple(seed_columns),
+        side_min_coverage=side_min_coverage,
+        max_search_half=max_search_half)
     logger.info(f"Order detection completed: {apertures.norders} orders found")
+    if reject_false:
+        apertures = reject_false_traces(apertures, flat_data.shape[1], flat_data.shape[0],
+                                        curvature_tol=curvature_tolerance)
 
     # Renumber apertures with gap-aware physical order indices.
     # If spatial analysis detects missing orders, aperture IDs skip the
     # missing positions (e.g. 1,...,49,51,...,100) so that the downstream
     # 2D surface fitting uses correct order index m for every aperture.
+    if exclude_lowest > 0 or exclude_highest > 0:
+        apertures = _exclude_edge_apertures(apertures, flat_data.shape[1], exclude_lowest, exclude_highest)
+
     apertures = renumber_apertures_with_gaps(apertures, gap_fill_factor)
 
     # Pre-compute profile-root-based boundaries for order mask + diagnostic plots.
@@ -1173,6 +1315,10 @@ def process_order_tracing_stage(flat_filenames: List[str],
     for order_idx, (aperture_id, aperture) in enumerate(ordered_apertures, start=1):
         center_pos = aperture.get_position(x_coords_all)
         valid_center = np.isfinite(center_pos) & (center_pos >= 0) & (center_pos < height)
+        xr = getattr(aperture, 'x_range', None)
+        if xr is not None:
+            # Do not extrapolate a partially visible order beyond its measured columns.
+            valid_center &= (x_coords_all >= xr[0]) & (x_coords_all <= xr[1])
         if np.sum(valid_center) < 10:
             continue
         valid_orders.append({

@@ -59,6 +59,7 @@ class ApertureLocation:
     
     # Advanced Missing Order Recovery Flags
     is_interpolated: bool = False # True if the entire order was mathematically interpolated
+    x_range: Optional[Tuple[float, float]] = None  # Columns where the trace was actually measured
     
     # ------------------------------------------------------------------
     # 按稠密数组或切比雪夫系数计算位置。
@@ -427,6 +428,10 @@ class WaveCalib:
     calib_type: str = "ThAr"  # Calibration lamp type
     delta_m: int = 0          # Order offset applied to match references
 
+    # Optional independent per-order solutions: lambda(x) Chebyshev coefficients keyed by
+    # true order. Orders missing here fall back to the global 2D polynomial.
+    order_coefs: Optional[Dict[int, np.ndarray]] = None
+
     # 将二维像素与阶次坐标映射为波长。
     def apply_to_pixel(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Apply wavelength calibration to pixel coordinates.
@@ -457,7 +462,18 @@ class WaveCalib:
             m_lambda = polyval2d(x_norm, y_norm, self.poly_coef)
             
         # 最终波长 lambda = m_lambda / m
-        return m_lambda / y
+        wavelength = m_lambda / y
+
+        if self.order_coefs:
+            from numpy.polynomial.chebyshev import chebval
+            y_arr = np.broadcast_to(np.asarray(y, dtype=float), np.shape(wavelength))
+            wavelength = np.array(wavelength, dtype=float)
+            for m, coef in self.order_coefs.items():
+                sel = np.rint(y_arr) == m
+                if np.any(sel):
+                    x_sel = np.broadcast_to(np.asarray(x, dtype=float), wavelength.shape)[sel]
+                    wavelength[sel] = chebval(2.0 * (x_sel - xmin) / max(xmax - xmin, 1e-6) - 1.0, coef)
+        return wavelength
 
 
 # 保存单个处理阶段的配置参数。

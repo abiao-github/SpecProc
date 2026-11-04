@@ -1663,7 +1663,7 @@ class SlitPipeline:
         fits.HDUList([fits.PrimaryHDU(), t]).writeto(path, overwrite=True)
 
     # 绘制求和与最优提取光谱。
-    def _plot_spectrum(self, path, wave, flux, unit, title, snr=()):
+    def _plot_spectrum(self, path, wave, flux, unit, title, snr=(), mark_peaks=False):
         if not self.save_plots:
             return
         import matplotlib
@@ -1681,6 +1681,9 @@ class SlitPipeline:
                     ha='center', va='top', color='r', fontsize=9,
                     bbox=dict(fc='w', ec='r', lw=0.5, alpha=0.9))
         ax.set_ylim(top=ymax * 1.25)
+        if mark_peaks and unit == 'Angstrom':
+            from specproc.plotting.spectra_plotter import mark_peak_wavelengths
+            mark_peak_wavelengths(ax, wave, flux)
         ax.set_xlabel('Wavelength (A)' if unit == 'Angstrom' else 'Pixel')
         ax.set_ylabel('Counts')
         ax.set_title(title)
@@ -1830,7 +1833,7 @@ class SlitPipeline:
         self._written_arc_wave.add(key)
         wave = fit(np.arange(len(arc_flux), dtype=float))
         self._plot_spectrum(d / f'{name}_optimal_wavecal', wave, arc_flux,
-                            'Angstrom', f'{name} ({title})')
+                            'Angstrom', f'{name} ({title})', mark_peaks=True)
         self._write_spectrum(d / f'{name}_optimal_wavecal.fits', wave, arc_flux,
                              np.zeros_like(arc_flux), np.zeros_like(arc_flux),
                              'Angstrom', hdr,

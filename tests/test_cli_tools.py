@@ -144,6 +144,17 @@ def test_profile_from_fixed_telescope_metadata(tmp_path):
     assert _profile_from_inputs([str(tmp_path)]) == 'mstg193slit'
 
 
+def test_nanshan12_profile_from_swowner(tmp_path):
+    from specproc.config.config_manager import resolve_telescope_profile
+
+    path = tmp_path / 'obj.fit'
+    hdu = fits.PrimaryHDU(np.ones(8))
+    hdu.header['SWOWNER'] = 'nanshan '
+    hdu.writeto(path)
+    assert _profile_from_inputs([str(tmp_path)]) == 'nanshan12'
+    assert resolve_telescope_profile('nanshan12').name == 'default_config_NS12_hrs.cfg'
+
+
 def test_mstg_anchor_file_loads(tmp_path):
     from specproc.config.config_manager import ConfigManager
     from specproc.core.slit_pipeline import SlitPipeline

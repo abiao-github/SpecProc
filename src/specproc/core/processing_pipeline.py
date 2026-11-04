@@ -94,6 +94,7 @@ class ProcessingPipeline:
                 'trim_x_end': self.config.get_int('data', 'trim_x_end', -1),
                 'trim_y_start': self.config.get_int('data', 'trim_y_start', -1),
                 'trim_y_end': self.config.get_int('data', 'trim_y_end', -1),
+                'flip_vertical': self.config.get_bool('data', 'flip_vertical', False),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'pdf')
             }
@@ -230,6 +231,14 @@ class ProcessingPipeline:
                 'gap_fill_factor': self.config.get_float('reduce.trace', 'gap_fill_factor', 1.6),
                 'min_trace_coverage': self.config.get_float('reduce.trace', 'min_trace_coverage', 0.20),
                 'trace_degree': self.config.get_int('reduce.trace', 'degree', 4),
+                'seed_columns': tuple(float(v) for v in self.config.get(
+                    'reduce.trace', 'seed_columns', '0.5').replace(';', ',').split(',') if v.strip()),
+                'side_min_coverage': self.config.get_float('reduce.trace', 'side_min_coverage', 0.2),
+                'max_search_half': self.config.get_int('reduce.trace', 'max_search_half', 10**6),
+                'exclude_lowest': self.config.get_int('reduce.trace', 'exclude_lowest_apertures', 0),
+                'exclude_highest': self.config.get_int('reduce.trace', 'exclude_highest_apertures', 0),
+                'reject_false': self.config.get_bool('reduce.trace', 'reject_false_traces', True),
+                'curvature_tolerance': self.config.get_float('reduce.trace', 'curvature_tolerance', 10.0),
                 'width_cheb_degree': self.config.get_int('reduce.trace', 'width_cheb_degree', 3),
                 'n_extend_below': self.config.get_int('reduce.trace', 'n_extend_below', 0),
                 'n_extend_above': self.config.get_int('reduce.trace', 'n_extend_above', 0),
@@ -315,7 +324,8 @@ class ProcessingPipeline:
     def stage_wavelength_calibration_on_spectra(self, spectra_set: SpectraSet,
                                                 wave_calib: WaveCalib,
                                                 science_name: str = 'science',
-                                                method: str = 'optimal') -> SpectraSet:
+                                                method: str = 'optimal',
+                                                is_lamp: bool = False) -> SpectraSet:
         """
         Apply wavelength calibration to extracted science spectra.
 
@@ -377,7 +387,8 @@ class ProcessingPipeline:
                     pdf_path = out_dir / f"{science_name}_1D_{method}_wavecal.pdf"
                     plot_spectra_to_pdf(calibrated_spectra, str(pdf_path), 
                                         title_prefix="Wavelength Calibrated Spectrum", xlabel=r"Wavelength ($\AA$)", 
-                                        id_label="Order")
+                                        id_label="Order", mark_peaks=is_lamp,
+                                        annotate_snr=not is_lamp)
 
             self._report_progress(0.88, "Wavelength Calibration Complete")
             logger.info(
@@ -739,6 +750,10 @@ class ProcessingPipeline:
         if bias_path.exists():
             return str(bias_path)
             
+        cropped_path = out_dir / 'step1_basic' / 'cropped' / orig_name
+        if cropped_path.exists():
+            return str(cropped_path)
+
         overscan_path = out_dir / 'step1_basic' / 'overscan_corrected' / orig_name
         if overscan_path.exists():
             return str(overscan_path)
@@ -1096,8 +1111,11 @@ class ProcessingPipeline:
             calibrated_science_dict = {}
             
             targets = [("MasterFlat", None)]
+            lamp_names = set()
             for c_file in (calib_filenames_final if calib_filenames_final else calib_filenames):
-                if c_file: targets.append((Path(c_file).stem, c_file))
+                if c_file:
+                    targets.append((Path(c_file).stem, c_file))
+                    lamp_names.add(Path(c_file).stem)
             for sci_name in extracted_science_dict.keys():
                 sci_file_match = next((f for f in science_scatter_files if Path(f).stem == sci_name), None)
                 if not sci_file_match:
@@ -1124,7 +1142,8 @@ class ProcessingPipeline:
                 calib_opt = None
                 if spectra is not None:
                     calib_opt = self.stage_wavelength_calibration_on_spectra(
-                        spectra, wave_calib, science_name=target_name, method='optimal')
+                        spectra, wave_calib, science_name=target_name, method='optimal',
+                        is_lamp=target_name in lamp_names)
                 if calib_opt is not None and target_name in extracted_science_dict:
                     calibrated_science_dict[target_name] = calib_opt
 

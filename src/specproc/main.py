@@ -260,6 +260,11 @@ def run_cli_mode(config_path: Optional[str], inputs: List[str]) -> Dict:
                 f"Unrecognized frame type for {Path(file_path).name}: '{obstype}'. File is skipped."
             )
 
+    if config.get_bool('data', 'auto_resolution', False):
+        # Nanshan 1.2 m: split by resolution mode and reduce each group separately.
+        from .core import nanshan12
+        return nanshan12.run_by_resolution(config, grouped, ProcessingPipeline)
+
     required = ('bias', 'science') if is_slit else ('bias', 'flat', 'calib', 'science')
     missing = [name for name in required if not grouped[name]]
     if missing:
@@ -304,7 +309,7 @@ def _profile_from_metadata(telescope: str = '', instrument: str = '') -> Optiona
     if not tel and not ins:
         return None
     # A user may pass a combined profile name directly.
-    known = ('mstg193slit', 'xinglong216hrs', 'xinglong216bfosc', 'lijiang24hrs')
+    known = ('mstg193slit', 'xinglong216hrs', 'xinglong216bfosc', 'lijiang24hrs', 'nanshan12')
     for name in known:
         if tel == name.upper() or ins == name.upper():
             return name
@@ -319,6 +324,8 @@ def _profile_from_metadata(telescope: str = '', instrument: str = '') -> Optiona
             return 'xinglong216bfosc'
         if not ins or 'HRS' in ins or 'HIGH' in ins:
             return 'xinglong216hrs'
+    if 'NANSHAN' in tel or 'NANSHAN' in ins:
+        return 'nanshan12'
     if 'LIJIANG' in tel or 'LJG' in tel:
         return 'lijiang24hrs'
     return None
@@ -332,6 +339,9 @@ def _read_fits_metadata(path: Path) -> Tuple[str, str]:
                 header = hdu.header
                 tel = str(header.get('TELESCOP', '')).strip()
                 ins = str(header.get('INSTRUME', '')).strip()
+                # Nanshan 1.2m headers carry no TELESCOP; the site is in SWOWNER.
+                if not tel:
+                    tel = str(header.get('SWOWNER', '')).strip()
                 if tel or ins:
                     return tel, ins
     except Exception:
@@ -475,7 +485,7 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
                              'Pass --config without a value to copy the generic default config.')
     parser.add_argument('--profile', default=None,
                         help='Combined telescope+instrument profile, e.g. '
-                             'mstg193slit, xinglong216hrs, xinglong216bfosc, lijiang24hrs')
+                             'mstg193slit, xinglong216hrs, xinglong216bfosc, lijiang24hrs, nanshan12')
     parser.add_argument('--completion', choices=['bash', 'zsh'], metavar='{bash,zsh}',
                         help='Print a shell completion script and exit, e.g. '
                              'eval "$(specproc --completion bash)"')

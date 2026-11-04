@@ -10,11 +10,13 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QGroupBox, QFormLayout, QScrollArea,
-    QFileDialog
+    QFileDialog, QMessageBox
 )
+from pathlib import Path
+
 from PyQt5.QtCore import Qt
 
-from specproc.config.config_manager import ConfigManager
+from specproc.config.config_manager import ConfigManager, list_telescope_profiles
 
 
 # 提供处理配置的分项编辑界面。
@@ -85,6 +87,25 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QFormLayout()
 
+        # Configuration file: choosing a telescope/instrument profile loads all its preset parameters
+        cfg_group = QGroupBox("Configuration File")
+        cfg_layout = QHBoxLayout()
+        self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumWidth(220)
+        self.profile_combo.setToolTip("Select the telescope/instrument profile; its preconfigured "
+                                      "parameters replace the current ones.")
+        self._profiles = list_telescope_profiles()
+        self.profile_combo.addItem(self._current_config_label(), None)
+        for name, path in self._profiles.items():
+            self.profile_combo.addItem(name, str(path))
+        self.profile_combo.activated.connect(self._on_profile_selected)
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_config_file)
+        cfg_layout.addWidget(self.profile_combo, 1)
+        cfg_layout.addWidget(browse_btn)
+        cfg_group.setLayout(cfg_layout)
+        layout.addRow(cfg_group)
+
         # Data input group
         data_group = QGroupBox("Data Input")
         data_layout = QFormLayout()
@@ -94,13 +115,6 @@ class SettingsDialog(QDialog):
 
         self.statime_key_edit = QLineEdit()
         data_layout.addRow("Start Time Key (DATE-OBS):", self.statime_key_edit)
-
-        self.exptime_key_edit = QLineEdit()
-        data_layout.addRow("Exposure Time Key (EXPTIME):", self.exptime_key_edit)
-
-        self.direction_combo = QComboBox()
-        self.direction_combo.addItems(['xrb', 'xlb', 'yrb', 'ylb'])
-        data_layout.addRow("Dispersion Direction:", self.direction_combo)
 
         self.output_path_edit = QLineEdit()
         data_layout.addRow("Output Path:", self.output_path_edit)
@@ -129,6 +143,35 @@ class SettingsDialog(QDialog):
         widget.setMinimumWidth(400)
         scroll.setWidget(widget)
         return scroll
+
+    # 当前配置文件的显示名称。
+    def _current_config_label(self) -> str:
+        path = getattr(self.config, 'config_path', None)
+        return f"Current: {Path(path).name}" if path else "Current settings"
+
+    # 选择预置的望远镜/终端配置并刷新所有参数。
+    def _on_profile_selected(self, index: int):
+        path = self.profile_combo.itemData(index)
+        if path:
+            self._apply_config_file(path)
+
+    # 浏览并导入任意配置文件。
+    def _browse_config_file(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Open Configuration", "",
+                                              "Config Files (*.cfg);;All Files (*)")
+        if file:
+            self._apply_config_file(file)
+
+    # 载入配置文件并更新界面。
+    def _apply_config_file(self, path: str):
+        try:
+            self.config.load_profile(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load config: {e}")
+            return
+        self.load_current_values()
+        self.profile_combo.setItemText(0, self._current_config_label())
+        self.profile_combo.setCurrentIndex(0)
 
     # 创建数据预处理设置页。
     def _create_reduction_tab(self) -> QWidget:
@@ -334,11 +377,6 @@ class SettingsDialog(QDialog):
         self.flat_combine_method_combo = QComboBox()
         self.flat_combine_method_combo.addItems(['mean', 'median'])
         flat_layout.addRow("Combine Method:", self.flat_combine_method_combo)
-
-        self.flat_q_threshold_spin = QDoubleSpinBox()
-        self.flat_q_threshold_spin.setRange(0.0, 1.0)
-        self.flat_q_threshold_spin.setSingleStep(0.05)
-        flat_layout.addRow("Quality Threshold:", self.flat_q_threshold_spin)
 
         self.flat_mosaic_maxcount_spin = QDoubleSpinBox()
         self.flat_mosaic_maxcount_spin.setRange(0.0, 100000.0)
@@ -657,19 +695,10 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QFormLayout()
 
-        # Processing mode
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(['normal', 'debug'])
-        layout.addRow("Processing Mode:", self.mode_combo)
-
         # Figure format
         self.fig_format_combo = QComboBox()
         self.fig_format_combo.addItems(['png', 'pdf', 'jpg'])
         layout.addRow("Figure Format:", self.fig_format_combo)
-
-        # Output suffix
-        self.oned_suffix_edit = QLineEdit()
-        layout.addRow("Output Suffix:", self.oned_suffix_edit)
 
         # Auto process
         self.auto_process_check = QCheckBox("Auto process all science images without confirmation")
@@ -681,24 +710,6 @@ class SettingsDialog(QDialog):
 
         self.save_plots_check = QCheckBox("Save diagnostic plots")
         output_layout.addRow(self.save_plots_check)
-
-        self.save_overscan_check = QCheckBox("Save overscan correction results")
-        output_layout.addRow(self.save_overscan_check)
-
-        self.save_bias_check = QCheckBox("Save bias correction results")
-        output_layout.addRow(self.save_bias_check)
-
-        self.save_flat_check = QCheckBox("Save flat fielding results")
-        output_layout.addRow(self.save_flat_check)
-
-        self.save_background_check = QCheckBox("Save background subtraction results")
-        output_layout.addRow(self.save_background_check)
-
-        self.save_cosmic_check = QCheckBox("Save cosmic ray correction results")
-        output_layout.addRow(self.save_cosmic_check)
-
-        self.save_extraction_check = QCheckBox("Save spectrum extraction results")
-        output_layout.addRow(self.save_extraction_check)
 
         self.save_wlcalib_check = QCheckBox("Save wavelength calibration results")
         output_layout.addRow(self.save_wlcalib_check)
@@ -746,8 +757,6 @@ class SettingsDialog(QDialog):
         # Data & Instruments tab
         self.rawdata_path_edit.setText(self.config.get('data', 'rawdata_path', './rawdata'))
         self.statime_key_edit.setText(self.config.get('data', 'statime_key', 'DATE-OBS'))
-        self.exptime_key_edit.setText(self.config.get('data', 'exptime_key', 'EXPTIME'))
-        self.direction_combo.setCurrentText(self.config.get('data', 'direction', 'xrb'))
         self.output_path_edit.setText(self.config.get('reduce', 'output_path', 'output'))
         self.detector_gain_spin.setValue(self.config.get_float('telescope.detector', 'gain', 1.0))
         self.detector_readnoise_spin.setValue(self.config.get_float('telescope.detector', 'readnoise', 5.0))
@@ -765,7 +774,6 @@ class SettingsDialog(QDialog):
         self.bias_combine_method_combo.setCurrentText(self.config.get('reduce.bias', 'combine_method', 'median'))
         self.bias_combine_sigma_spin.setValue(self.config.get_float('reduce.bias', 'combine_sigma', 3.0))
         self.flat_combine_method_combo.setCurrentText(self.config.get('reduce.flat', 'combine_method', 'median'))
-        self.flat_q_threshold_spin.setValue(self.config.get_float('reduce.flat', 'q_threshold', 0.5))
         self.flat_mosaic_maxcount_spin.setValue(self.config.get_float('reduce.flat', 'mosaic_maxcount', 65535.0))
         self.flat_blaze_smooth_factor_spin.setValue(self.config.get_float('reduce.flat', 'blaze_smooth_factor', 1.0))
         self.flat_fringe_orders_spin.setValue(self.config.get_int('reduce.flat', 'fringe_orders', 20))
@@ -798,7 +806,7 @@ class SettingsDialog(QDialog):
 
         # Wavelength Calibration tab
         self.linelist_combo.setCurrentText(self.config.get('telescope.linelist', 'linelist_type', 'ThAr'))
-        self.anchor_file_edit.setText(self.config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong_thar_lines.csv'))
+        self.anchor_file_edit.setText(self.config.get('telescope.linelist', 'anchor_file', 'calib_data/telescopes/xinglong216hrs/xinglong216_thar_anchors.csv'))
         self.full_linelist_edit.setText(self.config.get('telescope.linelist', 'full_linelist', 'calib_data/linelists/thar-noao.dat'))
         self.use_precomputed_calib_check.setChecked(self.config.get_bool('telescope.linelist', 'use_precomputed_calibration', False))
         self.precomputed_calib_file_edit.setText(self.config.get('telescope.linelist', 'precomputed_calib_file', 'calib_data/telescopes/xinglong216hrs/wlcalib_20211123011_A.fits'))
@@ -823,17 +831,9 @@ class SettingsDialog(QDialog):
         self.trace_n_mask_above_spin.setValue(self.config.get_int('reduce.trace', 'n_mask_above', 4))
 
         # Processing & Output tab
-        self.mode_combo.setCurrentText(self.config.get('reduce', 'mode', 'normal'))
         self.fig_format_combo.setCurrentText(self.config.get('reduce', 'fig_format', 'png'))
-        self.oned_suffix_edit.setText(self.config.get('reduce', 'oned_suffix', '_ods'))
         self.auto_process_check.setChecked(self.config.get_bool('reduce', 'auto_process_all_images', False))
         self.save_plots_check.setChecked(self.config.get_bool('reduce', 'save_plots', True))
-        self.save_overscan_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_overscan', True))
-        self.save_bias_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_bias', True))
-        self.save_flat_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_flat', True))
-        self.save_background_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_background', True))
-        self.save_cosmic_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_cosmic', True))
-        self.save_extraction_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_extraction', True))
         self.save_wlcalib_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_wlcalib', True))
         self.save_deblaze_check.setChecked(self.config.get_bool('reduce.save_intermediate', 'save_deblaze', True))
 
@@ -844,8 +844,6 @@ class SettingsDialog(QDialog):
             # Data & Instruments tab
             self.config.set('data', 'rawdata_path', self.rawdata_path_edit.text())
             self.config.set('data', 'statime_key', self.statime_key_edit.text())
-            self.config.set('data', 'exptime_key', self.exptime_key_edit.text())
-            self.config.set('data', 'direction', self.direction_combo.currentText())
             self.config.set('reduce', 'output_path', self.output_path_edit.text())
             self.config.set('telescope.detector', 'gain', str(self.detector_gain_spin.value()))
             self.config.set('telescope.detector', 'readnoise', str(self.detector_readnoise_spin.value()))
@@ -860,7 +858,6 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.bias', 'combine_method', self.bias_combine_method_combo.currentText())
             self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
             self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())
-            self.config.set('reduce.flat', 'q_threshold', str(self.flat_q_threshold_spin.value()))
             self.config.set('reduce.flat', 'mosaic_maxcount', str(self.flat_mosaic_maxcount_spin.value()))
             self.config.set('reduce.flat', 'blaze_smooth_factor', str(self.flat_blaze_smooth_factor_spin.value()))
             self.config.set('reduce.flat', 'fringe_orders', str(self.flat_fringe_orders_spin.value()))
@@ -914,23 +911,9 @@ class SettingsDialog(QDialog):
             self.config.set('reduce.trace', 'n_mask_above', str(self.trace_n_mask_above_spin.value()))
 
             # Processing & Output tab
-            self.config.set('reduce', 'mode', self.mode_combo.currentText())
             self.config.set('reduce', 'fig_format', self.fig_format_combo.currentText())
-            self.config.set('reduce', 'oned_suffix', self.oned_suffix_edit.text())
             self.config.set('reduce', 'auto_process_all_images', 'yes' if self.auto_process_check.isChecked() else 'no')
             self.config.set('reduce', 'save_plots', 'yes' if self.save_plots_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_overscan',
-                           'yes' if self.save_overscan_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_bias',
-                           'yes' if self.save_bias_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_flat',
-                           'yes' if self.save_flat_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_background',
-                           'yes' if self.save_background_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_cosmic',
-                           'yes' if self.save_cosmic_check.isChecked() else 'no')
-            self.config.set('reduce.save_intermediate', 'save_extraction',
-                           'yes' if self.save_extraction_check.isChecked() else 'no')
             self.config.set('reduce.save_intermediate', 'save_wlcalib',
                            'yes' if self.save_wlcalib_check.isChecked() else 'no')
             self.config.set('reduce.save_intermediate', 'save_deblaze',

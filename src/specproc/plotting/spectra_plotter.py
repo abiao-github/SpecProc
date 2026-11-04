@@ -450,9 +450,101 @@ def plot_wavelength_calibration(line_pixels: np.ndarray, line_wavelengths: np.nd
     logger.info(f"Saved wavelength calibration plot to {output_path}")
 
 # 将多条光谱绘制到同一 PDF。
+def mark_peak_wavelengths(ax, wave, flux, max_peaks: int = 30, min_snr: float = 10.0,
+                          fontsize: float = 6.5) -> int:
+    """Mark the most prominent emission peaks of a lamp spectrum with their wavelengths.
+
+    A short vertical line is drawn just above each peak top and the centre wavelength
+    (4 decimals) is written above it, for comparison with line-identification charts.
+    Returns the number of marked peaks.
+    """
+    from scipy.signal import find_peaks
+    from specproc.core.peak_fitting import fit_peak_center
+
+    wave = np.asarray(wave, dtype=float)
+    flux = np.nan_to_num(np.asarray(flux, dtype=float))
+    n = len(flux)
+    if n < 20 or len(wave) != n:
+        return 0
+    diffs = np.diff(flux)
+    noise = np.median(np.abs(diffs - np.median(diffs))) / (np.sqrt(2) * 0.6745)
+    if noise < 1e-6:
+        noise = np.std(flux)
+    peaks, props = find_peaks(flux, prominence=max(min_snr * noise, 1e-3), distance=5)
+    if len(peaks) == 0:
+        return 0
+    keep = np.argsort(props['prominences'])[::-1][:max_peaks]
+    grid = np.arange(n, dtype=float)
+    top = np.nanmax(flux)
+    span = max(top - np.nanmin(flux), 1e-9)
+    for i in np.sort(peaks[keep]):
+        c = fit_peak_center(grid, flux, int(i), half_width=4)
+        if not np.isfinite(c) or abs(c - i) > 3:
+            c = float(i)
+        w = float(np.interp(c, grid, wave))
+        y0 = flux[i] + 0.02 * span
+        y1 = y0 + 0.04 * span
+        ax.plot([w, w], [y0, y1], color='r', lw=0.7)
+        ax.text(w, y1, f"{w:.4f}", rotation=90, ha='center', va='bottom',
+                fontsize=fontsize, color='r')
+    ax.set_ylim(top=top + 0.3 * span)
+    return len(keep)
+
+
+def estimate_snr_at_center(flux, window: int = 151, half: int = 50):
+    """SNR at the middle pixel of the valid range, using the slit-spectrum method.
+
+    A Savitzky-Golay continuum is fitted, residuals are iteratively 3-sigma clipped
+    (rejected regions widened by 3 px), and SNR = median continuum in +-``half`` pixels
+    around the centre / local MAD sigma of the clipped residuals. Returns (index, snr) or None.
+    """
+    from scipy.signal import savgol_filter
+    from scipy import ndimage
+
+    flux = np.asarray(flux, dtype=float)
+    ok = np.where(np.isfinite(flux) & (flux != 0))[0]
+    if len(ok) < 20:
+        return None
+    i0, i1 = ok[0], ok[-1]
+    seg = flux[i0:i1 + 1]
+    n = len(seg)
+    win = min(window, n if n % 2 else n - 1)
+    win = max(win - (win % 2 == 0), 7)
+    x = np.arange(n, dtype=float)
+    keep = np.isfinite(seg)
+
+    def mad(a):
+        a = a[np.isfinite(a)]
+        return float(1.4826 * np.median(np.abs(a - np.median(a)))) if a.size else 0.0
+
+    res = np.zeros(n)
+    smooth = np.zeros(n)
+    for _ in range(20):
+        smooth = savgol_filter(np.interp(x, x[keep], seg[keep]), win, 3, mode='interp')
+        res = seg - smooth
+        sigma = mad(res[keep])
+        new_keep = np.isfinite(seg) & (np.abs(res) <= 3 * sigma)
+        if (new_keep == keep).all() or new_keep.sum() < 10:
+            break
+        keep = new_keep
+    keep = ndimage.binary_erosion(keep, iterations=3, border_value=1)
+    k = (n - 1) // 2
+    a, b = max(k - half, 0), min(k + half + 1, n)
+    loc = res[a:b][keep[a:b]]
+    noise = mad(loc) if loc.size > 10 else mad(res[keep])
+    if not noise > 0:
+        return None
+    return int(i0 + k), float(np.median(smooth[a:b]) / noise)
+
+
 def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spectrum", 
-                        xlabel: str = "Wavelength (Angstrom)", id_label: str = "Aperture"):
-    """Save all spectra in a SpectraSet to a single multi-page PDF file."""
+                        xlabel: str = "Wavelength (Angstrom)", id_label: str = "Aperture",
+                        mark_peaks: bool = False, annotate_snr: bool = False):
+    """Save all spectra in a SpectraSet to a single multi-page PDF file.
+
+    With ``mark_peaks`` (lamp spectra) the prominent peaks are labelled with their wavelengths.
+    With ``annotate_snr`` (science targets) the SNR at the middle pixel of each order is marked.
+    """
     from matplotlib.backends.backend_pdf import PdfPages
     
     with PdfPages(output_path) as pdf:
@@ -470,6 +562,17 @@ def plot_spectra_to_pdf(spectra_set, output_path: str, title_prefix: str = "Spec
             #                     spectrum.flux + spectrum.error,
             #                     alpha=0.3, color='blue', label="Error")
 
+            if mark_peaks:
+                mark_peak_wavelengths(ax, spectrum.wavelength, spectrum.flux)
+            if annotate_snr:
+                est = estimate_snr_at_center(spectrum.flux)
+                if est is not None and est[0] < len(spectrum.wavelength):
+                    xc = spectrum.wavelength[est[0]]
+                    ax.axvline(xc, color='r', ls='--', lw=0.6)
+                    ax.text(xc, 0.96, f"SNR={est[1]:.1f}@{xc:.0f} " + ("A" if "Wave" in xlabel else "pix"),
+                            transform=ax.get_xaxis_transform(), ha='center', va='top', color='r',
+                            fontsize=9, bbox=dict(fc='w', ec='r', lw=0.5, alpha=0.9))
+                    logger.info(f"{title_prefix} {id_label} {aperture_id}: SNR at centre = {est[1]:.1f}")
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Flux")
             ax.set_title(f"{title_prefix} - {id_label} {aperture_id}")

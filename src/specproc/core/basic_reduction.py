@@ -59,7 +59,9 @@ class OverscanCorrectionStage:
                  trim_x_start: int = -1, trim_x_end: int = -1,
                  trim_y_start: int = -1, trim_y_end: int = -1,
                  save_plots: bool = True,
-                 fig_format: str = 'png'):
+                 fig_format: str = 'png',
+                 flip_vertical: bool = False):
+        self.flip_vertical = flip_vertical
         self.overscan_start_column = overscan_start_column
         self.overscan_left_start = overscan_left_start
         self.overscan_left_end = overscan_left_end
@@ -119,7 +121,7 @@ class OverscanCorrectionStage:
 
         if not has_overscan:
             logger.info("No overscan region configured, skipping overscan correction")
-            return image
+            return self._apply_orientation(image) if self.flip_vertical else image
 
         overscan_bias = self.corrector.estimate_overscan_bias(
             image, method=self.overscan_method,
@@ -133,38 +135,47 @@ class OverscanCorrectionStage:
         if trim and has_overscan:
             corrected = self.corrector.trim_image(corrected)
 
-        corrected = self._apply_user_crop(corrected)
-        return corrected
+        return self._apply_orientation(corrected)
 
-    # 按用户边界裁剪图像区域。
+    # 按需上下翻转图像，使级次号随行号单调增加。
+    def _apply_orientation(self, image: np.ndarray) -> np.ndarray:
+        return image[::-1].copy() if self.flip_vertical else image
+
+    # 是否配置了任意裁剪边界。
+    @property
+    def has_user_crop(self) -> bool:
+        return max(self.trim_x_start, self.trim_x_end, self.trim_y_start, self.trim_y_end) >= 1
+
+    # 按用户边界裁剪图像区域（翻转之后的坐标，任一边界<1表示该侧不裁剪）。
     def _apply_user_crop(self, image: np.ndarray) -> np.ndarray:
-        """Apply optional crop bounds from config using DS9 1-based indexing."""
+        """Crop with DS9 1-based inclusive bounds; a bound < 1 leaves that side open."""
         rows, cols = image.shape
-
-        x1 = self.trim_x_start
-        x2 = self.trim_x_end
-        y1 = self.trim_y_start
-        y2 = self.trim_y_end
-
-        if min(x1, x2, y1, y2) < 1:
-            return image
-
-        x1p = max(0, x1 - 1)
-        x2p = min(cols, x2)
-        y1p = max(0, y1 - 1)
-        y2p = min(rows, y2)
+        x1p = max(0, self.trim_x_start - 1) if self.trim_x_start >= 1 else 0
+        x2p = min(cols, self.trim_x_end) if self.trim_x_end >= 1 else cols
+        y1p = max(0, self.trim_y_start - 1) if self.trim_y_start >= 1 else 0
+        y2p = min(rows, self.trim_y_end) if self.trim_y_end >= 1 else rows
 
         if x2p <= x1p or y2p <= y1p:
             logger.warning(
-                f"Invalid crop range (DS9): x=[{x1},{x2}], y=[{y1},{y2}]. Skip cropping."
+                f"Invalid crop range (DS9): x=[{self.trim_x_start},{self.trim_x_end}], "
+                f"y=[{self.trim_y_start},{self.trim_y_end}]. Skip cropping."
             )
             return image
+        return image[y1p:y2p, x1p:x2p]
 
-        cropped = image[y1p:y2p, x1p:x2p]
-        logger.info(
-            f"Applied user crop (DS9): x=[{x1},{x2}], y=[{y1},{y2}] -> shape {cropped.shape}"
-        )
-        return cropped
+    # 裁剪已校正的FITS文件并保存到单独子目录。
+    def crop_file(self, input_path: str, output_path: str) -> str:
+        image, header = read_fits_image(input_path)
+        cropped = self._apply_user_crop(image)
+        rows, cols = image.shape
+        y1 = self.trim_y_start if self.trim_y_start >= 1 else 1
+        y2 = min(self.trim_y_end, rows) if self.trim_y_end >= 1 else rows
+        x1 = self.trim_x_start if self.trim_x_start >= 1 else 1
+        x2 = min(self.trim_x_end, cols) if self.trim_x_end >= 1 else cols
+        header['CROPSEC'] = (f'[{x1}:{x2},{y1}:{y2}]', 'Crop region (DS9, after flip)')
+        write_fits_image(output_path, cropped, header=header, overwrite=True, dtype='float32')
+        logger.info(f"Cropped {Path(input_path).name}: {image.shape} -> {cropped.shape}")
+        return output_path
 
     # 校正FITS文件并保存图像与诊断图。
     def correct_file(self, input_path: str, output_path: Optional[str] = None) -> str:
@@ -227,7 +238,8 @@ def process_overscan_stage(image_filenames: List[str],
                            trim_x_start: int = -1, trim_x_end: int = -1,
                            trim_y_start: int = -1, trim_y_end: int = -1,
                            save_plots: bool = True,
-                           fig_format: str = 'png') -> List[str]:
+                           fig_format: str = 'png',
+                           flip_vertical: bool = False) -> List[str]:
     """Execute overscan correction for multiple images."""
     stage = OverscanCorrectionStage(
         overscan_start_column=overscan_start_column,
@@ -242,10 +254,11 @@ def process_overscan_stage(image_filenames: List[str],
         trim_x_start=trim_x_start, trim_x_end=trim_x_end,
         trim_y_start=trim_y_start, trim_y_end=trim_y_end,
         save_plots=save_plots,
-        fig_format=fig_format
+        fig_format=fig_format,
+        flip_vertical=flip_vertical,
     )
 
-    if not stage.has_overscan_config:
+    if not stage.has_overscan_config and not flip_vertical and not stage.has_user_crop:
         logger.info("No overscan region configured; skipping overscan stage and using original files.")
         return list(image_filenames)
 
@@ -271,6 +284,19 @@ def process_overscan_stage(image_filenames: List[str],
             corrected_files.append(filename)
 
     logger.info(f"✓ Overscan correction complete: {len(corrected_files)} images processed")
+
+    if stage.has_user_crop:
+        crop_path = Path(output_dir_base) / 'step1_basic' / 'cropped'
+        crop_path.mkdir(parents=True, exist_ok=True)
+        cropped_files = []
+        for filename in corrected_files:
+            try:
+                cropped_files.append(stage.crop_file(str(filename), str(crop_path / Path(filename).name)))
+            except Exception as e:
+                logger.error(f"Error cropping {filename}: {e}")
+                cropped_files.append(filename)
+        logger.info(f"✓ Image crop complete: {len(cropped_files)} images -> {crop_path}")
+        return cropped_files
     return corrected_files
 
 

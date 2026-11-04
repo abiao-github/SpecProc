@@ -477,6 +477,47 @@ config with `specproc --config` and adjust it for the observation.
 For MSTG data the slit pipeline also selects `mstg193slit_anchors_R.csv` or
 `mstg193slit_anchors_B.csv` from `INSTRUME` when the corresponding file exists.
 
+**Nanshan 1.2m fibre echelle** (`--profile nanshan12`, auto-detected from
+`SWOWNER = 'nanshan'`; config `NS12_hrs`): the spectrograph has high, mid and low
+resolution modes that the FITS headers do not distinguish, so with
+`[data] auto_resolution = yes` the input frames are split automatically and each
+group is reduced separately into `output/<high|mid|low>/`:
+
+- flat / target / standard frames: by the order spacing of the bright bands
+  (autocorrelation of the cross-dispersion profile: about 10-12 px high, 16-17 px mid,
+  85-100 px low);
+- ThAr lamps: by cross-correlating every extracted order with the calibrated,
+  flux-normalised reference lamp spectra `nanshan-thar-{high,mid}res.txt` in
+  `calib_data/telescopes/nanshan12/` (columns: order, wavelength, normalised flux);
+  a lamp matching neither is taken as low resolution;
+- bias frames: by the `high` token in the file name.
+
+Step 1 can crop the images (`trim_x_start/end`, `trim_y_start/end`, DS9 1-based, applied
+after `flip_vertical`; a bound < 1 leaves that side open). Cropped frames are written to
+`step1_basic/cropped/` and used by all later steps; the Nanshan profile keeps rows 600-1300.
+Order tracing drops false traces (`reject_false_traces`): traces leaving the image, crossing
+a neighbour, or bending differently from the neighbouring orders (`curvature_tolerance`).
+`seed_columns` / `side_min_coverage` / `max_search_half` let the tracer find orders visible on
+one side only and follow widely spaced curved orders (used automatically for the low mode).
+`exclude_lowest_apertures` / `exclude_highest_apertures` (`[reduce.trace]`, default 0) skip the
+N lowest / highest traces so noise-only orders are not extracted (set to 1 automatically for the Nanshan low mode).
+
+The initial wavelength solution of the high/mid groups is not obtained from an anchor
+line table: each extracted lamp order is cross-correlated with the reference spectrum
+(giving the order offset and pixel shift), then the full catalog `thar-noao.dat` is
+matched for the final fit. `nanshan-thar-lowres.txt` lists identified lines
+(order, X, wavelength) and is used as an anchor table. Nanshan frames have the
+orders ascending in the opposite vertical sense, so `[data] flip_vertical = yes` flips
+them in Step 1.
+
+**Per-order wavelength fit** (`[reduce.wlcalib] fit_mode = per_order`): by default
+(`global`) one 2D polynomial f(order, x) is fitted to all lines. With `per_order`
+the 2D fit is still made first (outlier rejection, fallback for orders with fewer than
+`order_min_lines` lines or covering less than 60 % of the detector), then every
+well-constrained order is refitted independently with a 1D Chebyshev polynomial of
+degree `order_degree`. The catalog is then rematched with `refine_tolerance` for these
+orders (`refine_iterations` passes) before the final fit.
+
 **Slit mode** (`[telescope] instrument = slit`, used by `MSTG193_slit`): a
 separate single-aperture pipeline (`core/slit_pipeline.py`) replaces the echelle
 stages: overscan/bias → pixel flat → cosmic rays → star trace + sky subtraction →

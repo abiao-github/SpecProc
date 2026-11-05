@@ -228,7 +228,7 @@ class SettingsDialog(QDialog):
             "Detector amplifier split row (1-based).\n"
             "Divides the CCD into lower and upper readout halves.\n"
             "Used by overscan correction and step 3 background fitting.\n"
-            "For Xinglong 216 HRS 4136-row CCD: 2068. Set -1 for auto."
+            "For Xinglong 216 HRS 4136-row CCD: 2068. 0 = single amplifier (no split); -1 = auto (rows/2)."
         )
         overscan_layout.addRow("Amplifier Split Row:", self.detector_split_row_spin)
 

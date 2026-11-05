@@ -15,6 +15,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class FitsHeader(dict):
+    """Header as a plain dict that also remembers each keyword's comment."""
+
+    def __init__(self, header=None):
+        super().__init__()
+        self.comments: Dict[str, str] = {}
+        if header is not None:
+            for card in header.cards:
+                if card.keyword in ('COMMENT', 'HISTORY', ''):
+                    continue
+                self[card.keyword] = card.value
+                if card.comment:
+                    self.comments[card.keyword] = card.comment
+
+    def copy(self):
+        new = FitsHeader()
+        new.update(self)
+        new.comments = dict(self.comments)
+        return new
+
+
 # 读取 FITS 图像及其头信息。
 def read_fits_image(filepath: str) -> Tuple[np.ndarray, dict]:
     """
@@ -41,7 +62,7 @@ def read_fits_image(filepath: str) -> Tuple[np.ndarray, dict]:
                         break
 
             # Get header
-            header = dict(hdul[0].header)
+            header = FitsHeader(hdul[0].header)
 
             return image_data, header
     except Exception as e:
@@ -106,6 +127,7 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
             if 'BSCALE' in header: del header['BSCALE']
 
         # Add header keywords
+        comments = getattr(header, 'comments', {}) if header else {}
         if header:
             for key, value in header.items():
                 try:
@@ -126,7 +148,9 @@ def write_fits_image(filepath: str, data: np.ndarray, header: Optional[Dict] = N
                         # Truncate if too long (FITS headers have max 80 chars per record)
                         if len(cleaned_value) > 70:
                             cleaned_value = cleaned_value[:67] + '...'
-                        hdu.header[key] = cleaned_value
+                        hdu.header[key] = (cleaned_value, comments[key]) if comments.get(key) else cleaned_value
+                    elif not isinstance(value, tuple) and comments.get(key):
+                        hdu.header[key] = (value, comments[key])
                     else:
                         hdu.header[key] = value
                 except Exception as e:

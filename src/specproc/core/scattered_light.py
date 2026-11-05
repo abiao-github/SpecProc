@@ -282,7 +282,7 @@ class BackgroundRemover:
 
         Args:
             split_row: 1-based detector row dividing the two amplifier halves.
-                       0 (default) falls back to rows//2.
+                       0 = single-amplifier detector (no split); negative falls back to rows//2.
             clip_mode: 'both' (symmetric), 'upper' (reject bright outliers only),
                        or 'lower' (reject faint outliers only).
             kernel_sigma_x, kernel_sigma_y: Gaussian kernel σ for 'convolution' method.
@@ -324,17 +324,22 @@ class BackgroundRemover:
             return background, model_lower, model_upper
 
         # --- Polynomial / B-spline / smooth: per-half fitting ---
-        # Use the configured detector split row (1-based → 0-based index).
-        split = (split_row - 1) if 0 < split_row <= rows else rows // 2
-        split = max(1, min(split, rows - 1))
+        # split_row == 0 means a single-amplifier detector: fit the whole frame at once.
         background = np.zeros_like(image, dtype=np.float64)
-        model_lower = np.zeros((split, cols), dtype=np.float64)
-        model_upper = np.zeros((rows - split, cols), dtype=np.float64)
-
-        halves = [
-            (0, split, "lower"),
-            (split, rows, "upper"),
-        ]
+        if split_row == 0:
+            model_lower = np.zeros((rows, cols), dtype=np.float64)
+            model_upper = np.zeros((0, cols), dtype=np.float64)
+            halves = [(0, rows, "lower")]
+        else:
+            # Use the configured detector split row (1-based -> 0-based index).
+            split = (split_row - 1) if 0 < split_row <= rows else rows // 2
+            split = max(1, min(split, rows - 1))
+            model_lower = np.zeros((split, cols), dtype=np.float64)
+            model_upper = np.zeros((rows - split, cols), dtype=np.float64)
+            halves = [
+                (0, split, "lower"),
+                (split, rows, "upper"),
+            ]
         for y0, y1, label in halves:
             sub = image[y0:y1, :].astype(np.float64)
             sub_mask = order_mask[y0:y1, :]

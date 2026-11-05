@@ -372,6 +372,25 @@ def _telescope_name(cfg_path: Path) -> str:
         return ''
 
 
+def _warn_config_differs(working: Path, packaged: Path) -> None:
+    """Warn when a reused working config differs from the packaged profile in key detector settings."""
+    import configparser
+    keys = ('overscan_start_column', 'detector_split_row', 'flip_vertical', 'trim_y_start', 'frame_type_source')
+    vals = []
+    for path in (working, packaged):
+        cp = configparser.ConfigParser(interpolation=None)
+        try:
+            cp.read(path, encoding='utf-8')
+        except Exception:
+            return
+        vals.append({k: cp.get('data', k, fallback='').split('#')[0].strip() for k in keys})
+    diffs = [f'{k}: {vals[0][k] or "-"} (working) vs {vals[1][k] or "-"} (profile)'
+             for k in keys if vals[0][k] != vals[1][k]]
+    if diffs:
+        print(f'WARNING: ./{working.name} differs from the packaged profile: ' + '; '.join(diffs)
+              + f'. Delete ./{working.name} to use the profile defaults.')
+
+
 # 将所选默认配置复制到当前目录。
 def copy_default_config_to_cwd(target_filename: Optional[str] = None,
                                 profile: Optional[str] = None) -> Path:
@@ -539,6 +558,8 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
                 legacy_target = target
             if target.exists() or legacy_target.exists():
                 target = target if target.exists() else legacy_target
+                if profile_path is not None:
+                    _warn_config_differs(target, profile_path)
                 print(f'Using existing working config: ./{target.name} '
                       f'(profile {profile})')
                 args.config = str(target)

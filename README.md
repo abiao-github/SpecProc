@@ -1,6 +1,8 @@
 # SpecProc: PyQt GUI for Spectrograph Data Reduction
 
-![SpecProc GUI](docs/SpecProc.png)
+**English** | [简体中文](README_CN.md)
+
+![SpecProc GUI](docs/SpecProcGUI.png)
 
 A complete PyQt-based graphical interface for reducing slit/chelle spectrograph FITS data.
 
@@ -184,7 +186,7 @@ specproc --config ./specproc.cfg
 **Note**:
 - ❌ Do NOT run `specproc` in SpecProc source directory (`/path/to/SpecProc`)
 - ✅ Run `specproc` in your working directory
-- ✅ `rawdata` and `output` will be created in your working directory
+- ✅ `output` will be created in your working directory
 
 ## Configuration
 
@@ -750,9 +752,9 @@ cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
 
 ## Documentation
 
-- See [calib_data/README.md](calib_data/README.md) for calibration data configuration
-- See [README_CN.md](README_CN.md) for Chinese documentation
-- See [PIPELINE_FLOWCHART.md](PIPELINE_FLOWCHART.md) for detailed processing workflow
+- See [README_CN.md](README_CN.md) for the Chinese documentation（中文文档）
+- See [calib_data/README.md](src/specproc/calib_data/README.md) for calibration data configuration
+- See [docs/](docs/) for screenshots and software evaluation reports
 
 ## Project Structure
 

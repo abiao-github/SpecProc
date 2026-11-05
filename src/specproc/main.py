@@ -375,7 +375,7 @@ def _telescope_name(cfg_path: Path) -> str:
 def _warn_config_differs(working: Path, packaged: Path) -> None:
     """Warn when a reused working config differs from the packaged profile in key detector settings."""
     import configparser
-    keys = ('overscan_start_column', 'detector_split_row', 'flip_vertical', 'trim_y_start', 'frame_type_source')
+    keys = ('overscan_start_column', 'detector_split_row', 'detector_split_col', 'flip_vertical', 'trim_y_start', 'frame_type_source')
     vals = []
     for path in (working, packaged):
         cp = configparser.ConfigParser(interpolation=None)

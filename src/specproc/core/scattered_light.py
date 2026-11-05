@@ -266,120 +266,88 @@ class BackgroundRemover:
 
         return background
 
-    # 分区估算背景并组合模型
+    # 按读出门分区(最多 2x2 块)分别估算背景再合并
     def _estimate_background_split_halves(self, image: np.ndarray, order_mask: np.ndarray,
                                           order: int, method: str,
                                           smooth_sigma: float, sigma_clip: float,
                                           maxiters: int, bspline_smooth: float,
                                           split_row: int = 0,
+                                          split_col: int = 0,
                                           clip_mode: str = 'both',
                                           kernel_sigma_x: float = 15.0,
                                           kernel_sigma_y: float = 15.0,
                                           spline_smooth_factor: float = 1.0,
                                           spline_post_smooth_x: float = 5.0,
-                                          ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Estimate background separately for upper/lower detector halves.
+                                          ) -> np.ndarray:
+        """Estimate the background independently in each amplifier region and merge.
 
         Args:
-            split_row: 1-based detector row dividing the two amplifier halves.
-                       0 = single-amplifier detector (no split); negative falls back to rows//2.
+            split_row: 1-based first row of the upper amplifier region; <= 0 means no split along rows.
+            split_col: 1-based first column of the right amplifier region; <= 0 means no split along columns.
             clip_mode: 'both' (symmetric), 'upper' (reject bright outliers only),
                        or 'lower' (reject faint outliers only).
-            kernel_sigma_x, kernel_sigma_y: Gaussian kernel σ for 'convolution' method.
+            kernel_sigma_x, kernel_sigma_y: Gaussian kernel sigma for 'convolution' method.
             spline_smooth_factor: Smoothing factor multiplier for 'column_spline' method.
-            spline_post_smooth_x: Horizontal Gaussian σ for post-smoothing in 'column_spline' method.
+            spline_post_smooth_x: Horizontal Gaussian sigma for post-smoothing in 'column_spline' method.
         """
         rows, cols = image.shape
 
-        # --- Convolution method: runs on the full image (no split) ---
-        if method == 'convolution':
-            logger.info(f"Background convolution: Gaussian kernel σ_x={kernel_sigma_x:.1f}, "
-                        f"σ_y={kernel_sigma_y:.1f}")
-            background = self._estimate_background_convolution(
-                image, order_mask,
-                kernel_sigma_x=kernel_sigma_x, kernel_sigma_y=kernel_sigma_y,
-                sigma_clip=sigma_clip, maxiters=maxiters, clip_mode=clip_mode,
-            )
-            # Use the configured detector split row (1-based → 0-based index).
-            split = (split_row - 1) if 0 < split_row <= rows else rows // 2
-            split = max(1, min(split, rows - 1))
-            model_lower = background[:split, :]
-            model_upper = background[split:, :]
-            return background, model_lower, model_upper
+        def edges(split, n):
+            return [0, split - 1, n] if 1 < split <= n else [0, n]
 
-        # --- Column-wise 1D spline method: runs on the full image (no split) ---
-        if method == 'column_spline':
-            logger.info(f"Background column_spline: smooth_factor={spline_smooth_factor:.3f}, "
-                        f"post_smooth_σ_x={spline_post_smooth_x:.1f}")
-            background = self._estimate_background_column_spline(
-                image, order_mask,
-                spline_smooth_factor=spline_smooth_factor,
-                post_smooth_sigma_x=spline_post_smooth_x,
-                sigma_clip=sigma_clip, maxiters=maxiters, clip_mode=clip_mode,
-            )
-            split = (split_row - 1) if 0 < split_row <= rows else rows // 2
-            split = max(1, min(split, rows - 1))
-            model_lower = background[:split, :]
-            model_upper = background[split:, :]
-            return background, model_lower, model_upper
+        row_edges = edges(split_row, rows)
+        col_edges = edges(split_col, cols)
+        background = np.zeros((rows, cols), dtype=np.float64)
 
-        # --- Polynomial / B-spline / smooth: per-half fitting ---
-        # split_row == 0 means a single-amplifier detector: fit the whole frame at once.
-        background = np.zeros_like(image, dtype=np.float64)
-        if split_row == 0:
-            model_lower = np.zeros((rows, cols), dtype=np.float64)
-            model_upper = np.zeros((0, cols), dtype=np.float64)
-            halves = [(0, rows, "lower")]
-        else:
-            # Use the configured detector split row (1-based -> 0-based index).
-            split = (split_row - 1) if 0 < split_row <= rows else rows // 2
-            split = max(1, min(split, rows - 1))
-            model_lower = np.zeros((split, cols), dtype=np.float64)
-            model_upper = np.zeros((rows - split, cols), dtype=np.float64)
-            halves = [
-                (0, split, "lower"),
-                (split, rows, "upper"),
-            ]
-        for y0, y1, label in halves:
-            sub = image[y0:y1, :].astype(np.float64)
-            sub_mask = order_mask[y0:y1, :]
-            valid = ~sub_mask
+        for r0, r1 in zip(row_edges[:-1], row_edges[1:]):
+            for c0, c1 in zip(col_edges[:-1], col_edges[1:]):
+                label = f"rows {r0 + 1}-{r1}, cols {c0 + 1}-{c1}"
+                sub = image[r0:r1, c0:c1].astype(np.float64)
+                sub_mask = order_mask[r0:r1, c0:c1]
+                valid = ~sub_mask
 
-            sampled = sub.copy()
-            sampled[sub_mask] = np.nan
+                if method == 'convolution':
+                    background[r0:r1, c0:c1] = self._estimate_background_convolution(
+                        sub, sub_mask,
+                        kernel_sigma_x=kernel_sigma_x, kernel_sigma_y=kernel_sigma_y,
+                        sigma_clip=sigma_clip, maxiters=maxiters, clip_mode=clip_mode)
+                    continue
+                if method == 'column_spline':
+                    background[r0:r1, c0:c1] = self._estimate_background_column_spline(
+                        sub, sub_mask,
+                        spline_smooth_factor=spline_smooth_factor,
+                        post_smooth_sigma_x=spline_post_smooth_x,
+                        sigma_clip=sigma_clip, maxiters=maxiters, clip_mode=clip_mode)
+                    continue
 
-            if np.mean(valid) < 0.03:
-                # Fallback in very dense order region: smooth heavily on unmasked
-                # values while leaving masked zones as NaN constraints.
-                logger.warning(
-                    f"Inter-order fraction too small in {label} half ({np.mean(valid):.4f}); "
-                    "using robust median-smoothed fallback background."
-                )
-                fill = np.nanmedian(sampled)
-                if not np.isfinite(fill):
-                    fill = float(np.nanmedian(sub))
-                tmp = np.where(np.isfinite(sampled), sampled, fill)
-                sub_bg = median_filter(tmp, size=31).astype(np.float64)
-            else:
-                sub_bg = estimate_background_region(
-                    sampled,
-                    order=order,
-                    valid_mask=valid,
-                    method=method,
-                    smooth_sigma=smooth_sigma,
-                    sigma_clip=sigma_clip,
-                    maxiters=maxiters,
-                    bspline_smooth=bspline_smooth,
-                    clip_mode=clip_mode,
-                ).astype(np.float64)
+                sampled = sub.copy()
+                sampled[sub_mask] = np.nan
+                if np.mean(valid) < 0.03:
+                    # Dense order region: smooth heavily on unmasked values.
+                    logger.warning(
+                        f"Inter-order fraction too small in region {label} ({np.mean(valid):.4f}); "
+                        "using robust median-smoothed fallback background."
+                    )
+                    fill = np.nanmedian(sampled)
+                    if not np.isfinite(fill):
+                        fill = float(np.nanmedian(sub))
+                    tmp = np.where(np.isfinite(sampled), sampled, fill)
+                    sub_bg = median_filter(tmp, size=31).astype(np.float64)
+                else:
+                    sub_bg = estimate_background_region(
+                        sampled,
+                        order=order,
+                        valid_mask=valid,
+                        method=method,
+                        smooth_sigma=smooth_sigma,
+                        sigma_clip=sigma_clip,
+                        maxiters=maxiters,
+                        bspline_smooth=bspline_smooth,
+                        clip_mode=clip_mode,
+                    ).astype(np.float64)
+                background[r0:r1, c0:c1] = sub_bg
 
-            background[y0:y1, :] = sub_bg
-            if label == "lower":
-                model_lower[:, :] = sub_bg
-            else:
-                model_upper[:, :] = sub_bg
-
-        return background, model_lower, model_upper
+        return background
 
 # 构建加宽且保留级次谷值的掩膜
 def create_widened_mask(apertures: ApertureSet, flat_data: np.ndarray, margin: int,
@@ -499,7 +467,8 @@ def process_background_stage(science_image: np.ndarray,
                              n_mask_below: int = 4,
                              n_mask_above: int = 4,
                              clip_mode: str = 'upper',
-                             split_row: int = 2068,
+                             split_row: int = 0,
+                             split_col: int = 0,
                              kernel_sigma_x: float = 40.0,
                              kernel_sigma_y: float = 15.0,
                              spline_smooth_factor: float = 1.0,
@@ -536,12 +505,12 @@ def process_background_stage(science_image: np.ndarray,
     sampled_background = science_image.astype(np.float64).copy()
     sampled_background[order_mask] = np.nan
 
-    background, model_lower, model_upper = remover._estimate_background_split_halves(
+    background = remover._estimate_background_split_halves(
         science_image, order_mask,
         order=poly_order, method=bg_method,
         smooth_sigma=smooth_sigma, sigma_clip=sigma_clip_val,
         maxiters=maxiters, bspline_smooth=bspline_smooth,
-        split_row=split_row, clip_mode=clip_mode,
+        split_row=split_row, split_col=split_col, clip_mode=clip_mode,
         kernel_sigma_x=kernel_sigma_x, kernel_sigma_y=kernel_sigma_y,
         spline_smooth_factor=spline_smooth_factor,
         spline_post_smooth_x=spline_post_smooth_x,

@@ -109,6 +109,7 @@ class SlitPipeline:
         self.identification_override = None
         self._written_arc_wave = set()
         self.cosmic = c.get_bool('reduce', 'cosmic_enabled', True)
+        self.detector_split_col = c.get_int('data', 'detector_split_col', 0)
 
     # ------------------------------------------------------------------ I/O
     # 读取图像并处理方向与过扫描区域。
@@ -133,7 +134,8 @@ class SlitPipeline:
             sections = [(start, min(end, data.shape[1]))
                         for start, end in sections if start < data.shape[1]]
             profiles = []
-            split = data_region.shape[1] // 2
+            split_col = self.detector_split_col
+            split = split_col - 1 if 0 < split_col <= data_region.shape[1] else data_region.shape[1] // 2
             for index, (start, end) in enumerate(sections):
                 overscan = data[:, start:end]
                 profile = np.array([

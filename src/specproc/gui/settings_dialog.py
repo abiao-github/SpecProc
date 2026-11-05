@@ -223,14 +223,21 @@ class SettingsDialog(QDialog):
 
         self.detector_split_row_spin = QSpinBox()
         self.detector_split_row_spin.setRange(-1, 20000)
-        self.detector_split_row_spin.setSpecialValueText("Auto (rows/2)")
+        self.detector_split_row_spin.setSpecialValueText("No split")
         self.detector_split_row_spin.setToolTip(
-            "Detector amplifier split row (1-based).\n"
-            "Divides the CCD into lower and upper readout halves.\n"
-            "Used by overscan correction and step 3 background fitting.\n"
-            "For Xinglong 216 HRS 4136-row CCD: 2068. 0 = single amplifier (no split); -1 = auto (rows/2)."
+            "First row (1-based) of the upper amplifier region.\n"
+            "0 or negative: no split along rows. Used by step 3 background fitting."
         )
         overscan_layout.addRow("Amplifier Split Row:", self.detector_split_row_spin)
+
+        self.detector_split_col_spin = QSpinBox()
+        self.detector_split_col_spin.setRange(-1, 20000)
+        self.detector_split_col_spin.setSpecialValueText("No split")
+        self.detector_split_col_spin.setToolTip(
+            "First column (1-based) of the right amplifier region.\n"
+            "0 or negative: no split along columns. Used by step 3 background fitting."
+        )
+        overscan_layout.addRow("Amplifier Split Column:", self.detector_split_col_spin)
 
         overscan_group.setLayout(overscan_layout)
         layout.addRow(overscan_group)
@@ -768,7 +775,8 @@ class SettingsDialog(QDialog):
         self.overscan_smooth_window_spin.setValue(self.config.get_int('data', 'overscan_smooth_window', -1))
         self.overscan_poly_type_combo.setCurrentText(self.config.get('data', 'overscan_poly_type', 'legendre'))
         self.overscan_poly_order_spin.setValue(self.config.get_int('data', 'overscan_poly_order', 3))
-        self.detector_split_row_spin.setValue(self.config.get_int('data', 'detector_split_row', 2068))
+        self.detector_split_row_spin.setValue(self.config.get_int('data', 'detector_split_row', 0))
+        self.detector_split_col_spin.setValue(self.config.get_int('data', 'detector_split_col', 0))
         # Update enabled state of overscan params based on selected method
         self._update_overscan_params_enabled()
         self.bias_combine_method_combo.setCurrentText(self.config.get('reduce.bias', 'combine_method', 'median'))
@@ -855,6 +863,7 @@ class SettingsDialog(QDialog):
             self.config.set('data', 'overscan_poly_type', self.overscan_poly_type_combo.currentText())
             self.config.set('data', 'overscan_poly_order', str(self.overscan_poly_order_spin.value()))
             self.config.set('data', 'detector_split_row', str(self.detector_split_row_spin.value()))
+            self.config.set('data', 'detector_split_col', str(self.detector_split_col_spin.value()))
             self.config.set('reduce.bias', 'combine_method', self.bias_combine_method_combo.currentText())
             self.config.set('reduce.bias', 'combine_sigma', str(self.bias_combine_sigma_spin.value()))
             self.config.set('reduce.flat', 'combine_method', self.flat_combine_method_combo.currentText())

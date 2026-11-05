@@ -361,6 +361,17 @@ def _profile_from_inputs(inputs: Sequence[str]) -> Optional[str]:
     return None
 
 
+def _telescope_name(cfg_path: Path) -> str:
+    """Read telescope.name from a config file ('' if unavailable)."""
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(cfg_path, encoding='utf-8')
+        return cp.get('telescope', 'name', fallback='').strip().lower()
+    except Exception:
+        return ''
+
+
 # 将所选默认配置复制到当前目录。
 def copy_default_config_to_cwd(target_filename: Optional[str] = None,
                                 profile: Optional[str] = None) -> Path:
@@ -521,6 +532,11 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
             profile_path = resolve_telescope_profile(profile)
             target = Path.cwd() / (profile_path.name if profile_path else 'specproc.cfg')
             legacy_target = Path.cwd() / 'specproc.cfg'
+            if (legacy_target.exists() and not target.exists() and profile_path is not None
+                    and _telescope_name(legacy_target) != _telescope_name(profile_path)):
+                print(f'Ignoring ./{legacy_target.name}: it belongs to a different telescope '
+                      f'than profile {profile}; using a fresh profile copy.')
+                legacy_target = target
             if target.exists() or legacy_target.exists():
                 target = target if target.exists() else legacy_target
                 print(f'Using existing working config: ./{target.name} '

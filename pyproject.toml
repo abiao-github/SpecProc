@@ -1,10 +1,12 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "SpecProc"
-version = "1.0.0"
+# 版本号唯一来源：src/specproc/__init__.py 里的 __version__
+# 发版时只改那一处，打包/CLI --version/PyPI 三处自动一致。
+dynamic = ["version"]
 description = "A spectral processing tool"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -27,8 +29,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/specproc"
-Repository = "https://github.com/yourusername/specproc"
+Homepage = "https://github.com/abiao-github/SpecProc"
+Repository = "https://github.com/abiao-github/SpecProc"
+Releases = "https://github.com/abiao-github/SpecProc/releases"
 
 [project.scripts]
 specproc = "specproc.main:main"
@@ -39,6 +42,9 @@ specproc = "specproc.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["specproc*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "specproc.__version__"}
 
 [tool.setuptools.package-data]
 # 声明将 calib_data 及其子目录下的文件一并打包

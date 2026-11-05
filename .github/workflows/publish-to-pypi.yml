@@ -2,7 +2,13 @@ name: Publish to PyPI
 
 on:
   release:
-    types: [published]
+    types: [published]        # 在 GitHub 上「发布」一个 release 时自动触发
+  workflow_dispatch:          # 允许手动重跑（Actions 页面 → Run workflow，填 tag）
+    inputs:
+      tag:
+        description: "要发布的 tag，例如 v1.0.1"
+        required: true
+        type: string
 
 jobs:
   pypi-publish:
@@ -13,18 +19,73 @@ jobs:
       contents: read             # checkout 代码所需
       id-token: write            # 关键：Trusted Publishing (OIDC) 必需
     steps:
+      - name: Determine release ref
+        id: ref
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "release_ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "将发布的 ref: $REF"
+
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.ref.outputs.release_ref }}
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
+      # 版本号唯一来源是 src/specproc/__init__.py 的 __version__
+      - name: Read package version
+        id: pkg
+        run: |
+          VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); import specproc; print(specproc.__version__)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "包版本: $VERSION"
+
+      # 关键防线：版本号和 tag 不一致就直接失败，绝不让旧版本「假成功」
+      - name: Check version matches release tag
+        run: |
+          set -euo pipefail
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          TAG="${{ steps.ref.outputs.release_ref }}"
+          TAG_VERSION="${TAG#v}"
+          echo "包版本      = $PKG_VERSION"
+          echo "release tag = $TAG"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error title=版本号与 tag 不一致::包版本是 $PKG_VERSION，而 release tag 是 $TAG。请先把 src/specproc/__init__.py 的 __version__ 改成 ${TAG_VERSION} 并推送到该 tag，再重新发布，否则 PyPI 上不会出现新版本。"
+            exit 1
+          fi
+
       - name: Build package
         run: |
           python -m pip install --upgrade build
           python -m build
+          ls -l dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          skip-existing: true   # 让重跑变成“幂等”操作，已存在的文件自动跳过
+          skip-existing: true   # 重跑时已上传的文件自动跳过（部分失败可断点续传）
+
+      # 即使上一步「跳过」了，这里也能发现「其实什么也没上传」
+      - name: Verify the version is really on PyPI
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.pkg.outputs.version }}"
+          python - <<PY
+          import json, sys, time, urllib.request
+
+          version = "$VERSION"
+          url = f"https://pypi.org/pypi/specproc/{version}/json"
+          for attempt in range(1, 13):
+              try:
+                  with urllib.request.urlopen(url, timeout=20) as resp:
+                      files = sorted(f["filename"] for f in json.load(resp)["urls"])
+                  print(f"OK: PyPI 已收录 {version} -> {files}")
+                  break
+              except Exception as exc:
+                  print(f"[{attempt}/12] 查不到 {version}: {exc}")
+                  time.sleep(10)
+          else:
+              sys.exit(f"FAILED: PyPI 上找不到 {version}，本次发布没有真正生效（多半是全被 skip-existing 跳过了）")
+          PY

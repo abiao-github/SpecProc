@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from astropy.io import fits
 
+from specproc import __version__
 from specproc.config.config_manager import (
     ConfigManager,
     list_telescope_profiles,
@@ -491,7 +492,7 @@ def main(config_path: Optional[str] = None, mode: Optional[str] = None,
                              'eval "$(specproc --completion bash)"')
     parser.add_argument('inputs', nargs='*',
                         help='FITS files or directories (CLI mode). If omitted, current directory is used.')
-    parser.add_argument('--version', action='version', version='SpecProc 1.0.0')
+    parser.add_argument('--version', action='version', version=f'SpecProc {__version__}')
     args = parser.parse_args(args_list)
 
     if args.completion:

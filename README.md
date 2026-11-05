@@ -71,7 +71,7 @@ specproc
 
 ### Method 2: Using conda
 
-Conda provides a complete environment with all dependencies. Two installation options:
+conda is a good fit when you want an isolated environment. SpecProc is **not published on conda-forge**, so the recipe is: create the conda environment, then `pip install` the package into it.
 
 #### Option 2.1: Install in existing conda environment
 
@@ -79,8 +79,8 @@ Conda provides a complete environment with all dependencies. Two installation op
 # Activate your conda environment
 conda activate your_environment
 
-# Install SpecProc from conda-forge
-conda install -c conda-forge specproc
+# Install SpecProc with pip
+pip install specproc
 
 # Launch application
 specproc
@@ -90,11 +90,12 @@ specproc
 
 ```bash
 # Create new conda environment for SpecProc
-conda create -n specproc python=3.8
+conda create -n specproc python=3.11
 conda activate specproc
 
-# Install SpecProc and all dependencies
-conda install -c conda-forge specproc
+# Scientific/GUI dependencies from conda, SpecProc itself from pip
+conda install -c conda-forge numpy scipy astropy matplotlib pyqt -y
+pip install specproc
 
 # Launch application
 specproc
@@ -102,7 +103,7 @@ specproc
 
 **Notes:**
 - Recommended for users who want an isolated environment
-- All dependencies are managed by conda
+- Core dependencies are managed by conda; SpecProc itself is installed with pip
 - Python 3.7-3.11 are supported
 
 ### Method 3: Installing from Source
@@ -173,8 +174,8 @@ specproc --config ./specproc.cfg
 │   │   ├── overscan_corrected/ # Overscan-corrected images and diagnostic plots
 │   │   ├── bias_subtracted/    # Master bias and bias-corrected images
 │   │   └── cosmic_corrected/   # Cosmic ray corrected science images (if enabled)
-│   ├── step2_flat/             # Step 2: Master flat field, blaze profiles, and diagnostic plots
-│   ├── step3_background/       # Step 3: Background model and diagnostic plots
+│   ├── step2_trace/            # Step 2: Master flat field, blaze profiles, and diagnostic plots
+│   ├── step3_scatterlight/     # Step 3: Background model and diagnostic plots
 │   ├── step5_extraction/       # Step 5: Extracted 1D spectra and diagnostic plots
 │   ├── step6_deblazing/        # Step 6: De-blazed spectra and diagnostic plots (if saved)
 │   └── step7_wavelength/       # Step 7: Final wavelength calibrated 1D spectra and plots
@@ -252,12 +253,13 @@ rawdata_path = ./20241102_hrs
 #   │   ├── overscan_corrected/ # Overscan-corrected images
 #   │   ├── bias_subtracted/    # Master bias and bias-corrected images
 #   │   └── cosmic_corrected/   # Cosmic ray corrected science images (if enabled)
-#   ├── step2_flat/             # Step 2: Master flat field with blaze profiles
-#   ├── step3_background/       # Step 3: Background model
+#   ├── step2_trace/            # Step 2: Master flat field with blaze profiles
+#   ├── step3_scatterlight/     # Step 3: Background model
 #   ├── step5_extraction/       # Step 5: Extracted 1D spectra (pixel space)
 #   ├── step6_deblazing/        # Step 6: De-blazed spectra (if saved)
 #   └── step7_wavelength/       # Step 7: Final wavelength calibrated 1D spectra
 output_path = output
+```
 
 #### Path Examples
 
@@ -297,8 +299,8 @@ Control which processing steps to save intermediate results:
 # Default is 'yes' for all steps
 save_overscan = yes        # Step 1: Overscan correction (saves to output/step1_basic/overscan_corrected/)
 save_bias = yes             # Step 1: Bias correction (saves to output/step1_basic/bias_subtracted/)
-save_flat = yes              # Step 2: Flat fielding (saves master flat to output/step2_flat/)
-save_background = yes        # Step 3: Background subtraction (saves model to output/step3_background/)
+save_flat = yes              # Step 2: Flat fielding (saves master flat to output/step2_trace/)
+save_background = yes        # Step 3: Background subtraction (saves model to output/step3_scatterlight/)
 save_cosmic = yes           # Step 1: Cosmic ray correction (saves to output/step1_basic/cosmic_corrected/)
 save_extraction = yes       # Step 5: Spectrum extraction (saves to output/step5_extraction/)
 save_deblaze = yes          # Step 6: De-blazing (saves to output/step6_deblazing/)
@@ -307,7 +309,7 @@ save_wlcalib = yes          # Step 7: Wavelength calibration (saves solution to 
 
 **Effect**:
 - If a step is set to `no`, the corresponding output subdirectory will NOT be created
-- Final spectra are always saved to `output/step8_final_spectra/` regardless of these settings
+- Final spectra are always saved to `output/step8_stitching/` regardless of these settings
 - Diagnostic plots can be saved in corresponding step subdirectories
 - In GUI, there should be corresponding checkboxes to enable/disable saving
 - Default: All steps save intermediate results
@@ -333,13 +335,11 @@ linelist_path = calib_data/linelists/
 # For Xinglong 2.16m HRS: thar-noao.dat is recommended
 linelist_file = thar-noao.dat
 
-# Use pre-identified calibration files (optional)
-use_precomputed_calibration = yes
-calibration_path = calib_data/telescopes/xinglong216hrs/
+# Use pre-identified anchor lines (optional)
+anchor_file = calib_data/telescopes/xinglong216hrs/xinglong216_thar_anchors.csv
 
-# Specific calibration file to use (optional)
-# Use latest: wlcalib_20211123011_A.fits
-calibration_file = wlcalib_20211123011_A.fits
+# Full lamp catalogue used for the final wavelength fit
+full_linelist = calib_data/linelists/thar-noao.dat
 ```
 
 ## Processing Pipeline
@@ -417,6 +417,13 @@ calibration_file = wlcalib_20211123011_A.fits
 - **Output**: Wavelength-calibrated 1D spectra
 - **Note**: Establishes the physical wavelength scale for each order.
 
+#### STEP 8: Order Stitching
+- **Input**: Wavelength-calibrated spectra of all orders
+- **Processing**:
+  - Overlap neighbouring orders in the common wavelength range
+  - Combine them with an SNR-weighted average
+- **Output**: One continuous, stitched 1D spectrum
+- **Note**: Produces the final science-ready 1D spectrum for absorption-line analysis.
 
 ## Usage
 
@@ -590,7 +597,7 @@ The same engine runs headless with `--auto`:
 specproc identify \
     --lamp output/step5_extraction/RR2000V_FeAr_0.8silt_0.2s_1_pixel.fits \
     --ref src/specproc/calib_data/linelists/fear.fits \
-    --linelist  src/specproc/calib_data/linelists/fear.txt \
+    --linelist  src/specproc/calib_data/linelists/fear.dat \
     --output    src/specproc/calib_data/telescopes/mstg193slit/mstg193slit_anchors_R.csv \
     --plot      docs/mstg193slit_R_anchor_match.pdf
 # MSTG arm is read from the FITS header (TELESCOP=MOST and
@@ -661,20 +668,24 @@ eval "$(specproc --completion zsh)"
 
 ### Directory Structure
 
-```
+Calibration data ships with the package under `src/specproc/calib_data/`:
+
+```text
 calib_data/
-├── linelists/              # Lamp emission line catalogs
-│   ├── thar-noao.dat      # ThAr lamp lines (Xinglong 2.16m HRS recommended)
-│   ├── thar.dat           # Standard ThAr lamp lines
-│   ├── fear.txt           # FeAr lamp line list (Willmarth)
-│   └── fear.fits          # FeAr atlas spectrum (NOIRLAB/KPNO)
-└── telescopes/             # Telescope-specific calibration files
-    ├── generic/           # Generic configuration template
-    └── xinglong216hrs/    # Xinglong 2.16m telescope
-        ├── wlcalib_20141103049.fits
-        ├── wlcalib_20171202012.fits
-        ├── wlcalib_20190905028_A.fits
-        └── wlcalib_20211123011_A.fits
+├── linelists/                  # Lamp emission line lists / atlases
+│   ├── thar-noao.dat           # ThAr lamp lines (Xinglong 2.16m HRS recommended)
+│   ├── thar.dat                # Standard ThAr lamp lines
+│   ├── fear.dat                # FeAr lamp line list (Willmarth)
+│   ├── fear.fits               # NOIRLAB/KPNO FeAr atlas spectrum (used by `specproc identify`)
+│   ├── argon.dat / xenon.dat / krypton.dat / thorium.dat
+│   └── skylines.dat / ohline.dat and other auxiliary lists
+└── telescopes/                 # Telescope-specific calibration files
+    ├── generic/                # Generic configuration template
+    ├── xinglong216hrs/         # Xinglong 2.16m HRS: xinglong216_thar_anchors.csv
+    ├── xinglong216bfosc/       # Xinglong 2.16m BFOSC
+    ├── lijiang24hrs/           # Lijiang 2.4m HRS: lijiang24_hrs_thar_anchors.csv
+    ├── mstg193slit/            # Muztagh-Ata 1.93m slit: mstg193slit_anchors_{R,B}.csv
+    └── nanshan12/              # Nanshan 1.2m fibre: nanshan-thar-{high,mid,low}res.txt
 ```
 
 ### Lamp Line Lists
@@ -682,7 +693,7 @@ calib_data/
 **Available linelist files**:
 - `thar-noao.dat` - ThAr lamp lines (Xinglong 2.16m HRS recommended)
 - `thar.dat` - Standard ThAr lamp lines
-- `fear.txt` - FeAr lamp lines (Willmarth 3000-10,000 Å)
+- `fear.dat` - FeAr lamp lines (Willmarth 3000-10,000 Å)
 - `fear.fits` - NOIRLAB/KPNO FeAr atlas spectrum used by `specproc identify`
 
 **Supported lamp types**:
@@ -695,11 +706,15 @@ calib_data/
 
 ### Telescope Calibrations
 
-**Available calibration files for Xinglong 2.16m HRS**:
-- `wlcalib_20141103049.fits` - 2014-11-03 04:50
-- `wlcalib_20171202012.fits` - 2017-12-02 01:20
-- `wlcalib_20190905028_A.fits` - 2019-09-05 02:50 (version A)
-- `wlcalib_20211123011_A.fits` - 2021-11-23 01:10 (version A) - **Latest**
+Each telescope directory holds the **anchor tables** (already-identified pixel/wavelength
+pairs) plus the matching identification notes:
+
+| Telescope | Files |
+|---|---|
+| Xinglong 2.16m HRS | `xinglong216_thar_anchors.csv` (+ 216HRS lamp identification PDF) |
+| Lijiang 2.4m HRS | `lijiang24_hrs_thar_anchors.csv` (+ Lijiang 2.4m lamp calibration PDF) |
+| Muztagh-Ata 1.93m slit | `mstg193slit_anchors_R.csv` / `mstg193slit_anchors_B.csv` (each with a PDF) |
+| Nanshan 1.2m fibre | `nanshan-thar-highres.txt` / `-medres.txt` / `-lowres.txt` (order, wavelength, normalised flux) |
 
 ### Configuration
 
@@ -712,9 +727,8 @@ instrument = hrs
 linelist_type = ThAr
 linelist_path = calib_data/linelists/
 linelist_file = thar-noao.dat
-use_precomputed_calibration = yes
-calibration_path = calib_data/telescopes/xinglong216hrs/
-calibration_file = wlcalib_20211123011_A.fits
+full_linelist = calib_data/linelists/thar-noao.dat
+anchor_file = calib_data/telescopes/xinglong216hrs/xinglong216_thar_anchors.csv
 ```
 
 ## Troubleshooting

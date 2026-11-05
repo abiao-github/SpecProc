@@ -110,6 +110,7 @@ class SlitPipeline:
         self._written_arc_wave = set()
         self.cosmic = c.get_bool('reduce', 'cosmic_enabled', True)
         self.detector_split_col = c.get_int('data', 'detector_split_col', 0)
+        self.detector_split_row = c.get_int('data', 'detector_split_row', 0)
 
     # ------------------------------------------------------------------ I/O
     # 读取图像并处理方向与过扫描区域。
@@ -120,51 +121,64 @@ class SlitPipeline:
         self._last_overscan_profile = None
         self._last_raw = data.copy()
         if self.overscan_start > 0 and data.shape[1] >= self.overscan_start:
-            rows = np.arange(data.shape[0], dtype=float)
+            height, width = data.shape
             data_end = self.overscan_start - 1
             data_region = data[:, :data_end]
+
+            # Amplifier regions: up to 2x2 blocks defined by detector_split_row / detector_split_col
+            sr, sc = self.detector_split_row, self.detector_split_col
+            row_edges = [0, sr - 1, height] if 1 < sr <= height else [0, height]
+            col_edges = [0, sc - 1, data_end] if 1 < sc <= data_end else [0, data_end]
+            n_col = len(col_edges) - 1
+
             sections = []
             for key in ('BIASSEC1', 'BIASSEC2'):
                 match = re.match(r'\[(\d+):(\d+),', str(header.get(key, '')))
                 if match:
-                    sections.append((int(match.group(1)) - 1,
-                                     int(match.group(2))))
+                    sections.append((int(match.group(1)) - 1, int(match.group(2))))
             if not sections:
-                sections = [(self.overscan_start + 3, data.shape[1])]
-            sections = [(start, min(end, data.shape[1]))
-                        for start, end in sections if start < data.shape[1]]
-            profiles = []
-            split_col = self.detector_split_col
-            split = split_col - 1 if 0 < split_col <= data_region.shape[1] else data_region.shape[1] // 2
-            for index, (start, end) in enumerate(sections):
-                overscan = data[:, start:end]
-                profile = np.array([
-                    sigma_clipped_stats(row, sigma=3.0, maxiters=5)[0]
-                    for row in overscan
-                ])
-                if self.overscan_method == 'mean_savgol' and len(rows) >= 5:
-                    window = self.overscan_smooth_window
-                    if window < 1:
-                        window = max(5, len(rows) // 5)
-                    window = min(window, len(rows) if len(rows) % 2 else len(rows) - 1)
-                    if window % 2 == 0:
-                        window -= 1
-                    window = max(5, window)
-                    level = savgol_filter(profile, window, min(self.overscan_poly_order, window - 1))
-                elif self.overscan_method in ('mean_polynomial', 'polynomial'):
-                    order = min(self.overscan_poly_order, max(0, len(rows) - 1))
-                    coord = np.linspace(-1.0, 1.0, len(rows))
-                    coeff = np.polynomial.legendre.legfit(coord, profile, order)
-                    level = np.polynomial.legendre.legval(coord, coeff)
-                else:
-                    level = profile
-                profiles.append((rows, profile, np.asarray(level)))
-                if index == 0:
-                    data_region[:, :split] -= level[:, None]
-                else:
-                    data_region[:, split:] -= level[:, None]
-            self._last_overscan_profile = profiles
-            self._last_overscan_split = split
+                sections = [(self.overscan_start + 3, width)]
+            sections = [(a, min(b, width)) for a, b in sections if a < width]
+            if n_col == 1:
+                ov_cols = [(min(a for a, _ in sections), max(b for _, b in sections))]
+            elif len(sections) >= n_col:
+                ov_cols = sections[:n_col]
+            else:
+                lo, hi = sections[0][0], sections[-1][1]
+                step = (hi - lo) / n_col
+                ov_cols = [(lo + int(round(i * step)), lo + int(round((i + 1) * step))) for i in range(n_col)]
+
+            blocks = []
+            for ri, (r0, r1) in enumerate(zip(row_edges[:-1], row_edges[1:])):
+                rows = np.arange(r1 - r0, dtype=float)
+                for ci, (c0, c1) in enumerate(zip(col_edges[:-1], col_edges[1:])):
+                    a, b = ov_cols[ci]
+                    overscan = data[r0:r1, a:b]
+                    profile = np.array([sigma_clipped_stats(row, sigma=3.0, maxiters=5)[0] for row in overscan])
+                    info = {'raw': profile}
+                    if self.overscan_method == 'mean_savgol' and len(rows) >= 5:
+                        window = self.overscan_smooth_window
+                        if window < 1:
+                            window = max(5, len(rows) // 5)
+                        window = min(window, len(rows) if len(rows) % 2 else len(rows) - 1)
+                        if window % 2 == 0:
+                            window -= 1
+                        window = max(5, window)
+                        level = savgol_filter(profile, window, min(self.overscan_poly_order, window - 1))
+                        info.update(smoothed=level, window_length=window, polyorder=self.overscan_poly_order)
+                    elif self.overscan_method in ('mean_polynomial', 'polynomial'):
+                        order = min(self.overscan_poly_order, max(0, len(rows) - 1))
+                        coord = np.linspace(-1.0, 1.0, len(rows))
+                        coeff = np.polynomial.legendre.legfit(coord, profile, order)
+                        level = np.polynomial.legendre.legval(coord, coeff)
+                        info.update(fitted=level, poly_order=order, poly_type='legendre')
+                    else:
+                        level = profile
+                    data_region[r0:r1, c0:c1] -= np.asarray(level)[:, None]
+                    blocks.append({'row_block': ri, 'col_block': ci, 'row_range': (r0 + 1, r1),
+                                   'col_range': (c0 + 1, c1), 'profile': info})
+            self._last_overscan_profile = {'blocks': blocks, 'n_row_blocks': len(row_edges) - 1,
+                                           'n_col_blocks': n_col, 'method': self.overscan_method}
             data = data_region
         if self.dispersion_axis == 'x':
             data = data.T
@@ -173,52 +187,9 @@ class SlitPipeline:
     def _plot_overscan_profile(self, path: Path, profile, title: str):
         if not self.save_plots or not profile:
             return
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        from specproc.plotting.spectra_plotter import plot_overscan_profile
         path.parent.mkdir(parents=True, exist_ok=True)
-        method = self.overscan_method
-        if method == 'mean_savgol':
-            method_title = f' - mean_savgol (order={self.overscan_poly_order})'
-        elif method in ('mean_polynomial', 'polynomial'):
-            method_title = (f' - mean_polynomial (legendre, '
-                            f'order={self.overscan_poly_order})')
-        else:
-            method_title = ' - mean_only'
-        # Only smoothing/fitting produces a model curve; mean_only is points only
-        has_model = method != 'mean_only' and method in (
-            'mean_savgol', 'mean_polynomial', 'polynomial')
-        if has_model:
-            fig, (ax, ax_res) = plt.subplots(
-                2, 1, figsize=(10, 8), sharex=True,
-                gridspec_kw={'height_ratios': [3, 1]})
-        else:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax_res = None
-        # Both gates share the same row axis
-        for name, colour, (rows, measured, model) in zip(
-                ('Left', 'Right'), ('tab:blue', 'tab:orange'), profile):
-            ax.plot(rows + 1, measured, '.', color=colour, alpha=0.5, ms=4,
-                    label=f'{name} overscan')
-            if has_model:
-                ax.plot(rows + 1, model, '-', color='tab:red' if name == 'Left' else 'tab:green',
-                        lw=2, label=f'{name} model')
-                ax_res.plot(rows + 1, measured - model, '.', color=colour,
-                            alpha=0.6, ms=3, label=name)
-        split = getattr(self, '_last_overscan_split', None)
-        if split and len(profile) > 1:
-            ax.plot([], [], ' ', label=f'Split at column {split} (Left | Right gates)')
-        ax.set_ylabel('Overscan level (ADU)')
-        ax.set_title(f'{title}{method_title}')
-        ax.legend(loc='best')
-        last = ax_res if ax_res is not None else ax
-        if ax_res is not None:
-            ax_res.axhline(0, color='gray', lw=0.8)
-            ax_res.set_ylabel('Residual')
-            ax_res.legend(loc='best', fontsize=7)
-        last.set_xlabel('Row')
-        fig.savefig(Path(str(path) + '.pdf'), bbox_inches='tight')
-        plt.close(fig)
+        plot_overscan_profile(profile, str(path) + '.' + self.fig_format, title=title)
 
     # 保存浮点图像及其头信息。
     def _write(self, path: Path, data: np.ndarray, header: Optional[fits.Header] = None):

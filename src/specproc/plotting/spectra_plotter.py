@@ -194,6 +194,37 @@ def plot_overscan_corrected_image(image: np.ndarray, output_path: str,
     logger.info(f"Saved overscan-corrected image plot to {output_path}")
 
 
+# 按放大器分区绘制过扫描剖面(最多 2x2 块, 行号向上增大)。
+def _plot_overscan_profile_blocks(overscan_profile: dict, output_path: str, title: str):
+    n_r = overscan_profile.get('n_row_blocks', 1)
+    n_c = overscan_profile.get('n_col_blocks', 1)
+    fig, axes = plt.subplots(n_r, n_c, figsize=(6.5 * n_c, 4.2 * n_r), squeeze=False)
+    for blk in overscan_profile['blocks']:
+        ax = axes[n_r - 1 - blk['row_block'], blk['col_block']]
+        prof = blk['profile']
+        raw = np.asarray(prof.get('raw', []), dtype=float)
+        if raw.size == 0:
+            ax.set_title('no overscan data')
+            continue
+        r0, r1 = blk['row_range']
+        rows = np.arange(r0, r0 + raw.size)
+        ax.plot(rows, raw, 'b.', alpha=0.5, markersize=3, label='Raw (sigma-clipped mean)')
+        model = prof.get('fitted', prof.get('smoothed'))
+        if model is not None:
+            ax.plot(rows, model, 'r-', linewidth=1.8, label='Fit' if 'fitted' in prof else 'Savitzky-Golay')
+        c0, c1 = blk['col_range']
+        ax.set_title(f"rows {r0}-{r1}, cols {c0}-{c1}", fontsize=9)
+        ax.set_xlabel('Row (1-based)')
+        ax.set_ylabel('Overscan level (ADU)')
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=7)
+    fig.suptitle(f"{title} - {overscan_profile.get('method', '')}")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    logger.info(f"Saved overscan profile plot to {output_path}")
+
+
 # 绘制过扫描剖面及拟合残差。
 def plot_overscan_profile(overscan_profile: dict, output_path: str,
                          title: str = "Overscan Profile"):
@@ -208,6 +239,10 @@ def plot_overscan_profile(overscan_profile: dict, output_path: str,
         output_path: Path to save the plot
         title: Plot title
     """
+    if 'blocks' in overscan_profile:
+        _plot_overscan_profile_blocks(overscan_profile, output_path, title)
+        return
+
     method = overscan_profile.get('method', 'unknown')
     is_split = overscan_profile.get('split', False)
 

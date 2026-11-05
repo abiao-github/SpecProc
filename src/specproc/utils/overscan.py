@@ -105,85 +105,64 @@ class OverscanCorrector:
                               poly_order: int = 3,
                               smooth_window: int = None,
                               poly_type: str = 'legendre',
-                              split_vertically: bool = True) -> np.ndarray:
+                              split_row: int = 0,
+                              split_col: int = 0) -> np.ndarray:
         """
-        Estimate overscan bias from image.
-        
-        By default, splits the image into upper and lower halves for independent
-        processing (e.g., for CCDs with two readout amplifiers).
+        Estimate the overscan bias map, region by region for multi-amplifier CCDs.
+
+        The frame is divided into up to 2x2 amplifier regions. Each region is fitted
+        independently from its own overscan rows; the overscan columns are divided
+        evenly between regions that are side by side.
 
         Args:
             image: 2D CCD image array
             method: 'mean_only', 'mean_savgol', or 'mean_polynomial'
-                - 'mean_only': Just sigma-clipped mean, no smoothing
-                - 'mean_savgol': Sigma-clipped mean with Savitzky-Golay smoothing
-                - 'mean_polynomial': Sigma-clipped mean with polynomial fitting (IRAF style)
             poly_order: Polynomial order for polynomial fitting (default: 3)
-            smooth_window: Smoothing window size for Savitzky-Golay filter 
-                          (default: 1/5 of image height)
-            poly_type: Polynomial type for 'mean_polynomial' method
-                      Options: 'legendre', 'chebyshev', 'polynomial'
-            split_vertically: Split image into upper/lower halves for independent 
-                              processing (default: True)
+            smooth_window: Savitzky-Golay window (default: 1/5 of region height)
+            poly_type: 'legendre', 'chebyshev', or 'polynomial'
+            split_row: 1-based first row of the upper amplifier region; <= 0 means no split along rows
+            split_col: 1-based first column of the right amplifier region; <= 0 means no split along columns
 
         Returns:
-            2D overscan bias map
+            2D overscan bias map (same shape as image)
         """
-        logger.debug(f"Estimating overscan bias using method: {method}, split_vertically={split_vertically}")
+        height, width = image.shape
+        row_edges = [0, split_row - 1, height] if 1 < split_row <= height else [0, height]
+        col_edges = [0, split_col - 1, width] if 1 < split_col <= width else [0, width]
+        n_col = len(col_edges) - 1
+        logger.debug(f"Estimating overscan bias ({method}): row edges {row_edges}, col edges {col_edges}")
 
-        # Calculate default window size if not provided (1/5 of image height)
-        if smooth_window is None:
-            smooth_window = max(5, image.shape[0] // 5)
-            if smooth_window % 2 == 0:
-                smooth_window += 1
+        bias_map = np.zeros_like(image, dtype=float)
+        blocks = []
+        for ri, (r0, r1) in enumerate(zip(row_edges[:-1], row_edges[1:])):
+            band = image[r0:r1, :]
+            band_regions = self.extract_overscan_regions(band)
+            window = smooth_window if smooth_window is not None else max(5, (r1 - r0) // 5)
+            if window % 2 == 0:
+                window += 1
+            for ci, (c0, c1) in enumerate(zip(col_edges[:-1], col_edges[1:])):
+                regions = dict(band_regions)
+                if n_col > 1 and 'right' in regions:
+                    ov = regions['right']
+                    w = ov.shape[1]
+                    part = ov[:, ci * w // n_col:(ci + 1) * w // n_col]
+                    regions['right'] = part if part.shape[1] > 0 else ov
+                block = image[r0:r1, c0:c1]
+                self._current_profile = {}
+                bias_map[r0:r1, c0:c1] = self._estimate_single_bias(
+                    block, regions, method, window, poly_order, poly_type)
+                blocks.append({'row_block': ri, 'col_block': ci, 'row_range': (r0 + 1, r1),
+                               'col_range': (c0 + 1, c1), 'profile': dict(self._current_profile)})
 
-        if split_vertically and image.shape[0] > 1:
-            # Split into top and bottom halves for independent processing
-            # Note: numpy image[0,:] = ds9 row 1 (bottom), image[height-1,:] = ds9 row height (top)
-            # image[:mid_row,:] = image_bottom = ds9 bottom half (small row numbers)
-            # image[mid_row:,:] = image_top = ds9 top half (large row numbers)
-            height = image.shape[0]
-            mid_row = height // 2
-            
-            logger.debug(f"Splitting image at row {mid_row} (height={height})")
-            
-            # Process bottom half (numpy top = ds9 bottom)
-            image_bottom = image[:mid_row, :]
-            regions_bottom = self.extract_overscan_regions(image_bottom)
-            bias_bottom = self._estimate_single_bias(image_bottom, regions_bottom, method, 
-                                                     smooth_window, poly_order, poly_type)
-            profile_bottom = self._current_profile  # Save bottom profile before processing top half
-            
-            # Process top half (numpy bottom = ds9 top)  
-            image_top = image[mid_row:, :]
-            regions_top = self.extract_overscan_regions(image_top)
-            bias_top = self._estimate_single_bias(image_top, regions_top, method,
-                                                    smooth_window, poly_order, poly_type)
-            profile_top = self._current_profile  # Save top profile
-            
-            # Combine: use bottom bias for bottom part, top bias for top part
-            bias_map = np.zeros_like(image, dtype=float)
-            bias_map[:mid_row, :] = bias_bottom
-            bias_map[mid_row:, :] = bias_top
-            
-            # Combine profiles for plotting
-            # 'bottom' = image[:mid_row,:] = ds9 bottom half (small rows)
-            # 'top' = image[mid_row:,:] = ds9 top half (large rows)
-            self.overscan_profile = {
-                'split': True,
-                'bottom': profile_bottom,
-                'top': profile_top,
-                'method': method,
-            }
-        else:
-            # Process as single image
-            regions = self.extract_overscan_regions(image)
-            bias_map = self._estimate_single_bias(image, regions, method,
-                                                  smooth_window, poly_order, poly_type)
-
+        self.overscan_profile = {
+            'blocks': blocks,
+            'n_row_blocks': len(row_edges) - 1,
+            'n_col_blocks': n_col,
+            'method': method,
+        }
         self.overscan_bias = bias_map
         return bias_map
-    
+
     # 估计单个图像区域的过扫描偏置。
     def _estimate_single_bias(self, image: np.ndarray, regions: dict,
                               method: str, smooth_window: int,

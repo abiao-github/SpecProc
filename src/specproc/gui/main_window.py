@@ -1040,6 +1040,8 @@ class MainWindow(QMainWindow):
                     'overscan_poly_order': self.config.get_int('data', 'overscan_poly_order', 3),
                     'overscan_poly_type': self.config.get('data', 'overscan_poly_type', 'legendre'),
                     'flip_vertical': self.config.get_bool('data', 'flip_vertical', False),
+                    'detector_split_row': self.config.get_int('data', 'detector_split_row', 0),
+                    'detector_split_col': self.config.get_int('data', 'detector_split_col', 0),
                 }
                 processed_files = process_overscan_stage(
                     all_files_to_process, self.config.get_output_path(), **overscan_kwargs

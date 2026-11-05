@@ -60,8 +60,12 @@ class OverscanCorrectionStage:
                  trim_y_start: int = -1, trim_y_end: int = -1,
                  save_plots: bool = True,
                  fig_format: str = 'png',
-                 flip_vertical: bool = False):
+                 flip_vertical: bool = False,
+                 detector_split_row: int = 0,
+                 detector_split_col: int = 0):
         self.flip_vertical = flip_vertical
+        self.detector_split_row = detector_split_row
+        self.detector_split_col = detector_split_col
         self.overscan_start_column = overscan_start_column
         self.overscan_left_start = overscan_left_start
         self.overscan_left_end = overscan_left_end
@@ -128,6 +132,8 @@ class OverscanCorrectionStage:
             smooth_window=self.overscan_smooth_window if self.overscan_smooth_window > 0 else None,
             poly_order=self.overscan_poly_order,
             poly_type=self.overscan_poly_type,
+            split_row=self.detector_split_row,
+            split_col=self.detector_split_col,
         )
 
         corrected = self.corrector.apply_overscan_correction(image, overscan_bias)
@@ -239,7 +245,9 @@ def process_overscan_stage(image_filenames: List[str],
                            trim_y_start: int = -1, trim_y_end: int = -1,
                            save_plots: bool = True,
                            fig_format: str = 'png',
-                           flip_vertical: bool = False) -> List[str]:
+                           flip_vertical: bool = False,
+                           detector_split_row: int = 0,
+                           detector_split_col: int = 0) -> List[str]:
     """Execute overscan correction for multiple images."""
     stage = OverscanCorrectionStage(
         overscan_start_column=overscan_start_column,
@@ -256,6 +264,8 @@ def process_overscan_stage(image_filenames: List[str],
         save_plots=save_plots,
         fig_format=fig_format,
         flip_vertical=flip_vertical,
+        detector_split_row=detector_split_row,
+        detector_split_col=detector_split_col,
     )
 
     if not stage.has_overscan_config and not flip_vertical and not stage.has_user_crop:

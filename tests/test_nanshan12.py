@@ -172,3 +172,33 @@ def test_snr_is_measured_at_array_centre():
     assert 70 < snr < 140
     flux[:1200] = 0.0
     assert estimate_snr_at_center(flux) is None
+
+
+def _quad_overscan_image():
+    """100 data cols + 8 overscan cols; each amplifier region has its own bias level."""
+    rng = np.random.default_rng(1)
+    img = np.zeros((60, 108))
+    levels = {(0, 0): 100.0, (0, 1): 200.0, (1, 0): 300.0, (1, 1): 400.0}
+    for (ri, ci), lv in levels.items():
+        r = slice(0, 30) if ri == 0 else slice(30, 60)
+        c = slice(0, 50) if ci == 0 else slice(50, 100)
+        img[r, c] = lv
+        o = slice(100, 104) if ci == 0 else slice(104, 108)
+        img[r, o] = lv
+    return img + rng.normal(0, 0.1, img.shape)
+
+
+def test_overscan_is_estimated_per_amplifier_region():
+    from specproc.utils.overscan import OverscanCorrector
+    img = _quad_overscan_image()
+    cor = OverscanCorrector({'right': (100, None), 'left': None, 'top': None, 'bottom': None})
+    bias = cor.estimate_overscan_bias(img, method='mean_only', split_row=31, split_col=51)
+    for r, c, lv in ((5, 5, 100), (5, 70, 200), (45, 5, 300), (45, 70, 400)):
+        assert abs(bias[r, c] - lv) < 1.0
+    assert len(cor.overscan_profile['blocks']) == 4
+    # no split: one level per row from all overscan columns, so the quadrants cannot be separated
+    flat = cor.estimate_overscan_bias(img, method='mean_only', split_row=0, split_col=0)
+    assert abs(flat[5, 5] - flat[5, 70]) < 1e-6
+    # split only along columns
+    cols = cor.estimate_overscan_bias(img, method='mean_only', split_row=0, split_col=51)
+    assert abs(cols[5, 5] - 100) < 1.0 and abs(cols[45, 5] - 100) > 100

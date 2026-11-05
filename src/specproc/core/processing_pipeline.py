@@ -95,6 +95,8 @@ class ProcessingPipeline:
                 'trim_y_start': self.config.get_int('data', 'trim_y_start', -1),
                 'trim_y_end': self.config.get_int('data', 'trim_y_end', -1),
                 'flip_vertical': self.config.get_bool('data', 'flip_vertical', False),
+                'detector_split_row': self.config.get_int('data', 'detector_split_row', 0),
+                'detector_split_col': self.config.get_int('data', 'detector_split_col', 0),
                 'save_plots': self.config.get_bool('reduce', 'save_plots', True),
                 'fig_format': self.config.get('reduce', 'fig_format', 'pdf')
             }

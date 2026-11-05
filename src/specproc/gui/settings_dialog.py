@@ -226,7 +226,7 @@ class SettingsDialog(QDialog):
         self.detector_split_row_spin.setSpecialValueText("No split")
         self.detector_split_row_spin.setToolTip(
             "First row (1-based) of the upper amplifier region.\n"
-            "0 or negative: no split along rows. Used by step 3 background fitting."
+            "0 or negative: no split along rows. Used by overscan correction and step 3 background fitting."
         )
         overscan_layout.addRow("Amplifier Split Row:", self.detector_split_row_spin)
 
@@ -235,7 +235,7 @@ class SettingsDialog(QDialog):
         self.detector_split_col_spin.setSpecialValueText("No split")
         self.detector_split_col_spin.setToolTip(
             "First column (1-based) of the right amplifier region.\n"
-            "0 or negative: no split along columns. Used by step 3 background fitting."
+            "0 or negative: no split along columns. Used by overscan correction and step 3 background fitting."
         )
         overscan_layout.addRow("Amplifier Split Column:", self.detector_split_col_spin)
 

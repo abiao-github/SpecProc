@@ -4,6 +4,11 @@
 `conda-forge/specproc-feedstock` 仓库里的 recipe 为准**，那里的版本由 conda-forge bot
 在每次 PyPI 发版后自动更新，本文件不会跟着自动变。
 
+> ⚠️ **格式很重要**：conda-forge 的 staged-recipes 已迁移到 CEP-13 的
+> **`recipe.yaml`（v1 格式，rattler-build 构建）**，旧的 `meta.yaml`（v0）已弃用。
+> 在同一个 `recipes/` 目录下混用两种格式会直接报错：
+> `ValueError: Mixing meta.yaml and recipe.yaml recipes is not supported`。
+
 ## 前提
 
 - 包已在 PyPI 上（`pip install specproc` 可用）
@@ -15,7 +20,7 @@
 1. **Fork** <https://github.com/conda-forge/staged-recipes>（网页右上角 Fork）
 
 2. 在你 fork 的仓库里，新建分支（例如 `add-specproc`），把本目录的
-   `recipe/meta.yaml` 放到仓库的 **`recipes/specproc/meta.yaml`**
+   **`recipe/recipe.yaml`** 放到仓库的 **`recipes/specproc/recipe.yaml`**
    （注意：不是 `recipes/example/`，要新建 `recipes/specproc/` 目录）
 
 3. **填好 sha256**：打开 <https://pypi.org/project/specproc/#files>，
@@ -45,11 +50,12 @@
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
+| `Mixing meta.yaml and recipe.yaml recipes is not supported` | 用了已弃用的 v0 格式 | 改名为 `recipe.yaml` 并换成 v1 语法（本目录文件即是） |
 | `sha256 mismatch` | sdist 版本或哈希填错 | 用 PyPI 上对应版本的 SHA256 重新核对 |
 | `python_min` 相关 lint 报错 | recipe 里 `python_min` 低于 conda-forge 当前下限 | 目前用 3.9；若被拒按提示调整 |
 | `ModuleNotFoundError` | run 依赖漏了 | 补到 `requirements.run`（注意 conda 里 PyQt5 叫 `pyqt`） |
 | `pip check` 失败 | 依赖版本冲突 | 看报错补版本约束 |
-| 测试里 `specproc --help` 卡住/失败 | 无显示环境 | 本 recipe 用 `import specproc` + `pip check`，不依赖 GUI |
+| 测试里 `specproc` 卡住/失败 | 无显示环境 | `main.py` 只在启动 GUI 时才 import PyQt5（第 578 行），`specproc --version` 不触发；测试仍以 `import` + `pip_check` 为主 |
 
 ## 依赖映射（PyPI → conda-forge）
 

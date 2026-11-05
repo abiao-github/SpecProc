@@ -25,7 +25,6 @@ dependencies = [
     "astropy",
     "matplotlib",
     "PyQt5",
-    "configparser",
 ]
 
 [project.urls]
@@ -47,10 +46,27 @@ include = ["specproc*"]
 version = {attr = "specproc.__version__"}
 
 [tool.setuptools.package-data]
-# 声明将 calib_data 及其子目录下的文件一并打包
+# 只把运行时会用到的校准数据打进安装包：
+#   - 配置文件与样例（*.cfg / *.sample）
+#   - 灯谱线表与图集（calib_data/linelists/*）
+#   - 各望远镜的锚线表与参考灯谱（*.csv / *.txt / *.fits / *.dat）
+# 校准目录里的 PDF 与 .DS_Store 只是文档/系统垃圾，不进安装包
+# （曾因 calib_data/telescopes/*/* 把两个 44MB/26MB 的南山 PDF 打进去，
+#   让 sdist 涨到 73.6MB；白名单方式后约 1.3MB）
 specproc = [
-    "*.cfg", 
+    "*.cfg",
     "*.sample",
     "calib_data/linelists/*",
-    "calib_data/telescopes/*/*"
+    "calib_data/telescopes/*/*.csv",
+    "calib_data/telescopes/*/*.txt",
+    "calib_data/telescopes/*/*.fits",
+    "calib_data/telescopes/*/*.dat",
+]
+
+[tool.setuptools.exclude-package-data]
+# 双保险：任何层级的 PDF 与 .DS_Store 都不要
+specproc = [
+    "*.pdf",
+    "**/*.pdf",
+    "**/.DS_Store",
 ]

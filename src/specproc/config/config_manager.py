@@ -25,6 +25,7 @@ PROFILE_ALIASES = {
     'mstg193slit': 'MSTG193_slit',
     'xinglong216hrs': 'XL216_hrs',
     'nanshan12': 'NS12_hrs',
+    'lijiang24hrs': 'LJ24_hrs',
 }
 
 

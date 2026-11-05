@@ -492,7 +492,7 @@ def mark_peak_wavelengths(ax, wave, flux, max_peaks: int = 30, min_snr: float = 
 
 
 def estimate_snr_at_center(flux, window: int = 151, half: int = 50):
-    """SNR at the middle pixel of the valid range, using the slit-spectrum method.
+    """SNR at the middle pixel of the full spectrum array, using the slit-spectrum method.
 
     A Savitzky-Golay continuum is fitted, residuals are iteratively 3-sigma clipped
     (rejected regions widened by 3 px), and SNR = median continuum in +-``half`` pixels
@@ -528,7 +528,10 @@ def estimate_snr_at_center(flux, window: int = 151, half: int = 50):
             break
         keep = new_keep
     keep = ndimage.binary_erosion(keep, iterations=3, border_value=1)
-    k = (n - 1) // 2
+    centre = (len(flux) - 1) // 2
+    if not i0 <= centre <= i1:
+        return None
+    k = centre - i0
     a, b = max(k - half, 0), min(k + half + 1, n)
     loc = res[a:b][keep[a:b]]
     noise = mad(loc) if loc.size > 10 else mad(res[keep])

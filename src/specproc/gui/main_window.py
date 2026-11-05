@@ -1773,7 +1773,7 @@ class MainWindow(QMainWindow):
                         try:
                             c_img, _ = read_fits_image(best_calib)
                             c_name = Path(best_calib).stem
-                            process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs)
+                            process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', annotate_snr=False, **extract_kwargs)
                             self.log_text.append(f"  ✓ Extracted Calibration optimal 1D spectrum for {c_name}")
                         except Exception as e:
                             self.log_text.append(f"  ! Failed to extract Calibration {c_name}: {e}")
@@ -1830,7 +1830,7 @@ class MainWindow(QMainWindow):
                 from specproc.core.extraction import load_extracted_spectra
                 
                 # 为目标光谱生成去闪耀结果。
-                def do_deblaze(target_name, spectra_obj=None):
+                def do_deblaze(target_name, spectra_obj=None, is_lamp=False):
                     spectra = spectra_obj
                     if spectra is None:
                         spectra_path = Path(self.config.get_output_path()) / 'step5_extraction' / f'{target_name}_1D_optimal.fits'
@@ -1850,7 +1850,8 @@ class MainWindow(QMainWindow):
                             output_filename=f'{target_name}_1D_optimal_Deblaze.fits',
                             plot_prefix=f'{target_name}_1D_optimal_Deblaze',
                             save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                            fig_format=self.config.get('reduce', 'fig_format', 'pdf')
+                            fig_format=self.config.get('reduce', 'fig_format', 'pdf'),
+                            annotate_snr=not is_lamp
                         )
                         self.log_text.append(f"  ✓ Step 6 De-blazing complete for {target_name} (optimal)")
                         return db_spec
@@ -1862,7 +1863,7 @@ class MainWindow(QMainWindow):
                 for calib_f in current_calib_files:
                     if not calib_f: continue
                     calib_name = Path(self.pipeline.get_best_calib_file(calib_f)).stem
-                    do_deblaze(calib_name)
+                    do_deblaze(calib_name, is_lamp=True)
                     
                 for sci_file in current_science_files:
                     sci_name = Path(sci_file).stem

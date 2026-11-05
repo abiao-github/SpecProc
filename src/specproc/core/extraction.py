@@ -274,7 +274,8 @@ def process_extraction_stage(science_image: np.ndarray,
                             optimal_sigma: float = 3.0,
                             extraction_method: str = 'optimal',
                             save_plots: bool = True,
-                            fig_format: str = 'png') -> SpectraSet:
+                            fig_format: str = 'png',
+                            annotate_snr: bool = True) -> SpectraSet:
     """
     Execute spectrum extraction stage.
 
@@ -312,12 +313,14 @@ def process_extraction_stage(science_image: np.ndarray,
         out_dir = spectra_file.parent
         if wavelength_calib is not None:
             pdf_path = out_dir / f"{plot_prefix}_all_apertures.pdf"
-            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum")
+            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum",
+                                annotate_snr=annotate_snr)
         else:
             # If no wavelength calibration, plot raw pixels
             pdf_name = f"{plot_prefix}.pdf"
             pdf_path = out_dir / pdf_name
-            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum (pixels)", xlabel="Pixel")
+            plot_spectra_to_pdf(spectra_set, str(pdf_path), title_prefix="Extracted Spectrum (pixels)", xlabel="Pixel",
+                                annotate_snr=annotate_snr)
 
     return spectra_set
 

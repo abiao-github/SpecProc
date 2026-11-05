@@ -296,6 +296,7 @@ class ProcessingPipeline:
                     method_override='optimal',
                     output_filename=f'{calib_name}_1D_optimal.fits',
                     plot_prefix=f'{calib_name}_1D_optimal',
+                annotate_snr=False,
                 **extract_kwargs
             )
             
@@ -545,7 +546,7 @@ class ProcessingPipeline:
                                 c_img, self.state.apertures,
                                 wavelength_calib=None, flat_field=self.state.flat_field,
                                 method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits',
-                                plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs
+                                plot_prefix=f'{c_name}_1D_optimal', annotate_snr=False, **extract_kwargs
                             )
                             logger.info(f"✓ Extracted Calibration 1D spectra for {c_name}")
                         except Exception as e:
@@ -1035,7 +1036,7 @@ class ProcessingPipeline:
             for c_file in calib_filenames_final:
                 c_img, _ = read_fits_image(c_file)
                 c_name = Path(c_file).stem
-                process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', **extract_kwargs)
+                process_extraction_stage(c_img, apertures, wavelength_calib=None, flat_field=flat_field, method_override='optimal', output_filename=f'{c_name}_1D_optimal.fits', plot_prefix=f'{c_name}_1D_optimal', annotate_snr=False, **extract_kwargs)
 
             extracted_science_dict = {}
             for sci_file in science_flat2d_files:
@@ -1049,7 +1050,7 @@ class ProcessingPipeline:
             logger.info("=" * 50)
             logger.info("STEP 6: DE-BLAZING")
             logger.info("=" * 50)
-            def do_deblaze(target_name, spectra_obj=None):
+            def do_deblaze(target_name, spectra_obj=None, is_lamp=False):
                 from specproc.core.extraction import load_extracted_spectra
                 spectra = spectra_obj
                 if spectra is None:
@@ -1067,12 +1068,13 @@ class ProcessingPipeline:
                     output_filename=f'{target_name}_1D_optimal_Deblaze.fits',
                     plot_prefix=f'{target_name}_1D_optimal_Deblaze',
                     save_plots=self.config.get_bool('reduce', 'save_plots', True),
-                    fig_format=self.config.get('reduce', 'fig_format', 'pdf')
+                    fig_format=self.config.get('reduce', 'fig_format', 'pdf'),
+                    annotate_snr=not is_lamp
                 )
 
             do_deblaze("MasterFlat")
             for c_file in calib_filenames_final:
-                do_deblaze(Path(c_file).stem)
+                do_deblaze(Path(c_file).stem, is_lamp=True)
             
             deblazed_science_dict = {}
             for sci_name, opt_spec in extracted_science_dict.items():

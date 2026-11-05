@@ -170,7 +170,8 @@ def process_de_blazing_stage(spectra_set: SpectraSet,
                            output_filename: str = 'deblazed_spectra.fits',
                            plot_prefix: str = 'deblazed',
                            save_plots: bool = True,
-                           fig_format: str = 'png') -> SpectraSet:
+                           fig_format: str = 'png',
+                           annotate_snr: bool = True) -> SpectraSet:
     """
     Execute de-blazing correction stage.
 
@@ -205,6 +206,7 @@ def process_de_blazing_stage(spectra_set: SpectraSet,
             out_dir = deblazed_file.parent
             pdf_name = f"{plot_prefix}.pdf"
             pdf_path = out_dir / pdf_name
-            plot_spectra_to_pdf(deblazed_spectra, str(pdf_path), title_prefix="De-blazed Spectrum (pixels)", xlabel="Pixel")
+            plot_spectra_to_pdf(deblazed_spectra, str(pdf_path), title_prefix="De-blazed Spectrum (pixels)", xlabel="Pixel",
+                                annotate_snr=annotate_snr)
 
     return deblazed_spectra

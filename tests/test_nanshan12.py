@@ -158,3 +158,17 @@ def test_match_anchor_positions_uses_table_x_positions():
     assert delta_m == 2
     assert len(matched) == 7
     assert any(abs(x - 104.0) < 1e-6 and m == 3 and w == 7100.0 for x, m, w in matched)
+
+
+def test_snr_is_measured_at_array_centre():
+    import numpy as np
+    from specproc.plotting.spectra_plotter import estimate_snr_at_center
+
+    rng = np.random.default_rng(1)
+    flux = 1000 + rng.normal(0, 10, 2001)
+    flux[:300] = 0.0
+    idx, snr = estimate_snr_at_center(flux)
+    assert idx == 1000
+    assert 70 < snr < 140
+    flux[:1200] = 0.0
+    assert estimate_snr_at_center(flux) is None

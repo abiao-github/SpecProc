@@ -953,12 +953,32 @@ def _plot_calib_surface_diagnostic(wave_calib: WaveCalib, plot_file: str, max_re
     plt.close(fig)
 
 # 绘制各级次锚点匹配并保存为 PDF
+def _rematch_anchor_table(detected_peaks: Dict[int, np.ndarray], wave_calib: WaveCalib, delta_m: int,
+                          anchor_table: Dict[int, np.ndarray], tol: float = 0.5) -> List[Tuple[float, int, float]]:
+    """用最终定标把锚点线表匹配到实测 peaks (每个 peak 至多一条锚点线, 取最近者)。"""
+    out: List[Tuple[float, int, float]] = []
+    for m_obs, peaks in detected_peaks.items():
+        m_true = m_obs + delta_m
+        waves = anchor_table.get(m_true)
+        if waves is None or len(peaks) == 0:
+            continue
+        pk = np.asarray(peaks, dtype=float)
+        pk_wave = wave_calib.apply_to_pixel(pk, np.full_like(pk, m_true))
+        for w in waves:
+            j = int(np.argmin(np.abs(pk_wave - w)))
+            if abs(pk_wave[j] - w) <= tol:
+                out.append((float(pk[j]), m_true, float(w)))
+    return out
+
+
 def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray], 
                               matched_anchors: List[Tuple[float, int, float]], 
                               delta_m: int, 
                               pdf_path: str,
                               snr_used: Optional[Dict[int, float]] = None,
-                              max_labels: int = 5):
+                              max_labels: int = 5,
+                              max_peaks: int = 10,
+                              wave_calib: Optional[WaveCalib] = None):
     """将每个级次的光谱及匹配到的锚点画入一个多页 PDF 文件（每级次只标注最强的 max_labels 个）。"""
     with PdfPages(pdf_path) as pdf:
         anchor_dict = {}
@@ -974,8 +994,15 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
             spec = spectra_dict[m_obs]
             flux = getattr(spec, 'flux', spec)
             
+            flux = np.asarray(flux, dtype=float)
+            pix = np.arange(len(flux), dtype=float)
+            if wave_calib is not None:
+                xs = wave_calib.apply_to_pixel(pix, np.full_like(pix, m_true))
+            else:
+                xs = pix
+
             fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(flux, label='Lamp Flux', color='k', linewidth=0.7)
+            ax.plot(xs, flux, label='Lamp Flux', color='k', linewidth=0.7)
             
             # 计算并绘制 SNR=50 的近似阈值基准线
             if len(flux) > 1:
@@ -990,7 +1017,9 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
 
             if m_obs in detected_peaks and len(detected_peaks[m_obs]) > 0:
                 p_x = detected_peaks[m_obs].astype(int)
-                ax.plot(p_x, flux[p_x], 'r+', markersize=6, label='Detected Peaks')
+                p_x = p_x[(p_x >= 0) & (p_x < len(flux))]
+                p_x = p_x[np.argsort(flux[p_x])[::-1][:max_peaks]]
+                ax.plot(xs[p_x], flux[p_x], 'r+', markersize=6, label=f'Top {max_peaks} Detected Peaks')
                 
             # 绘制锚点匹配的标记 (向下短箭头 + 双行波长文本)
             if m_true in anchor_dict:
@@ -1009,12 +1038,13 @@ def _plot_matched_anchors_pdf(lamp_spectra, detected_peaks: Dict[int, np.ndarray
                         continue
                     k = lo + int(np.nanargmax(flux[lo:hi]))
                     top = flux[k]
-                    ax.plot([k, k], [top + gap, top + gap + line_len], color='b', lw=1.0)
-                    ax.text(k, top + gap + line_len * 1.1, f"{wave:.4f}", color='b',
+                    xk = float(xs[k])
+                    ax.plot([xk, xk], [top + gap, top + gap + line_len], color='b', lw=1.0)
+                    ax.text(xk, top + gap + line_len * 1.1, f"{wave:.4f}", color='b',
                             rotation=90, ha='center', va='bottom', fontsize=8)
 
             ax.set_title(f"True Order {m_true} (Aperture: {m_obs}, Offset: {delta_m})")
-            ax.set_xlabel("Pixel (X)")
+            ax.set_xlabel("Wavelength (Angstrom)" if wave_calib is not None else "Pixel (X)")
             ax.set_ylabel("Flux")
             
             # 留出顶部空间写波长文本，避免箭头和文字出界
@@ -1105,6 +1135,10 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
         else:
             logger.warning(f"Precomputed calibration file not found: {precomputed_path}")
 
+    anchor_snr_used: Dict[int, float] = {}
+    valid_detected_peaks: Dict[int, np.ndarray] = {}
+    plot_anchors: List[Tuple[float, int, float]] = []
+    plot_anchor_table: Optional[Dict[int, np.ndarray]] = None
     if prev_calib is not None:
         # 使用历史定标直接预测并全库匹配，完全跳过盲搜
         delta_m = prev_calib.delta_m
@@ -1173,7 +1207,6 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
                     f"(SNR > {anchor_snr:g}; relaxed to > {anchor_floor:g} when fewer than {anchor_min} lines).")
         peaks_for_matching = {}
         all_peaks_for_matching = {}
-        anchor_snr_used: Dict[int, float] = {}
         for m_obs in valid_m_obs:
             if m_obs in detected_peaks:
                 snrs = detected_snrs[m_obs]
@@ -1234,14 +1267,9 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
         )
         logger.info(f"Successfully matched {len(matched_wave)} lines from the full catalog (tolerance={match_tol:.2f} A).")
 
-        # 输出仅包含锚点匹配的干净诊断图 PDF
-        if save_plots and matched_anchors:
-            pdf_path = Path(output_dir_base) / 'step7_wavelength' / f'wcal_{lamp_name}_matched_anchors.pdf'
-            pdf_path.parent.mkdir(parents=True, exist_ok=True)
-            _plot_matched_anchors_pdf(lamp_spectra, valid_detected_peaks,
-                                      getattr(calibrator, 'last_peak_anchors', None) or matched_anchors, delta_m,
-                                  str(pdf_path), snr_used=anchor_snr_used)
-            logger.info(f"Saved matched anchors diagnostic PDF to {pdf_path}")
+        plot_anchors = getattr(calibrator, 'last_peak_anchors', None) or matched_anchors
+        if not reference_spectrum and anchors:
+            plot_anchor_table = anchors
 
     # 7. 全局精确 2D 拟合
     x_order = config.get_int('reduce.wlcalib', 'xorder', 4)
@@ -1297,6 +1325,20 @@ def process_wavelength_stage(lamp_spectra: SpectraSet,
     calib_file = Path(output_dir_base) / 'step7_wavelength' / f'wcal_{lamp_name}.fits'
     calib_file.parent.mkdir(parents=True, exist_ok=True)
     calibrator.save_calibration(str(calib_file))
+
+    # 锚点匹配诊断图: 横坐标用最终定标后的波长
+    if plot_anchor_table:
+        # 盲匹配的锚点可能含误配: 用最终定标重新把锚点线表匹配到实测 peaks
+        plot_anchors = _rematch_anchor_table(valid_detected_peaks, wave_calib, delta_m, plot_anchor_table,
+                                             tol=config.get_float('reduce.wlcalib', 'anchor_match_tol_wave', 0.5))
+    if save_plots and (plot_anchors or valid_detected_peaks):
+        pdf_path = calib_file.parent / f'wcal_{lamp_name}_matched_anchors.pdf'
+        try:
+            _plot_matched_anchors_pdf(lamp_spectra, valid_detected_peaks, plot_anchors, delta_m,
+                                      str(pdf_path), snr_used=anchor_snr_used, wave_calib=wave_calib)
+            logger.info(f"Saved matched anchors diagnostic PDF to {pdf_path}")
+        except Exception as e:
+            logger.warning(f"Could not generate matched anchors plot: {e}")
 
     # 绘制验证图并保存
     if save_plots and getattr(wave_calib, 'line_pixels', None) is not None:

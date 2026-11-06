@@ -8,15 +8,59 @@ A complete PyQt-based graphical interface for reducing slit/chelle spectrograph 
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Features](#features)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Working Directory Setup](#working-directory-setup)
 - [Configuration](#configuration)
 - [Processing Pipeline](#processing-pipeline)
 - [Usage](#usage)
 - [Calibration Data](#calibration-data)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
+
+## Quick Start
+
+Install SpecProc with `pip install specproc`, then work from a directory
+outside the source tree. Put your bias, flat, calibration-lamp, and science
+FITS files in a data directory.
+
+### Command line
+
+```bash
+mkdir -p ~/specproc-work
+cd ~/specproc-work
+specproc --profile LJ24_hrs /path/to/LJ_20241222
+```
+
+Replace `LJ24_hrs` with your telescope/instrument profile: `XL216_hrs`
+(Xinglong 2.16 m HRS), `NS12_hrs` (Nanshan 1.2 m), or `MSTG193_slit`
+(Muztagh-Ata 1.93 m slit). SpecProc classifies the input frames and runs the
+pipeline; results and diagnostic plots are saved under `output/` by default.
+Check the classification and processing messages in the log.
+
+An existing working configuration may be reused rather than replaced by the
+packaged defaults. Review any configuration-difference warning, or specify
+your own configuration explicitly with
+`specproc --config /path/to/config.cfg /path/to/data`. Run `specproc --help`
+for more options.
+
+### Graphical interface
+
+```bash
+specproc --mode gui
+```
+
+1. Open **Settings** → **Data & Instruments**. Under **Configuration File**,
+   select your telescope/instrument profile, or use **Browse...** to load a
+   configuration file. Check the output path and click **Save**.
+2. Add the bias, flat, calibration-lamp, and science images using the
+   corresponding buttons.
+3. Click **Run All Steps**. Monitor the log and find the results in the
+   configured output directory.
+
+For more detail, see [Installation](#installation), [Working Directory
+Setup](#working-directory-setup), and [Usage](#usage).
 
 ## Features
 
@@ -130,9 +174,7 @@ specproc
 - Installs SpecProc to your system
 - Use this method for automated setup from local source
 
-## Quick Start
-
-### Working Directory Setup
+## Working Directory Setup
 
 **Important**: SpecProc should be run in your working directory, NOT in the source code directory.
 
@@ -152,11 +194,8 @@ cp /somewhere/flat_*.fits ./20241102_hrs/
 cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
-# 4. Create user config file (optional)
-cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
-
-# 5. Run SpecProc in your working directory
-specproc --config ./specproc.cfg
+# 4. Run SpecProc with the appropriate telescope profile
+specproc --profile XL216_hrs ./20241102_hrs
 ```
 
 ### Directory Structure
@@ -434,7 +473,7 @@ full_linelist = calib_data/linelists/thar-noao.dat
 specproc --mode gui
 
 # With custom config file
-specproc --config /path/to/config.cfg
+specproc --mode gui --config /path/to/config.cfg
 ```
 
 **GUI Workflow**:
@@ -442,7 +481,7 @@ specproc --config /path/to/config.cfg
 2. Select flat files
 3. Select calibration files (ThAr lamp)
 4. Select science files
-5. Click "Run Full Pipeline" or execute stages step-by-step
+5. Click "Run All Steps" or execute stages step-by-step
 6. View progress in real-time
 7. Check results in output directory
 

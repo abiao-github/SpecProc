@@ -8,9 +8,10 @@
 
 ## 目录
 
+- [快速开始](#快速开始)
 - [功能特性](#功能特性)
 - [安装指南](#安装指南)
-- [快速开始](#快速开始)
+- [工作目录设置](#工作目录设置)
 - [配置说明](#配置说明)
 - [数据处理流程](#数据处理流程)
 - [使用方法](#使用方法)
@@ -22,6 +23,34 @@
 - [参与贡献](#参与贡献)
 - [致谢](#致谢)
 - [问题反馈](#问题反馈)
+
+## 快速开始
+
+使用 `pip install specproc` 安装后，请在源码目录之外的工作目录中运行。将本底（bias）、平场（flat）、定标灯谱和科学目标的 FITS 文件放在数据目录中。
+
+### 命令行模式
+
+```bash
+mkdir -p ~/specproc-work
+cd ~/specproc-work
+specproc --profile LJ24_hrs /path/to/LJ_20241222
+```
+
+请将 `LJ24_hrs` 替换为对应的望远镜和光谱仪配置：`XL216_hrs`（兴隆 2.16 米 HRS）、`NS12_hrs`（南山 1.2 米）或 `MSTG193_slit`（慕士塔格 1.93 米狭缝）。程序会分类输入文件并运行处理流程，结果和诊断图默认保存在 `output/` 目录下。请在日志中检查文件分类和处理信息。
+
+程序可能沿用已有的工作配置，而不是覆盖为内置默认配置；请留意配置差异警告。也可用 `specproc --config /path/to/config.cfg /path/to/data` 指定自己的配置文件。运行 `specproc --help` 可查看其他选项。
+
+### 图形界面模式
+
+```bash
+specproc --mode gui
+```
+
+1. 打开 **Settings** → **Data & Instruments**，在 **Configuration File** 中选择望远镜和光谱仪配置，或点击 **Browse...** 加载配置文件；检查输出路径后点击 **Save**。
+2. 使用对应按钮分别添加 bias、flat、定标灯谱和科学目标图像。
+3. 点击 **Run All Steps**，查看日志，并在配置的输出目录中查看结果。
+
+更多说明请参阅[安装指南](#安装指南)、[工作目录设置](#工作目录设置)和[使用方法](#使用方法)。
 
 ## 功能特性
 
@@ -136,9 +165,7 @@ specproc
 - 会把 SpecProc 安装到系统中
 - 适合从本地源码做自动化部署
 
-## 快速开始
-
-### 工作目录设置
+## 工作目录设置
 
 **极其重要**：`specproc` 必须在你的**观测数据工作目录**下运行，**绝不能**在 SpecProc 源码目录下运行。
 
@@ -158,11 +185,8 @@ cp /somewhere/flat_*.fits ./20241102_hrs/
 cp /somewhere/thar_*.fits ./20241102_hrs/
 cp /somewhere/science_*.fits ./20241102_hrs/
 
-# 4. 生成用户配置文件（可选）
-cp /path/to/SpecProc/src/specproc/config/default_config.cfg ./specproc.cfg
-
-# 5. 在工作目录中启动管线
-specproc --config ./specproc.cfg
+# 4. 使用对应的望远镜配置启动管线
+specproc --profile XL216_hrs ./20241102_hrs
 ```
 
 ### 生成的目录结构
@@ -445,7 +469,7 @@ calibration_file = wlcalib_20211123011_A.fits
 specproc --mode gui
 
 # 使用自定义配置文件
-specproc --config /path/to/config.cfg
+specproc --mode gui --config /path/to/config.cfg
 ```
 
 **操作流程**：
@@ -474,7 +498,7 @@ specproc --config MSTG193_slit
 
 **望远镜配置档（telescope profile）**：SpecProc 在 `src/specproc/config/` 下为每个支持的光谱仪附带一个 `default_config_<profile>.cfg`（例如兴隆 2.16 米 HRS 对应 `XL216_hrs`，慕士塔格 1.93 米狭缝光谱仪对应 `MSTG193_slit`）。把档名传给 `--config` 会自动解析到该内置文件，无需输入完整路径。运行 `specproc --help` 可查看可用档名列表。
 
-未给 `--config` 时，CLI 会从输入 FITS 头读取 `TELESCOP`/`INSTRUME`，选出匹配的内置配置档；若 `./specproc.cfg` 尚不存在，就把它复制过去，并以这份工作副本为准。目前已保留的组合档名有 `mstg193slit`、`xinglong216hrs`、`xinglong216bfosc`、`lijiang24hrs`。也可以显式强制指定：
+未给 `--config` 时，CLI 会尝试从输入 FITS 头识别望远镜和仪器，选择匹配的内置配置档。程序会优先使用当前目录中已有的对应工作配置；如果没有，则复制内置配置并保留其文件名。也可以显式指定配置档：
 
 ```bash
 specproc --profile mstg193slit raw_dir

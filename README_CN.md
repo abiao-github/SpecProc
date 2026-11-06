@@ -33,12 +33,27 @@
 ```bash
 mkdir -p ~/specproc-work
 cd ~/specproc-work
-specproc --profile LJ24_hrs /path/to/LJ_20241222
+specproc --profile MSTG193_slit /path/to/MSTG193_data
 ```
 
-请将 `LJ24_hrs` 替换为对应的望远镜和光谱仪配置：`XL216_hrs`（兴隆 2.16 米 HRS）、`NS12_hrs`（南山 1.2 米）或 `MSTG193_slit`（慕士塔格 1.93 米狭缝）。程序会分类输入文件并运行处理流程，结果和诊断图默认保存在 `output/` 目录下。请在日志中检查文件分类和处理信息。
+程序会分类输入文件并运行处理流程，结果和诊断图默认保存在 `output/` 目录下。其他常用命令如下：
 
-程序可能沿用已有的工作配置，而不是覆盖为内置默认配置；请留意配置差异警告。也可用 `specproc --config /path/to/config.cfg /path/to/data` 指定自己的配置文件。运行 `specproc --help` 可查看其他选项。
+```bash
+specproc /path/to/data                   # 尝试根据 FITS 头自动识别配置
+specproc                                # 处理当前目录中的 FITS 文件
+specproc --profile XL216_hrs /path/to/data
+specproc --config /path/to/custom.cfg /path/to/data
+specproc --config MSTG193_slit           # 将内置配置复制到当前目录
+```
+
+内置望远镜和仪器配置文件位于 `src/specproc/config/`，文件名为
+`default_config_<profile>.cfg`。可用配置档包括 `MSTG193_slit`（慕士塔格
+1.93 米狭缝）、`XL216_hrs`（兴隆 2.16 米 HRS）、`NS12_hrs`（南山 1.2 米）
+和 `LJ24_hrs`（丽江 2.4 米 HRS）。例如，慕士塔格配置文件路径为
+`src/specproc/config/default_config_MSTG193_slit.cfg`。
+
+程序可能沿用已有的工作配置，而不是覆盖为内置默认配置；请留意配置差异警告。
+运行 `specproc --help` 可查看其他选项。
 
 ### 图形界面模式
 

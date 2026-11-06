@@ -30,20 +30,30 @@ FITS files in a data directory.
 ```bash
 mkdir -p ~/specproc-work
 cd ~/specproc-work
-specproc --profile LJ24_hrs /path/to/LJ_20241222
+specproc --profile MSTG193_slit /path/to/MSTG193_data
 ```
 
-Replace `LJ24_hrs` with your telescope/instrument profile: `XL216_hrs`
-(Xinglong 2.16 m HRS), `NS12_hrs` (Nanshan 1.2 m), or `MSTG193_slit`
-(Muztagh-Ata 1.93 m slit). SpecProc classifies the input frames and runs the
-pipeline; results and diagnostic plots are saved under `output/` by default.
-Check the classification and processing messages in the log.
+SpecProc classifies the input frames and runs the pipeline; results and
+diagnostic plots are saved under `output/` by default. Other useful forms:
+
+```bash
+specproc /path/to/data                  # Try to detect the profile from FITS headers
+specproc                               # Process FITS files in the current directory
+specproc --profile XL216_hrs /path/to/data
+specproc --config /path/to/custom.cfg /path/to/data
+specproc --config MSTG193_slit          # Copy the packaged profile config here
+```
+
+Packaged telescope/instrument configurations are in
+`src/specproc/config/`, named `default_config_<profile>.cfg`. Available
+profiles include `MSTG193_slit` (Muztagh-Ata 1.93 m slit), `XL216_hrs`
+(Xinglong 2.16 m HRS), `NS12_hrs` (Nanshan 1.2 m), and `LJ24_hrs`
+(Lijiang 2.4 m HRS). For example, the MSTG profile is
+`src/specproc/config/default_config_MSTG193_slit.cfg`.
 
 An existing working configuration may be reused rather than replaced by the
-packaged defaults. Review any configuration-difference warning, or specify
-your own configuration explicitly with
-`specproc --config /path/to/config.cfg /path/to/data`. Run `specproc --help`
-for more options.
+packaged defaults, so review any configuration-difference warning. Run
+`specproc --help` for more options.
 
 ### Graphical interface
 

@@ -37,6 +37,7 @@ SpecProc classifies the input frames and runs the pipeline; results and
 diagnostic plots are saved under `output/` by default. Other useful forms:
 
 ```bash
+specproc --help                         # Show help message
 specproc /path/to/data                  # Try to detect the profile from FITS headers
 specproc                               # Process FITS files in the current directory
 specproc --profile XL216_hrs /path/to/data

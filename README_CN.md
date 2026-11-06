@@ -1,4 +1,4 @@
-# 自动化光谱处理软件SpecProc使用手册
+# 自动化光谱处理（SpecProc）系统使用手册
 
 [English](README.md) | **简体中文**
 
@@ -39,6 +39,7 @@ specproc --profile MSTG193_slit /path/to/MSTG193_data
 程序会分类输入文件并运行处理流程，结果和诊断图默认保存在 `output/` 目录下。其他常用命令如下：
 
 ```bash
+specproc --help                          # 查看帮助信息
 specproc /path/to/data                   # 尝试根据 FITS 头自动识别配置
 specproc                                # 处理当前目录中的 FITS 文件
 specproc --profile XL216_hrs /path/to/data
